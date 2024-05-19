@@ -2,7 +2,6 @@ import sys
 import logging
 from pathlib import Path
 from cx_Freeze import setup, Executable
-from ctypes.util import find_library
 
 # Set up logging
 logging.basicConfig(filename='cx_freeze.log', filemode='w', level=logging.DEBUG)
@@ -27,9 +26,6 @@ sys.stderr = StreamToLogger(logger, logging.ERROR)
 # Define the base directory for your project
 base_dir = Path(__file__).parent
 
-# Locate the mupdf library if needed
-pymupdf_lib = find_library('pymupdf')
-
 # Dependencies are automatically detected, but it might need fine tuning.
 build_exe_options = {
     "packages": [],  # Required packages
@@ -50,7 +46,7 @@ if sys.platform == "win32":
 
 setup(
     name="Heat Sheet PDF Highlighter",
-    version="6.3.0",
+    version="1.0.0",
     description="Heat Sheet PDF Highlighter",
     author="Jonas Albrecht",
     maintainer="Jonas Albrecht",

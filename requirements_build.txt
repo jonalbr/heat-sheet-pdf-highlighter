@@ -1,11 +1,11 @@
-cx-freeze==7.0.0
+cx_Freeze==7.0.0
 pillow==10.3.0
 pymupdf==1.24.4
 requests==2.31.0
 # certifi==2024.2.2 # Installed as dependency for requests
 # charset-normalizer==3.3.2 # Installed as dependency for requests
-# cx-logging==3.2.0 # Installed as dependency for cx-freeze
+# cx_logging==3.2.0 # Installed as dependency for cx_Freeze
 # idna==3.7 # Installed as dependency for requests
-# lief==0.14.1 # Installed as dependency for cx-freeze
+# lief==0.14.1 # Installed as dependency for cx_Freeze
 # pymupdfb==1.24.3 # Installed as dependency for pymupdf
 # urllib3==2.2.1 # Installed as dependency for requests

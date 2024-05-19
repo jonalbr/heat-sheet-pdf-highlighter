@@ -37,10 +37,13 @@ pip install -r requirements.txt
 Launch the application using the command:
 
 ```bash
-python highlight_heat_sheet_pdf_gui.py
+python heat_sheet_pdf_highlighter.py
 ```
 
 Follow the GUI prompts to load a PDF and specify your highlighting preferences.
+
+
+# Development
 
 ## Updating locale
 
@@ -106,7 +109,7 @@ If you have Inno Setup installed in a different location, you would need to modi
 pip install -r requirements_build.txt
 ```
 
-## Setting up the Environment Variables
+### Setting up the Environment Variables
 
 To create an executable, you need to set up an environment variable `AppId`. This can be done using a `.env` file.
 
@@ -126,6 +129,35 @@ The application will now use the value of `AppId` from the `.env` file. Please n
 
 
 ### **Windows:**
+#### **Setting up a Virtual Environment and Installing Dependencies**
+
+Before building the application, it's recommended to create a Python virtual environment and install the necessary dependencies. Otherwise unnecessary packages might end up in your executable and make it larger than needed.
+
+1. Open a command prompt in the root directory of the project.
+
+2. Create a new virtual environment:
+
+    ```bash
+    python -m venv .venv
+    ```
+
+3. Activate the virtual environment:
+
+    ```bash
+    .venv\Scripts\activate
+    ```
+
+4. Once the virtual environment is activated, install the dependencies listed in the `requirements_build.txt` file:
+
+    ```bash
+    pip install -r requirements_build.txt
+    ```
+
+Now you're ready to build the application. Make sure to keep the virtual environment activated while building.
+
+### **Build:**
+
+
 Run the `build.bat` script to compile the application. Make sure to open a command prompt in the directory where the `build.bat` script is located.
 
 ```bash
@@ -133,8 +165,8 @@ Run the `build.bat` script to compile the application. Make sure to open a comma
 ```
 
 
-## Contributing
+# Contributing
 Contributions are welcome! Feel free to open issues or submit pull requests to improve the functionality of the Heat Sheet PDF Highlighter.
 
-## License
+# License
 This project is licensed under the GNU General Public License v3.0 - see the [LICENSE](LICENSE) file for details.

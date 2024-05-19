@@ -14,4 +14,4 @@ if "%ERRORLEVEL%"=="0" (
 
 echo Process with PID %pid% has finished. Starting installer...
 
-start "" "%installer_path%"
+start "" "%installer_path%" /SILENT

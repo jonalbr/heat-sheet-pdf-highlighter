@@ -32,7 +32,7 @@ from PIL import Image, ImageTk
 ######################################################################
 # Constants
 APP_NAME = "Heat Sheet PDF Highlighter"
-VERSION_STR = "6.3.0"
+VERSION_STR = "1.0.0"
 
 CACHE_EXPIRY = datetime.timedelta(days=1)
 
@@ -493,8 +493,8 @@ class PDFHighlighterApp:
         self.update_label = ttk.Label(self.version_frame, text=self.update_label_text, foreground="#5c5c5c", cursor="hand2")
         self.update_label.pack(side="left", padx=10)
 
-        # self.update_label.bind("<Button-1>", lambda event: self.check_for_app_updates(current_version, force_check=True))
-        self.update_label.bind("<Button-1>", lambda event: self.test_install_routine())
+        self.update_label.bind("<Button-1>", lambda event: self.check_for_app_updates(current_version, force_check=True))
+        #self.update_label.bind("<Button-1>", lambda event: self.test_install_routine())
 
         # make version frame sticky to the bottom
         self.root.grid_rowconfigure(7, weight=1)
@@ -738,8 +738,14 @@ class PDFHighlighterApp:
         # Get the current process id
         pid = os.getpid()
 
-        # Run the update script
-        subprocess.Popen([UPDATE_SCRIPT_PATH, str(pid), installer_path], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        # Create a STARTUPINFO object
+        startupinfo = subprocess.STARTUPINFO()
+
+        # Set the STARTF_USESHOWWINDOW flag
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+
+        # Run the update script without showing a window
+        subprocess.Popen([UPDATE_SCRIPT_PATH, str(pid), installer_path], startupinfo=startupinfo)
 
     def _get_latest_version_from_github(self, current_version: Version = Version.from_str(VERSION_STR), force_check: bool = False):
         # GitHub release URL
@@ -827,11 +833,20 @@ class PDFHighlighterApp:
         # Write the installer to the file
         Path(installer_path).write_bytes(response.content)
 
-        # Run the installer exe
-        subprocess.run([installer_path])
-
         # Close the application
         self.root.destroy()
+
+        # Get the current process id
+        pid = os.getpid()
+
+        # Create a STARTUPINFO object
+        startupinfo = subprocess.STARTUPINFO()
+
+        # Set the STARTF_USESHOWWINDOW flag
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+
+        # Run the update script without showing a window
+        subprocess.Popen([UPDATE_SCRIPT_PATH, str(pid), installer_path], startupinfo=startupinfo)
 
 
 #####################################################################################
