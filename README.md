@@ -8,8 +8,10 @@ Heat Sheet PDF Highlighter is a Python application designed to facilitate the hi
 ## Features
 - **PDF Annotation:** Automatically highlight specified lines in a PDF which contain the search term.
 - **GUI Support:** A user-friendly graphical interface for easier interaction.
-- **Persistence**: Settings like language or the last search term are saved between executions for convenience
+- **Persistence:** Settings like language or the last search term are saved between executions for convenience
 - **Installation via EXE:** A ready to install .exe can be found under releases (windows only).
+- **Localization:** Support for english and german both for the installation process and the application itself.
+- **Updates from the App:** Supports checking for updates and the installation of the update without leaving the application.
 
 ## Installation
 To install the Heat Sheet PDF Highlighter using the provided .exe file on Windows, follow these steps:
@@ -21,7 +23,7 @@ To install the Heat Sheet PDF Highlighter using the provided .exe file on Window
 Note: The .exe file is only available for Windows operating systems. For other platforms or if you wish not to install, you can follow the instructions below to run the application using Python.
 
 ## Run Heat Sheet PDF Highlighter script without installing
-It is possible to run Heat Sheet PDF Highlighter as a python script. This script is tested with python 3.11 and python 3.12.
+It is possible to run Heat Sheet PDF Highlighter as a python script. This script is tested with python 3.11.
 All necessary Python dependencies can be installed via the provided `requirements.txt`.
 
 To set up the Heat Sheet PDF Highlighter, clone the repository and install the required dependencies:
