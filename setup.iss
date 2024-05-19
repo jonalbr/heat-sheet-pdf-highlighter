@@ -72,6 +72,9 @@ Source: "cx_build\python311.dll"; DestDir: "{app}"; Flags: ignoreversion
 Name: "{autoprograms}\{cm:MyAppName}"; Filename: "{app}\{#MyAppExeName}"
 Name: "{autodesktop}\{cm:MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
+[UninstallDelete]
+Type: filesandordirs; Name: "{userappdata}\Heat Sheet PDF Highlighter"
+
 [Code]
 function InitializeSetup: Boolean;
 var

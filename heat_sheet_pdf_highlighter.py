@@ -24,6 +24,7 @@ from tkinter import (
     ttk,
 )
 from typing import Dict
+import tempfile
 
 import requests
 from pymupdf import Page, utils, Rect, Document
@@ -494,7 +495,7 @@ class PDFHighlighterApp:
         self.update_label.pack(side="left", padx=10)
 
         self.update_label.bind("<Button-1>", lambda event: self.check_for_app_updates(current_version, force_check=True))
-        #self.update_label.bind("<Button-1>", lambda event: self.test_install_routine())
+        # self.update_label.bind("<Button-1>", lambda event: self.test_install_routine())
 
         # make version frame sticky to the bottom
         self.root.grid_rowconfigure(7, weight=1)
@@ -725,28 +726,6 @@ class PDFHighlighterApp:
 
         return latest_version
 
-    def test_install_routine(self, installer_path: Path = None):
-        if not installer_path:
-            installer_path = filedialog.askopenfilename(filetypes=[("Installer files", "*.exe")])
-        if not installer_path:
-            messagebox.showerror(self._("Error"), self._("No installer selected."))
-            return
-        
-        # Close the application
-        self.root.destroy()
-
-        # Get the current process id
-        pid = os.getpid()
-
-        # Create a STARTUPINFO object
-        startupinfo = subprocess.STARTUPINFO()
-
-        # Set the STARTF_USESHOWWINDOW flag
-        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-
-        # Run the update script without showing a window
-        subprocess.Popen([UPDATE_SCRIPT_PATH, str(pid), installer_path], startupinfo=startupinfo)
-
     def _get_latest_version_from_github(self, current_version: Version = Version.from_str(VERSION_STR), force_check: bool = False):
         # GitHub release URL
         release_url = "https://api.github.com/repos/jonalbr/heat-sheet-pdf-highlighter/releases/latest"
@@ -820,8 +799,9 @@ class PDFHighlighterApp:
         Args:
             download_url (str): The URL to download the installer from.
         """
-        # Get the path for the installer
-        installer_path = Path.home() / "Downloads" / "heat-sheet-pdf-highlighter-installer.exe"
+        # Create a temporary file for the installer
+        with tempfile.NamedTemporaryFile(suffix=".exe", delete=False) as temp_file:
+            installer_path = Path(temp_file.name)
 
         # Download the installer exe
         try:
@@ -831,7 +811,7 @@ class PDFHighlighterApp:
             messagebox.showerror(self._("Error"), self._("Failed to download the installer: {0}").format(str(e)))
 
         # Write the installer to the file
-        Path(installer_path).write_bytes(response.content)
+        installer_path.write_bytes(response.content)
 
         # Close the application
         self.root.destroy()
@@ -847,6 +827,38 @@ class PDFHighlighterApp:
 
         # Run the update script without showing a window
         subprocess.Popen([UPDATE_SCRIPT_PATH, str(pid), installer_path], startupinfo=startupinfo)
+
+    def test_install_routine(self, installer_path: Path = None):
+        if not installer_path:
+            installer_path = filedialog.askopenfilename(filetypes=[("Installer files", "*.exe")])
+        if not installer_path:
+            messagebox.showerror(self._("Error"), self._("No installer selected."))
+            return
+
+        # Create a temporary file for the installer
+        with tempfile.NamedTemporaryFile(suffix=".exe", delete=False) as temp_file:
+            installer_path_temp = Path(temp_file.name)
+            print(installer_path_temp)
+
+        # Write the installer to the file
+        installer_path = Path(installer_path)
+        buffer = installer_path.read_bytes()
+        installer_path_temp.write_bytes(buffer)
+
+        # Close the application
+        self.root.destroy()
+
+        # Get the current process id
+        pid = os.getpid()
+
+        # Create a STARTUPINFO object
+        startupinfo = subprocess.STARTUPINFO()
+
+        # Set the STARTF_USESHOWWINDOW flag
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+
+        # Run the update script without showing a window
+        subprocess.Popen([UPDATE_SCRIPT_PATH, str(pid), installer_path_temp], startupinfo=startupinfo)
 
 
 #####################################################################################

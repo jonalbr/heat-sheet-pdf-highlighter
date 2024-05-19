@@ -4,8 +4,9 @@ from pathlib import Path
 from cx_Freeze import setup, Executable
 
 # Set up logging
-logging.basicConfig(filename='cx_freeze.log', filemode='w', level=logging.DEBUG)
+logging.basicConfig(filename="cx_freeze.log", filemode="w", level=logging.DEBUG)
 logger = logging.getLogger()
+
 
 class StreamToLogger:
     def __init__(self, logger, level):
@@ -19,6 +20,7 @@ class StreamToLogger:
     def flush(self):
         pass
 
+
 # Redirect stdout and stderr to the logger
 sys.stdout = StreamToLogger(logger, logging.INFO)
 sys.stderr = StreamToLogger(logger, logging.ERROR)
@@ -29,14 +31,25 @@ base_dir = Path(__file__).parent
 # Dependencies are automatically detected, but it might need fine tuning.
 build_exe_options = {
     "packages": [],  # Required packages
-    "excludes": ['PyQt6', 'matplotlib', 'PySide2', 'numpy', 'unittest', 'jupyter_client', 'jupyter_core', 'matplotlib_inline', 'multiprocessing', 'scipy'],  # Exclude unnecessary packages to reduce size
-    "includes": ['pymupdf', 'PIL', 'requests', 'pymupdf.mupdf', 'pymupdf.utils'],  # Include required packages
+    "excludes": [
+        "PyQt6",
+        "matplotlib",
+        "PySide2",
+        "numpy",
+        "unittest",
+        "jupyter_client",
+        "jupyter_core",
+        "matplotlib_inline",
+        "multiprocessing",
+        "scipy",
+    ],  # Exclude unnecessary packages to reduce size
+    "includes": ["pymupdf", "PIL", "requests", "pymupdf.mupdf", "pymupdf.utils"],  # Include required packages
     "include_files": [
         (str(base_dir / "assets"), "assets"),
         (str(base_dir / "locales"), "locales"),
         (str(base_dir / "update_app.bat"), "update_app.bat"),
     ],
-    "build_exe": "cx_build"  # Output directory
+    "build_exe": "cx_build",  # Output directory
 }
 
 # GUI applications require a different base on Windows (the default is for a console application).
@@ -54,9 +67,5 @@ setup(
     license="GPL-3.0",
     license_file=str(base_dir / "LICENSE"),
     options={"build_exe": build_exe_options},
-    executables=[Executable(
-        str(base_dir / "heat_sheet_pdf_highlighter.py"),
-        base=base,
-        icon=str(base_dir / "assets/icon_no_background.ico")
-    )]
+    executables=[Executable(str(base_dir / "heat_sheet_pdf_highlighter.py"), base=base, icon=str(base_dir / "assets/icon_no_background.ico"))],
 )

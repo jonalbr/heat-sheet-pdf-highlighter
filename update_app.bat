@@ -14,4 +14,9 @@ if "%ERRORLEVEL%"=="0" (
 
 echo Process with PID %pid% has finished. Starting installer...
 
-start "" "%installer_path%" /SILENT
+start /wait "" "%installer_path%" /SILENT
+
+echo Installer has finished. Deleting installer file ...
+echo %installer_path%
+
+del /F "%installer_path%"
