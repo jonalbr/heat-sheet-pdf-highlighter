@@ -10,6 +10,7 @@
 [Setup]
 AppName={cm:MyAppName}
 AppId={#MyAppId}
+AppVersion={#MyAppVersion}
 AppVerName={cm:MyAppVerName, {#MyAppVersion}}
 WizardStyle=modern
 DefaultDirName={autopf}\{cm:MyAppName}
