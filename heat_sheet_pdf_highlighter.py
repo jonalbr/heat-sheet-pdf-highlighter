@@ -82,10 +82,14 @@ class Version:
         return cls(major, minor, patch, rc)
 
     def __lt__(self, other):
-        return (self.major, self.minor, self.patch, self.rc) < (other.major, other.minor, other.patch, other.rc)
+        self_rc = self.rc if self.rc is not None else -1
+        other_rc = other.rc if other.rc is not None else -1
+        return (self.major, self.minor, self.patch, self_rc) < (other.major, other.minor, other.patch, other_rc)
 
     def __gt__(self, other):
-        return (self.major, self.minor, self.patch, self.rc) > (other.major, other.minor, other.patch, other.rc)
+        self_rc = self.rc if self.rc is not None else -1
+        other_rc = other.rc if other.rc is not None else -1
+        return (self.major, self.minor, self.patch, self_rc) > (other.major, other.minor, other.patch, other_rc)
 
 
 ######################################################################
@@ -1029,9 +1033,14 @@ class PDFHighlighterApp:
             start_time = time.time()
 
             with open(installer_path, 'wb') as file:
+                last_update_time = time.time()
                 for data in response.iter_content(block_size):
                     file.write(data)
-                    self.root.after(0, self.update_progress_bar, len(data), start_time, total_size_in_bytes)
+                    self.progress_bar['value'] += len(data)  # Update the progress bar's value
+                    current_time = time.time()
+                    if current_time - last_update_time >= 0.25:  # Update the GUI every 1/4 second
+                        self.update_progress_bar(start_time, total_size_in_bytes)  # Call the method directly
+                        last_update_time = current_time
 
             if total_size_in_bytes != 0 and self.progress_bar['value'] != total_size_in_bytes:
                 print("ERROR, something went wrong")
@@ -1054,15 +1063,14 @@ class PDFHighlighterApp:
         # Run the update script without showing a window
         subprocess.Popen([UPDATE_SCRIPT_PATH, str(pid), installer_path], startupinfo=startupinfo)
 
-    def update_progress_bar(self, value, start_time, total_size_in_bytes):
-        self.progress_bar['value'] += value
+    def update_progress_bar(self, start_time, total_size_in_bytes):
         elapsed_time = time.time() - start_time
         speed = self.progress_bar['value'] / elapsed_time
         remaining_time = (total_size_in_bytes - self.progress_bar['value']) / speed
         downloaded_MB = self.progress_bar['value'] / (1024 * 1024)
         total_MB = total_size_in_bytes / (1024 * 1024)
         self.status_var.set(self._("Downloading... {0:.1f} MB of {1:.1f} MB, {2:.1f} seconds remaining").format(downloaded_MB, total_MB, remaining_time))
-        self.root.update_idletasks()
+        self.root.update()  # Update the GUI
 
 
 #####################################################################################
