@@ -671,7 +671,7 @@ class PDFHighlighterApp:
 
     def update_version_labels_text(self, latest_version: Version, current_version: Version = Version.from_str(VERSION_STR)):
         self.init_translatable_strings_version()
-        if latest_version is None or latest_version is False or latest_version < current_version:
+        if latest_version is None or latest_version is False:
             self.version_label_text = self.translatable_strings_version["version_update_failed"]
             self.version_color = "#9d6363"
             self.update_label_text = self.translatable_strings_update["Check for Updates"]
