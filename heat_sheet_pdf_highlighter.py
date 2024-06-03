@@ -5,6 +5,7 @@ import json
 import os
 import pickle
 import re
+import time
 import subprocess
 import sys
 import tempfile
@@ -45,32 +46,21 @@ CACHE_EXPIRY = datetime.timedelta(days=1)
 ######################################################################
 @dataclass
 class Version:
-    major: int
-    minor: int
-    patch: int
+    major: int = 0
+    minor: int = 0
+    patch: int = 0
+    rc: int = None
 
     def __str__(self):
-        return f"{self.major}.{self.minor}.{self.patch}"
-
-    @classmethod
-    def from_github(cls, version: str):
-        """
-        Create a Version object from a version string in the format 'vX.Y.Z'.
-
-        Args:
-            version (str): The version string.
-
-        Returns:
-            Version: The Version object.
-        """
-        version = version.lstrip("v")
-        major, minor, patch = re.findall(r"\d+", version)
-        return cls(int(major), int(minor), int(patch))
+        if self.rc:
+            return f"{self.major}.{self.minor}.{self.patch}-rc{self.rc}"
+        else:
+            return f"{self.major}.{self.minor}.{self.patch}"
 
     @classmethod
     def from_str(cls, version: str):
         """
-        Create a Version object from a version string in the format 'X.Y.Z'.
+        Create a Version object from a version string in the format 'X.Y.Z' or 'X.Y.Z-rcN'.
 
         Args:
             version (str): The version string.
@@ -78,14 +68,24 @@ class Version:
         Returns:
             Version: The Version object.
         """
-        major, minor, patch = re.findall(r"\d+", version)
-        return cls(int(major), int(minor), int(patch))
+        # Extract the version numbers and the optional rc number
+        parts = re.findall(r"\d+", version)
+
+        # Convert the version numbers to integers
+        major = int(parts[0])
+        minor = int(parts[1])
+        patch = int(parts[2])
+
+        # If there's a fourth part, it's the rc number
+        rc = int(parts[3]) if len(parts) > 3 else None
+
+        return cls(major, minor, patch, rc)
 
     def __lt__(self, other):
-        return (self.major, self.minor, self.patch) < (other.major, other.minor, other.patch)
+        return (self.major, self.minor, self.patch, self.rc) < (other.major, other.minor, other.patch, other.rc)
 
     def __gt__(self, other):
-        return (self.major, self.minor, self.patch) > (other.major, other.minor, other.patch)
+        return (self.major, self.minor, self.patch, self.rc) > (other.major, other.minor, other.patch, other.rc)
 
 
 ######################################################################
@@ -109,6 +109,7 @@ class AppSettings:
             "ask_for_update": "True",
             "update_available": "False",
             "newest_version_available": "0.0.0",
+            "beta": "False",
             "names": "",
         }
         self.settings: Dict = self.load_settings()
@@ -176,13 +177,13 @@ class AppSettings:
                         # Set the default language if not in the available options
                         settings_dict[key] = "en"
                 case "ask_for_update":
-                    if value not in [True, False]:
+                    if value not in ["True", "False"]:
                         # Set the default value for asking for update if not True or False
-                        settings_dict[key] = True
+                        settings_dict[key] = "True"
                 case "update_available":
-                    if value not in [True, False]:
+                    if value not in ["True", "False"]:
                         # Set the default value for update available if not True or False
-                        settings_dict[key] = False
+                        settings_dict[key] = "False"
                 case "newest_version_available":
                     if not isinstance(value, str) or value < VERSION_STR:
                         # Set the default value for newest version available if not a string or smaller than VERSION_STR
@@ -191,6 +192,10 @@ class AppSettings:
                     if not isinstance(value, str):
                         # Set the default value for names if not a string
                         settings_dict[key] = ""
+                case "beta":
+                    if value not in ["True", "False"]:
+                        # Set the default value for beta if not True or False
+                        settings_dict[key] = "False"
                 case _:
                     # Remove any additional keys that are not part of the default settings
                     settings_dict.pop(key)
@@ -330,17 +335,17 @@ def highlight_matching_data(
             line_text = utils.get_text(page, "text", clip=line_rect)  # Extract text within this rectangle
 
             # Check if the extracted line matches the relevant line pattern
-            if not re.search(relevant_line_pattern, line_text) or not filter_enabled:
+            if not re.search(relevant_line_pattern, line_text):
                 skipped_matches += 1
                 continue  # Skip highlighting if the line does not match the pattern
 
-            if highlight_mode == HighlightMode.ONLY_NAMES and not names_pattern.search(line_text):
+            if highlight_mode == HighlightMode.ONLY_NAMES and not names_pattern.search(line_text) and filter_enabled:
                 skipped_matches += 1
                 continue  # Skip highlighting if the line does not contain any of the names
 
             highlight = page.add_highlight_annot(line_rect)
 
-            if highlight_mode == HighlightMode.NAMES_DIFF_COLOR and names_pattern.search(line_text):
+            if highlight_mode == HighlightMode.NAMES_DIFF_COLOR and names_pattern.search(line_text) and filter_enabled:
                 highlight.set_colors(stroke=[0 / 255, 197 / 255, 255 / 255])  # Change color for lines with names to blue
                 highlight.update()
         else:
@@ -544,8 +549,8 @@ class PDFHighlighterApp:
         Tooltip(self.button_filter, text=self._("Configure highlighting lines with specific names."))
 
         # Progress bar
-        self.progress = ttk.Progressbar(self.root, orient="horizontal", length=400, mode="determinate")
-        self.progress.grid(row=4, column=0, columnspan=3, padx=10, pady=20, sticky="WE")
+        self.progress_bar = ttk.Progressbar(self.root, orient="horizontal", length=400, mode="determinate")
+        self.progress_bar.grid(row=4, column=0, columnspan=3, padx=10, pady=20, sticky="WE")
 
         # Status label
         self.status_var = StringVar(value=self._("Status: Waiting"))
@@ -776,7 +781,7 @@ class PDFHighlighterApp:
         self.processing_active = True
         search_str = self.search_phrase_var.get()
         only_relevant = bool(self.relevant_lines_var.get())
-        filter_enabled = bool(self.enable_filter.get())
+        filter_enabled = bool(self.enable_filter_var.get())
         highlight_mode = HighlightMode[self.highlight_mode_var.get()]
         names = [name.strip() for name in re.split(r",\s*", self.names_var.get()) if name.strip()]
 
@@ -850,7 +855,7 @@ class PDFHighlighterApp:
         Resets the UI to the initial state, regardless of whether processing was completed or aborted.
         """
         # This method should reset the UI components (progress bar, status message, start/abort button) ensuring it reflects the current state accurately.
-        self.progress["value"] = 0  # Reset progress bar
+        self.progress_bar["value"] = 0  # Reset progress bar
         # Reset the button to "Start" with the original command
         self.start_abort_button.config(text=self._("Start"), command=self.start_processing)
         if not self.processing_active:  # Only update the status if the processing was aborted
@@ -870,7 +875,7 @@ class PDFHighlighterApp:
             matches (int): The total number of matches found.
             skipped (int): The total number of matches skipped.
         """
-        self.progress["value"] = (current / total) * 100
+        self.progress_bar["value"] = (current / total) * 100
         self.status_var.set(
             self.n_(
                 "Processed: {0}/{1} pages. {2} match found. {3} skipped.", "Processed: {0}/{1} pages. {2} matches found. {3} skipped.", matches
@@ -906,7 +911,7 @@ class PDFHighlighterApp:
     def _get_latest_version_from_github(self, current_version: Version = Version.from_str(VERSION_STR), force_check: bool = False):
         # GitHub release URL
         release_url = "https://api.github.com/repos/jonalbr/heat-sheet-pdf-highlighter/releases/latest"
-
+        
         try:
             # Send GET request to GitHub API
             response = requests.get(release_url)
@@ -916,8 +921,40 @@ class PDFHighlighterApp:
             release_info = response.json()
 
             # Get the latest version number and download URL
-            latest_version = Version.from_github(release_info["tag_name"])
+            latest_version = Version.from_str(release_info["tag_name"])
             download_url = release_info["assets"][0]["browser_download_url"]
+
+
+            if self.app_settings.settings["beta"]:
+                release_url = "https://api.github.com/repos/jonalbr/heat-sheet-pdf-highlighter/releases"
+
+                # Send GET request to GitHub API
+                response = requests.get(release_url)
+                response.raise_for_status()
+
+                # Parse the response JSON
+                releases_info = response.json()
+
+                # Filter the releases to only include pre-releases
+                pre_releases = [release for release in releases_info if release["prerelease"]]
+
+                # If there are no pre-releases, return None or handle accordingly
+                if pre_releases:
+                    # Get the latest pre-release (the first one in the list as GitHub returns them in reverse chronological order)
+                    latest_pre_release = pre_releases[0]
+
+                    # Get the latest pre-release version number
+                    latest_pre_release_version = Version.from_str(latest_pre_release["tag_name"])
+
+                    # If the latest pre-release is newer than the latest release, update the latest version and download URL
+                    if latest_pre_release_version > latest_version:
+                        latest_version = latest_pre_release_version
+                        download_url = latest_pre_release["assets"][0]["browser_download_url"]
+                        self.app_settings.update_setting("newest_version_available", str(latest_version))
+                        self.app_settings.update_setting("ask_for_update", True)
+                else:
+                    self.app_settings.update_setting("newest_version_available", str(latest_version))
+                    self.app_settings.update_setting("ask_for_update", True)
 
             # reset ask_for_update if newer version than in newest_version_available is found
             if latest_version > Version.from_str(self.app_settings.settings["newest_version_available"]):
@@ -932,7 +969,7 @@ class PDFHighlighterApp:
                 # Prompt the user to install the update
                 update_choice = messagebox.askyesnocancel(
                     self._("Update Available"),
-                    self._(f"A new version ({0}) is available. Do you want to update?").format(latest_version),
+                    self._("A new version ({0}) is available. Do you want to update?").format(latest_version),
                     icon="question",
                     default="yes",
                     parent=self.root,
@@ -982,13 +1019,25 @@ class PDFHighlighterApp:
 
         # Download the installer exe
         try:
-            response = requests.get(download_url)
+            response = requests.get(download_url, stream=True)
             response.raise_for_status()
+
+            total_size_in_bytes = int(response.headers.get('content-length', 0))
+            block_size = 1024 # 1 KB
+
+            self.progress_bar['maximum'] = total_size_in_bytes
+            start_time = time.time()
+
+            with open(installer_path, 'wb') as file:
+                for data in response.iter_content(block_size):
+                    file.write(data)
+                    self.root.after(0, self.update_progress_bar, len(data), start_time, total_size_in_bytes)
+
+            if total_size_in_bytes != 0 and self.progress_bar['value'] != total_size_in_bytes:
+                print("ERROR, something went wrong")
+
         except requests.exceptions.HTTPError as e:
             messagebox.showerror(self._("Error"), self._("Failed to download the installer: {0}").format(str(e)))
-
-        # Write the installer to the file
-        installer_path.write_bytes(response.content)
 
         # Close the application
         self.root.destroy()
@@ -1005,37 +1054,15 @@ class PDFHighlighterApp:
         # Run the update script without showing a window
         subprocess.Popen([UPDATE_SCRIPT_PATH, str(pid), installer_path], startupinfo=startupinfo)
 
-    def test_install_routine(self, installer_path: Path = None):
-        if not installer_path:
-            installer_path = filedialog.askopenfilename(filetypes=[("Installer files", "*.exe")])
-        if not installer_path:
-            messagebox.showerror(self._("Error"), self._("No installer selected."))
-            return
-
-        # Create a temporary file for the installer
-        with tempfile.NamedTemporaryFile(suffix=".exe", delete=False) as temp_file:
-            installer_path_temp = Path(temp_file.name)
-            print(installer_path_temp)
-
-        # Write the installer to the file
-        installer_path = Path(installer_path)
-        buffer = installer_path.read_bytes()
-        installer_path_temp.write_bytes(buffer)
-
-        # Close the application
-        self.root.destroy()
-
-        # Get the current process id
-        pid = os.getpid()
-
-        # Create a STARTUPINFO object
-        startupinfo = subprocess.STARTUPINFO()
-
-        # Set the STARTF_USESHOWWINDOW flag
-        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-
-        # Run the update script without showing a window
-        subprocess.Popen([UPDATE_SCRIPT_PATH, str(pid), installer_path_temp], startupinfo=startupinfo)
+    def update_progress_bar(self, value, start_time, total_size_in_bytes):
+        self.progress_bar['value'] += value
+        elapsed_time = time.time() - start_time
+        speed = self.progress_bar['value'] / elapsed_time
+        remaining_time = (total_size_in_bytes - self.progress_bar['value']) / speed
+        downloaded_MB = self.progress_bar['value'] / (1024 * 1024)
+        total_MB = total_size_in_bytes / (1024 * 1024)
+        self.status_var.set(self._("Downloading... {0:.1f} MB of {1:.1f} MB, {2:.1f} seconds remaining").format(downloaded_MB, total_MB, remaining_time))
+        self.root.update_idletasks()
 
 
 #####################################################################################
