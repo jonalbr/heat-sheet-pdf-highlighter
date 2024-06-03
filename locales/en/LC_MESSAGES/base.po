@@ -2,12 +2,12 @@
 # Copyright (C) 2024 THE PACKAGE'S COPYRIGHT HOLDER
 # This file is distributed under the same license as the PACKAGE package.
 # Automatically generated, 2024.
-# 
+#
 msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2024-05-19 15:24+0200\n"
+"POT-Creation-Date: 2024-06-03 21:17+0200\n"
 "PO-Revision-Date: 2024-05-15 13:58+0200\n"
 "Last-Translator: Automatically generated\n"
 "Language-Team: none\n"
@@ -17,65 +17,65 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=2; plural=(n != 1);\n"
 
-#: ..\heat_sheet_pdf_highlighter.py:374
+#: ..\heat_sheet_pdf_highlighter.py:424
 #, python-brace-format
 msgid "Version: {0} (Update check failed)"
 msgstr "Version: {0} (Update check failed)"
 
-#: ..\heat_sheet_pdf_highlighter.py:375
+#: ..\heat_sheet_pdf_highlighter.py:425
 #, python-brace-format
 msgid "Version: {0} (New version available)"
 msgstr "Version: {0} (New version available)"
 
-#: ..\heat_sheet_pdf_highlighter.py:376
+#: ..\heat_sheet_pdf_highlighter.py:426
 #, python-brace-format
 msgid "Version: {0}"
 msgstr "Version: {0}"
 
-#: ..\heat_sheet_pdf_highlighter.py:379
+#: ..\heat_sheet_pdf_highlighter.py:429
 msgid "Check for Updates"
 msgstr "Check for Updates"
 
-#: ..\heat_sheet_pdf_highlighter.py:380
+#: ..\heat_sheet_pdf_highlighter.py:430
 msgid "Install Update"
 msgstr "Install Update"
 
-#: ..\heat_sheet_pdf_highlighter.py:387 ..\heat_sheet_pdf_highlighter.py:547
-#: ..\heat_sheet_pdf_highlighter.py:549
+#: ..\heat_sheet_pdf_highlighter.py:437 ..\heat_sheet_pdf_highlighter.py:711
+#: ..\heat_sheet_pdf_highlighter.py:713
 msgid "Heat sheet highlighter"
 msgstr "Heat sheet highlighter"
 
-#: ..\heat_sheet_pdf_highlighter.py:430 ..\heat_sheet_pdf_highlighter.py:564
+#: ..\heat_sheet_pdf_highlighter.py:480 ..\heat_sheet_pdf_highlighter.py:732
 msgid "Select the language"
 msgstr "Select the language"
 
-#: ..\heat_sheet_pdf_highlighter.py:433 ..\heat_sheet_pdf_highlighter.py:541
+#: ..\heat_sheet_pdf_highlighter.py:483 ..\heat_sheet_pdf_highlighter.py:705
 msgid "PDF-File:"
 msgstr "PDF-File:"
 
-#: ..\heat_sheet_pdf_highlighter.py:438 ..\heat_sheet_pdf_highlighter.py:439
-#: ..\heat_sheet_pdf_highlighter.py:558 ..\heat_sheet_pdf_highlighter.py:559
+#: ..\heat_sheet_pdf_highlighter.py:488 ..\heat_sheet_pdf_highlighter.py:489
+#: ..\heat_sheet_pdf_highlighter.py:724 ..\heat_sheet_pdf_highlighter.py:725
 msgid "Select the heat sheet pdf."
 msgstr "Select the heat sheet pdf."
 
-#: ..\heat_sheet_pdf_highlighter.py:441 ..\heat_sheet_pdf_highlighter.py:546
+#: ..\heat_sheet_pdf_highlighter.py:491 ..\heat_sheet_pdf_highlighter.py:710
 msgid "Browse"
 msgstr "Browse"
 
-#: ..\heat_sheet_pdf_highlighter.py:445 ..\heat_sheet_pdf_highlighter.py:542
+#: ..\heat_sheet_pdf_highlighter.py:495 ..\heat_sheet_pdf_highlighter.py:706
 msgid "Search term (Club name):"
 msgstr "Search term (Club name):"
 
-#: ..\heat_sheet_pdf_highlighter.py:453 ..\heat_sheet_pdf_highlighter.py:454
-#: ..\heat_sheet_pdf_highlighter.py:560 ..\heat_sheet_pdf_highlighter.py:561
+#: ..\heat_sheet_pdf_highlighter.py:503 ..\heat_sheet_pdf_highlighter.py:504
+#: ..\heat_sheet_pdf_highlighter.py:726 ..\heat_sheet_pdf_highlighter.py:727
 msgid "Enter the name of the club to highlight the results."
 msgstr "Enter the name of the club to highlight the results."
 
-#: ..\heat_sheet_pdf_highlighter.py:463 ..\heat_sheet_pdf_highlighter.py:543
+#: ..\heat_sheet_pdf_highlighter.py:520 ..\heat_sheet_pdf_highlighter.py:707
 msgid "Try to mark only relevant lines"
 msgstr "Try to mark only relevant lines"
 
-#: ..\heat_sheet_pdf_highlighter.py:465 ..\heat_sheet_pdf_highlighter.py:562
+#: ..\heat_sheet_pdf_highlighter.py:523 ..\heat_sheet_pdf_highlighter.py:728
 msgid ""
 "Only highlights the lines that contain the search term and match the "
 "expected format."
@@ -83,118 +83,171 @@ msgstr ""
 "Only highlights the lines that contain the search term and match the "
 "expected format."
 
-#: ..\heat_sheet_pdf_highlighter.py:472 ..\heat_sheet_pdf_highlighter.py:579
-#: ..\heat_sheet_pdf_highlighter.py:679
+#: ..\heat_sheet_pdf_highlighter.py:538 ..\heat_sheet_pdf_highlighter.py:715
+msgid "Enable Filter"
+msgstr "Enable Filter"
+
+#: ..\heat_sheet_pdf_highlighter.py:540 ..\heat_sheet_pdf_highlighter.py:729
+msgid "Enable highlighting lines with specific names."
+msgstr "Enable highlighting lines with specific names."
+
+#: ..\heat_sheet_pdf_highlighter.py:542 ..\heat_sheet_pdf_highlighter.py:589
+#: ..\heat_sheet_pdf_highlighter.py:714
+msgid "Filter"
+msgstr "Filter"
+
+#: ..\heat_sheet_pdf_highlighter.py:544 ..\heat_sheet_pdf_highlighter.py:730
+msgid "Configure highlighting lines with specific names."
+msgstr "Configure highlighting lines with specific names."
+
+#: ..\heat_sheet_pdf_highlighter.py:551 ..\heat_sheet_pdf_highlighter.py:747
+#: ..\heat_sheet_pdf_highlighter.py:859
 msgid "Status: Waiting"
 msgstr "Status: Waiting"
 
-#: ..\heat_sheet_pdf_highlighter.py:476 ..\heat_sheet_pdf_highlighter.py:545
-#: ..\heat_sheet_pdf_highlighter.py:675
+#: ..\heat_sheet_pdf_highlighter.py:555 ..\heat_sheet_pdf_highlighter.py:709
+#: ..\heat_sheet_pdf_highlighter.py:855
 msgid "Start"
 msgstr "Start"
 
-#: ..\heat_sheet_pdf_highlighter.py:478 ..\heat_sheet_pdf_highlighter.py:563
+#: ..\heat_sheet_pdf_highlighter.py:557 ..\heat_sheet_pdf_highlighter.py:731
 msgid "Start or cancel the highlight process."
 msgstr "Start or cancel the highlight process."
 
-#: ..\heat_sheet_pdf_highlighter.py:544
-msgid "Status: Language changed to english"
-msgstr "Status: Language changed to english"
+#: ..\heat_sheet_pdf_highlighter.py:606
+msgid "CSV and Text files"
+msgstr "CSV and Text files"
 
-#: ..\heat_sheet_pdf_highlighter.py:548
-msgid "Select language"
-msgstr "Select language"
+#: ..\heat_sheet_pdf_highlighter.py:606 ..\heat_sheet_pdf_highlighter.py:740
+msgid "All files"
+msgstr "All files"
 
-#: ..\heat_sheet_pdf_highlighter.py:570
-msgid "Status: Importing PDF. Please wait..."
-msgstr "Status: Importing PDF. Please wait..."
+#: ..\heat_sheet_pdf_highlighter.py:628
+msgid "Names"
+msgstr ""
 
-#: ..\heat_sheet_pdf_highlighter.py:577
-msgid "Status: PDF imported."
-msgstr "Status: PDF imported."
+#: ..\heat_sheet_pdf_highlighter.py:639
+msgid "Clear"
+msgstr "Clear"
 
-#: ..\heat_sheet_pdf_highlighter.py:587
+#: ..\heat_sheet_pdf_highlighter.py:642
+msgid "Import"
+msgstr "Import"
+
+#: ..\heat_sheet_pdf_highlighter.py:645
+msgid "Highlight Mode"
+msgstr "Highlight Mode"
+
+#: ..\heat_sheet_pdf_highlighter.py:650
+msgid "Highlight only lines with matched names"
+msgstr "Highlight only lines with matched names"
+
+#: ..\heat_sheet_pdf_highlighter.py:656
+msgid "Highlight lines with matched names in different color"
+msgstr "Highlight lines with matched names in different color"
+
+#: ..\heat_sheet_pdf_highlighter.py:666
+msgid "Apply"
+msgstr "Apply"
+
+#: ..\heat_sheet_pdf_highlighter.py:669 ..\heat_sheet_pdf_highlighter.py:755
 msgid "Abort"
 msgstr "Abort"
 
-#: ..\heat_sheet_pdf_highlighter.py:602 ..\heat_sheet_pdf_highlighter.py:614
-#: ..\heat_sheet_pdf_highlighter.py:730 ..\heat_sheet_pdf_highlighter.py:820
+#: ..\heat_sheet_pdf_highlighter.py:708
+msgid "Status: Language changed to english"
+msgstr "Status: Language changed to english"
+
+#: ..\heat_sheet_pdf_highlighter.py:712
+msgid "Select language"
+msgstr "Select language"
+
+#: ..\heat_sheet_pdf_highlighter.py:738
+msgid "Status: Importing PDF. Please wait..."
+msgstr "Status: Importing PDF. Please wait..."
+
+#: ..\heat_sheet_pdf_highlighter.py:740
+msgid "PDF files"
+msgstr "PDF files"
+
+#: ..\heat_sheet_pdf_highlighter.py:745
+msgid "Status: PDF imported."
+msgstr "Status: PDF imported."
+
+#: ..\heat_sheet_pdf_highlighter.py:769 ..\heat_sheet_pdf_highlighter.py:787
+#: ..\heat_sheet_pdf_highlighter.py:988 ..\heat_sheet_pdf_highlighter.py:1012
 msgid "Error"
 msgstr "Error"
 
-#: ..\heat_sheet_pdf_highlighter.py:602
+#: ..\heat_sheet_pdf_highlighter.py:769
 msgid "All fields are required!"
 msgstr "All fields are required!"
 
-#: ..\heat_sheet_pdf_highlighter.py:614
+#: ..\heat_sheet_pdf_highlighter.py:787
 msgid "Password-protected PDFs are not supported."
 msgstr "Password-protected PDFs are not supported."
 
-#: ..\heat_sheet_pdf_highlighter.py:624
+#: ..\heat_sheet_pdf_highlighter.py:797
 msgid "Status: Aborted by user."
 msgstr "Status: Aborted by user."
 
-#: ..\heat_sheet_pdf_highlighter.py:638
+#: ..\heat_sheet_pdf_highlighter.py:818
 msgid "Status: Saving PDF.. Please wait..."
 msgstr "Status: Saving PDF.. Please wait..."
 
-#: ..\heat_sheet_pdf_highlighter.py:643
+#: ..\heat_sheet_pdf_highlighter.py:823
 #, python-brace-format
 msgid "{0}_marked.pdf"
 msgstr "{0}_marked.pdf"
 
-#: ..\heat_sheet_pdf_highlighter.py:650
+#: ..\heat_sheet_pdf_highlighter.py:830
 msgid "Finished"
 msgstr "Finished"
 
-#: ..\heat_sheet_pdf_highlighter.py:652
+#: ..\heat_sheet_pdf_highlighter.py:832
 #, python-brace-format
 msgid "Processing complete: {0} match found. {1} skipped."
 msgid_plural "Processing complete: {0} matches found. {1} skipped."
 msgstr[0] "Processing complete: {0} match found. {1} skipped."
 msgstr[1] "Processing complete: {0} matches found. {1} skipped."
 
-#: ..\heat_sheet_pdf_highlighter.py:658 ..\heat_sheet_pdf_highlighter.py:660
+#: ..\heat_sheet_pdf_highlighter.py:838 ..\heat_sheet_pdf_highlighter.py:840
 msgid "Info"
 msgstr "Info"
 
-#: ..\heat_sheet_pdf_highlighter.py:658
+#: ..\heat_sheet_pdf_highlighter.py:838
 msgid "No output file selected; processing aborted after matches were found."
 msgstr "No output file selected; processing aborted after matches were found."
 
-#: ..\heat_sheet_pdf_highlighter.py:660
+#: ..\heat_sheet_pdf_highlighter.py:840
 msgid "Nothing to highlight; no file saved."
 msgstr "Nothing to highlight; no file saved."
 
-#: ..\heat_sheet_pdf_highlighter.py:677
+#: ..\heat_sheet_pdf_highlighter.py:857
 msgid "Status: Processing aborted."
 msgstr "Status: Processing aborted."
 
-#: ..\heat_sheet_pdf_highlighter.py:696
+#: ..\heat_sheet_pdf_highlighter.py:876
 #, python-brace-format
 msgid "Processed: {0}/{1} pages. {2} match found. {3} skipped."
 msgid_plural "Processed: {0}/{1} pages. {2} matches found. {3} skipped."
 msgstr[0] "Processed: {0}/{1} pages. {2} match found. {3} skipped."
 msgstr[1] "Processed: {0}/{1} pages. {2} matches found. {3} skipped."
 
-#: ..\heat_sheet_pdf_highlighter.py:730
-msgid "No installer selected."
-msgstr "No installer selected."
-
-#: ..\heat_sheet_pdf_highlighter.py:767
+#: ..\heat_sheet_pdf_highlighter.py:934
 msgid "Update Available"
 msgstr "Update Available"
 
-#: ..\heat_sheet_pdf_highlighter.py:768
+#: ..\heat_sheet_pdf_highlighter.py:935
 #, python-brace-format
 msgid "A new version ({0}) is available. Do you want to update?"
 msgstr "A new version ({0}) is available. Do you want to update?"
 
-#: ..\heat_sheet_pdf_highlighter.py:783
+#: ..\heat_sheet_pdf_highlighter.py:950
 msgid "Update Information"
 msgstr "Update Information"
 
-#: ..\heat_sheet_pdf_highlighter.py:785
+#: ..\heat_sheet_pdf_highlighter.py:952
 msgid ""
 "Click 'yes' to not be asked again for this update. You can still check "
 "manually for updates. If there is a newer version available, you will be "
@@ -204,25 +257,28 @@ msgstr ""
 "manually for updates. If there is a newer version available, you will be "
 "asked again."
 
-#: ..\heat_sheet_pdf_highlighter.py:793
+#: ..\heat_sheet_pdf_highlighter.py:960
 msgid "Up to Date"
 msgstr "Up to Date"
 
-#: ..\heat_sheet_pdf_highlighter.py:793
+#: ..\heat_sheet_pdf_highlighter.py:960
 msgid "You are already using the latest version."
 msgstr "You are already using the latest version."
 
-#: ..\heat_sheet_pdf_highlighter.py:798
-#
+#: ..\heat_sheet_pdf_highlighter.py:965
 msgid "Update Error"
 msgstr "Update Error"
 
-#: ..\heat_sheet_pdf_highlighter.py:798
+#: ..\heat_sheet_pdf_highlighter.py:965
 #, python-brace-format
 msgid "Failed to check for updates: {0}"
 msgstr "Failed to check for updates: {0}"
 
-#: ..\heat_sheet_pdf_highlighter.py:820
+#: ..\heat_sheet_pdf_highlighter.py:988
 #, python-brace-format
 msgid "Failed to download the installer: {0}"
 msgstr "Failed to download the installer: {0}"
+
+#: ..\heat_sheet_pdf_highlighter.py:1012
+msgid "No installer selected."
+msgstr "No installer selected."

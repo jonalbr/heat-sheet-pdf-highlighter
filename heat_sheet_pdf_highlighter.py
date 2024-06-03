@@ -1,3 +1,4 @@
+import csv
 import datetime
 import gettext
 import json
@@ -6,16 +7,20 @@ import pickle
 import re
 import subprocess
 import sys
+import tempfile
 import threading
 from dataclasses import dataclass
+from enum import IntEnum
 from io import BytesIO
 from pathlib import Path
 from tkinter import (
     LEFT,
     SOLID,
+    WORD,
     IntVar,
     Label,
     StringVar,
+    Text,
     Tk,
     Toplevel,
     Widget,
@@ -23,17 +28,16 @@ from tkinter import (
     messagebox,
     ttk,
 )
-from typing import Dict
-import tempfile
+from typing import Dict, List
 
 import requests
-from pymupdf import Page, utils, Rect, Document
 from PIL import Image, ImageTk
+from pymupdf import Document, Page, Rect, utils
 
 ######################################################################
 # Constants
 APP_NAME = "Heat Sheet PDF Highlighter"
-VERSION_STR = "1.0.0"
+VERSION_STR = "1.1.0"
 
 CACHE_EXPIRY = datetime.timedelta(days=1)
 
@@ -98,11 +102,14 @@ class AppSettings:
         self.default_settings = {
             "version": VERSION_STR,
             "search_str": "",
-            "mark_only_relevant_lines": 1,
+            "mark_only_relevant_lines": 1,  # 0 or 1
+            "enable_filter": 0,  # 0 or 1
+            "highlight_mode": "NAMES_DIFF_COLOR",  # "ONLY_NAMES" or "NAMES_DIFF_COLOR
             "language": "en",
             "ask_for_update": "True",
             "update_available": "False",
             "newest_version_available": "0.0.0",
+            "names": "",
         }
         self.settings: Dict = self.load_settings()
         self.validate_settings()
@@ -156,6 +163,14 @@ class AppSettings:
                     if value not in [0, 1]:
                         # Set the default value for marking only relevant lines if not 0 or 1
                         settings_dict[key] = 1
+                case "enable_filter":
+                    if value not in [0, 1]:
+                        # Set the default value for enabling the filter if not 0 or 1
+                        settings_dict[key] = 0
+                case "highlight_mode":
+                    if value not in ["ONLY_NAMES", "NAMES_DIFF_COLOR"]:
+                        # Set the default value for highlighting mode if not "ONLY_NAMES" or "NAMES_DIFF_COLOR"
+                        settings_dict[key] = "NAMES_DIFF_COLOR"
                 case "language":
                     if value not in language_options:
                         # Set the default language if not in the available options
@@ -172,6 +187,10 @@ class AppSettings:
                     if not isinstance(value, str) or value < VERSION_STR:
                         # Set the default value for newest version available if not a string or smaller than VERSION_STR
                         settings_dict[key] = "0.0.0"
+                case "names":
+                    if not isinstance(value, str):
+                        # Set the default value for names if not a string
+                        settings_dict[key] = ""
                 case _:
                     # Remove any additional keys that are not part of the default settings
                     settings_dict.pop(key)
@@ -259,7 +278,19 @@ def get_line_bbox(page: Page, match_rect: Rect):
     return line_rect
 
 
-def highlight_matching_data(page: Page, search_str: str, only_relevant: bool = False):
+class HighlightMode(IntEnum):
+    ONLY_NAMES = 0
+    NAMES_DIFF_COLOR = 1
+
+
+def highlight_matching_data(
+    page: Page,
+    search_str: str,
+    only_relevant: bool = True,
+    filter_enabled: bool = False,
+    names: List[str] = [],
+    highlight_mode: HighlightMode = HighlightMode.NAMES_DIFF_COLOR,
+):
     """
     Highlights the matching data on a given page based on the search string.
 
@@ -268,6 +299,12 @@ def highlight_matching_data(page: Page, search_str: str, only_relevant: bool = F
         search_str (str): The string to search for and highlight.
         only_relevant (bool, optional): If True, only highlights the data if it matches the relevant line pattern.
             Defaults to False.
+        filter_enabled (bool, optional): If True, enables filtering based on the relevant line pattern.
+            Defaults to False.
+        names (List[str], optional): A list of names to filter the data. Only lines containing any of these names will be highlighted.
+            Defaults to an empty list.
+        highlight_mode (HighlightMode, optional): The highlight mode to use. Can be one of the values from the HighlightMode enum.
+            Defaults to HighlightMode.NAMES_DIFF_COLOR.
 
     Returns:
         Tuple[int, int]: A tuple containing the number of matches found and the number of matches skipped.
@@ -282,24 +319,34 @@ def highlight_matching_data(page: Page, search_str: str, only_relevant: bool = F
         r"(?i)(?:Bahn\s)?\d+\s.*?\s" + re.escape(search_str) + r"\s.*?(?:(?:\d{2}[:.,]\d{2}(?:,|\.)\d{2})|(?:\d{2},\d{2})|(?:\d{2}\.\d{2})|NT)",
         re.DOTALL,  # Allows for matching across multiple lines
     )
+    names_pattern = re.compile(r"\b(?:{})\b".format("|".join([re.escape(name) for name in names])), re.IGNORECASE)
 
     for inst in text_instances:
         # Increment matches found
         matches_found += 1
-
+        line_rect = get_line_bbox(page, inst)  # Get the bounding box for the entire line
         if only_relevant:
             # Find the line of text that contains the instance
-            line_rect = get_line_bbox(page, inst)  # Get the bounding box for the entire line
             line_text = utils.get_text(page, "text", clip=line_rect)  # Extract text within this rectangle
+
             # Check if the extracted line matches the relevant line pattern
-            if not re.search(relevant_line_pattern, line_text):
+            if not re.search(relevant_line_pattern, line_text) or not filter_enabled:
                 skipped_matches += 1
                 continue  # Skip highlighting if the line does not match the pattern
 
-        # Highlight the line if it matches the pattern or if only_relevant is False
-        line_rect = get_line_bbox(page, inst)  # Ensure this line is included for both conditions
-        highlight = page.add_highlight_annot(line_rect)
-        highlight.update()
+            if highlight_mode == HighlightMode.ONLY_NAMES and not names_pattern.search(line_text):
+                skipped_matches += 1
+                continue  # Skip highlighting if the line does not contain any of the names
+
+            highlight = page.add_highlight_annot(line_rect)
+
+            if highlight_mode == HighlightMode.NAMES_DIFF_COLOR and names_pattern.search(line_text):
+                highlight.set_colors(stroke=[0 / 255, 197 / 255, 255 / 255])  # Change color for lines with names to blue
+                highlight.update()
+        else:
+            # Highlight the line if only_relevant is False
+            highlight = page.add_highlight_annot(line_rect)
+            highlight.update()
 
     return matches_found, skipped_matches
 
@@ -456,16 +503,45 @@ class PDFHighlighterApp:
         Tooltip(self.label_search_str, text=self._("Enter the name of the club to highlight the results."))
         Tooltip(self.entry_search_str, text=self._("Enter the name of the club to highlight the results."))
 
+        # frame  for filters
+        self.filter_frame = ttk.Frame(self.root)
+        self.filter_frame.grid(row=3, column=0, columnspan=3, sticky="WE", pady=2)
+
+        self.filter_frame.grid_columnconfigure(1, weight=1)
+
         # Options for highlighting
         self.relevant_lines_var = IntVar()
-        self.relevant_lines_var.set(self.app_settings.settings["mark_only_relevant_lines"])
+        self.relevant_lines_var.set(self.app_settings.settings.get("mark_only_relevant_lines", 1))
         self.relevant_lines_var.trace_add(
             "write", lambda *args: self.app_settings.update_setting("mark_only_relevant_lines", self.relevant_lines_var.get())
         )
 
-        self.checkbox_relevant_lines = ttk.Checkbutton(self.root, text=self._("Try to mark only relevant lines"), variable=self.relevant_lines_var)
-        self.checkbox_relevant_lines.grid(row=3, column=0, columnspan=3, sticky="W", padx=10, pady=2)
+        self.checkbox_relevant_lines = ttk.Checkbutton(
+            self.filter_frame, text=self._("Try to mark only relevant lines"), variable=self.relevant_lines_var
+        )
+        self.checkbox_relevant_lines.grid(row=0, column=0, sticky="W", padx=10)
         Tooltip(self.checkbox_relevant_lines, text=self._("Only highlights the lines that contain the search term and match the expected format."))
+
+        # Filter
+        self.names_var = StringVar()
+        self.names_var.set(self.app_settings.settings.get("names", ""))
+        self.names_var.trace_add("write", lambda *args: self.app_settings.update_setting("names", self.names_var.get()))
+
+        self.highlight_mode_var = StringVar()
+        self.highlight_mode_var.set(self.app_settings.settings.get("highlight_mode", HighlightMode.NAMES_DIFF_COLOR.name))
+        self.highlight_mode_var.trace_add("write", lambda *args: self.app_settings.update_setting("highlight_mode", self.highlight_mode_var.get()))
+
+        self.enable_filter_var = IntVar()
+        self.enable_filter_var.set(self.app_settings.settings.get("enable_filter", 0))
+        self.enable_filter_var.trace_add("write", lambda *args: self.app_settings.update_setting("enable_filter", self.enable_filter_var.get()))
+
+        self.checkbox_filter = ttk.Checkbutton(self.filter_frame, text=self._("Enable Filter"), variable=self.enable_filter_var)
+        self.checkbox_filter.grid(row=0, column=1, sticky="E", padx=10)
+        Tooltip(self.checkbox_filter, text=self._("Enable highlighting lines with specific names."))
+
+        self.button_filter = ttk.Button(self.filter_frame, text=self._("Filter"), command=self.open_filter_window)
+        self.button_filter.grid(row=0, column=2, sticky="E", padx=10)
+        Tooltip(self.button_filter, text=self._("Configure highlighting lines with specific names."))
 
         # Progress bar
         self.progress = ttk.Progressbar(self.root, orient="horizontal", length=400, mode="determinate")
@@ -507,6 +583,91 @@ class PDFHighlighterApp:
 
         # Set the initial state of the UI based on the settings
         self.on_language_change(self.app_settings.settings["language"])
+
+    def open_filter_window(self):
+        window = Toplevel(self.root)
+        window.title(self._("Filter"))
+
+        # Make the window modal
+        window.grab_set()
+        window.focus_set()
+
+        def apply_changes():
+            # Update original variables with values from temporary variables
+            self.names_var.set(entry_names.get("1.0", "end-1c"))
+            self.highlight_mode_var.set(temp_highlight_mode_var.get())
+            window.destroy()
+
+        def clear_text(*args):
+            entry_names.delete("1.0", "end")
+
+        def import_names(*args):
+            filename = filedialog.askopenfilename(
+                parent=window, filetypes=[(self._("CSV and Text files"), "*.csv;*.txt"), (self._("All files"), "*.*")]
+            )
+            if filename:
+                with open(filename, "r", encoding="utf-8") as file:
+                    if filename.endswith(".csv"):
+                        reader = csv.reader(file)
+                        names = next(reader)
+                    else:
+                        content = file.read()
+                        names = [name.strip() for name in re.split(r"[\n,]+", content)]
+                entry_names.delete("1.0", "end")
+                entry_names.insert("1.0", ", ".join(names))
+
+        def insert_comma(*args):
+            text = entry_names.get("1.0", "end-1c")
+            if not re.search(r",\s*$", text):
+                entry_names.insert("end", ", ")
+            return "break"
+
+        # Create temporary variables
+        temp_highlight_mode_var = StringVar(value=self.highlight_mode_var.get())
+
+        label_names = ttk.Label(window, text=self._("Names"))
+        label_names.grid(row=0, column=0, sticky="W", padx=10)
+
+        entry_names = Text(window, height=6, width=50, wrap=WORD)
+        entry_names.insert(1.0, self.names_var.get())
+        entry_names.grid(row=0, column=1, sticky="WE", padx=10)
+        entry_names.bind("<Return>", insert_comma)
+
+        button_frame = ttk.Frame(window)
+        button_frame.grid(row=1, column=1, sticky="W", padx=10, pady=10)
+
+        button_clear = ttk.Button(button_frame, text=self._("Clear"), command=clear_text)
+        button_clear.grid(row=0, column=0, sticky="W", padx=10)
+
+        button_import = ttk.Button(button_frame, text=self._("Import"), command=import_names)
+        button_import.grid(row=0, column=1, sticky="W", padx=10)
+
+        label_highlight_mode = ttk.Label(window, text=self._("Highlight Mode"))
+        label_highlight_mode.grid(row=3, column=0, sticky="W", padx=10)
+
+        # Define radio buttons for highlight mode
+        radio_highlight_only = ttk.Radiobutton(
+            window, text=self._("Highlight only lines with matched names"), variable=temp_highlight_mode_var, value=HighlightMode.ONLY_NAMES.name
+        )
+        radio_highlight_only.grid(row=3, column=1, sticky="W", padx=10)
+
+        radio_highlight_color = ttk.Radiobutton(
+            window,
+            text=self._("Highlight lines with matched names in different color"),
+            variable=temp_highlight_mode_var,
+            value=HighlightMode.NAMES_DIFF_COLOR.name,
+        )
+        radio_highlight_color.grid(row=4, column=1, sticky="W", padx=10)
+
+        # Create a frame for the buttons
+        button_frame = ttk.Frame(window)
+        button_frame.grid(row=5, column=0, columnspan=2, sticky="WE", padx=10, pady=10)
+
+        button_apply = ttk.Button(button_frame, text=self._("Apply"), command=apply_changes)
+        button_apply.pack(side="left", padx=10, expand=True)
+
+        button_abort = ttk.Button(button_frame, text=self._("Abort"), command=window.destroy)
+        button_abort.pack(side="right", padx=10, expand=True)
 
     def update_version_labels_text(self, latest_version: Version, current_version: Version = Version.from_str(VERSION_STR)):
         self.init_translatable_strings_version()
@@ -550,6 +711,8 @@ class PDFHighlighterApp:
         self.title.config(text=self._("Heat sheet highlighter"))
         self.language_menu.config(text=self._("Select language"))
         self.root.title(self._("Heat sheet highlighter"))
+        self.button_filter.config(text=self._("Filter"))
+        self.checkbox_filter.config(text=self._("Enable Filter"))
         self.init_translatable_strings_version()
         self.update_version_labels_text(
             Version.from_str(self.app_settings.settings["newest_version_available"]), Version.from_str(self.app_settings.settings["version"])
@@ -563,6 +726,8 @@ class PDFHighlighterApp:
         Tooltip(self.label_search_str, text=self._("Enter the name of the club to highlight the results."))
         Tooltip(self.entry_search_str, text=self._("Enter the name of the club to highlight the results."))
         Tooltip(self.checkbox_relevant_lines, text=self._("Only highlights the lines that contain the search term and match the expected format."))
+        Tooltip(self.checkbox_filter, text=self._("Enable highlighting lines with specific names."))
+        Tooltip(self.button_filter, text=self._("Configure highlighting lines with specific names."))
         Tooltip(self.start_abort_button, text=self._("Start or cancel the highlight process."))
         Tooltip(self.language_menu, text=self._("Select the language"))
 
@@ -572,7 +737,7 @@ class PDFHighlighterApp:
         """
         self.status_var.set(self._("Status: Importing PDF. Please wait..."))
         self.root.update_idletasks()
-        file_path = filedialog.askopenfilename(filetypes=[("PDF files", "*.pdf")])
+        file_path = filedialog.askopenfilename(filetypes=((self._("PDF files"), "*.pdf"), (self._("All files"), "*.*")))
         if file_path:
             file_name = Path(file_path).name
             self.pdf_file_var.set(file_name)  # Display only the file name
@@ -599,17 +764,22 @@ class PDFHighlighterApp:
         # Start the processing in a separate thread
         input_file = getattr(self, "input_file_full_path", None)
         search_str = self.search_phrase_var.get()
-        only_relevant = bool(self.relevant_lines_var.get())
 
         if not all([input_file, search_str]):
             messagebox.showerror(self._("Error"), self._("All fields are required!"))
             self.finalize_processing()
             return
 
-        threading.Thread(target=self.process_pdf, args=(input_file, search_str, only_relevant), daemon=True).start()
+        threading.Thread(target=self.process_pdf, args=(input_file,), daemon=True).start()
 
-    def process_pdf(self, input_file: str, search_str: str, only_relevant: bool):
+    def process_pdf(self, input_file: str):
         self.processing_active = True
+        search_str = self.search_phrase_var.get()
+        only_relevant = bool(self.relevant_lines_var.get())
+        filter_enabled = bool(self.enable_filter.get())
+        highlight_mode = HighlightMode[self.highlight_mode_var.get()]
+        names = [name.strip() for name in re.split(r",\s*", self.names_var.get()) if name.strip()]
+
         try:
             is_valid_path(input_file)
             document = Document(input_file)
@@ -628,7 +798,14 @@ class PDFHighlighterApp:
                     self.finalize_processing()
                     return
 
-                matches_found, skipped_matches = highlight_matching_data(page, search_str, only_relevant)
+                matches_found, skipped_matches = highlight_matching_data(
+                    page=page,
+                    search_str=search_str,
+                    only_relevant=only_relevant,
+                    filter_enabled=filter_enabled,
+                    names=names,
+                    highlight_mode=highlight_mode,
+                )
                 total_matches += matches_found
                 total_skipped += skipped_matches
                 self.update_progress(i, total_pages, total_matches, total_skipped)
