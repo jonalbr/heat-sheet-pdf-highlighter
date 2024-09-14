@@ -38,7 +38,7 @@ from pymupdf import Document, Page, Rect, utils
 ######################################################################
 # Constants
 APP_NAME = "Heat Sheet PDF Highlighter"
-VERSION_STR = "1.1.0"
+VERSION_STR = "1.1.1"
 
 CACHE_EXPIRY = datetime.timedelta(days=1)
 
@@ -350,7 +350,11 @@ def highlight_matching_data(
             highlight = page.add_highlight_annot(line_rect)
 
             if highlight_mode == HighlightMode.NAMES_DIFF_COLOR and names_pattern.search(line_text) and filter_enabled:
-                highlight.set_colors(stroke=[0 / 255, 197 / 255, 255 / 255])  # Change color for lines with names to blue
+                # light highlight blue
+                highlight.set_colors(stroke=[196 / 255, 250 / 255, 248 / 255])
+                highlight.update()
+            else:
+                highlight.set_colors(stroke=[255 / 255, 255 / 255, 166 / 255])
                 highlight.update()
         else:
             # Highlight the line if only_relevant is False
@@ -915,7 +919,7 @@ class PDFHighlighterApp:
     def _get_latest_version_from_github(self, current_version: Version = Version.from_str(VERSION_STR), force_check: bool = False):
         # GitHub release URL
         release_url = "https://api.github.com/repos/jonalbr/heat-sheet-pdf-highlighter/releases/latest"
-        
+
         try:
             # Send GET request to GitHub API
             response = requests.get(release_url)
@@ -927,7 +931,6 @@ class PDFHighlighterApp:
             # Get the latest version number and download URL
             latest_version = Version.from_str(release_info["tag_name"])
             download_url = release_info["assets"][0]["browser_download_url"]
-
 
             if self.app_settings.settings["beta"]:
                 release_url = "https://api.github.com/repos/jonalbr/heat-sheet-pdf-highlighter/releases"
@@ -1026,23 +1029,23 @@ class PDFHighlighterApp:
             response = requests.get(download_url, stream=True)
             response.raise_for_status()
 
-            total_size_in_bytes = int(response.headers.get('content-length', 0))
-            block_size = 1024 # 1 KB
+            total_size_in_bytes = int(response.headers.get("content-length", 0))
+            block_size = 1024  # 1 KB
 
-            self.progress_bar['maximum'] = total_size_in_bytes
+            self.progress_bar["maximum"] = total_size_in_bytes
             start_time = time.time()
 
-            with open(installer_path, 'wb') as file:
+            with open(installer_path, "wb") as file:
                 last_update_time = time.time()
                 for data in response.iter_content(block_size):
                     file.write(data)
-                    self.progress_bar['value'] += len(data)  # Update the progress bar's value
+                    self.progress_bar["value"] += len(data)  # Update the progress bar's value
                     current_time = time.time()
                     if current_time - last_update_time >= 0.25:  # Update the GUI every 1/4 second
                         self.update_progress_bar(start_time, total_size_in_bytes)  # Call the method directly
                         last_update_time = current_time
 
-            if total_size_in_bytes != 0 and self.progress_bar['value'] != total_size_in_bytes:
+            if total_size_in_bytes != 0 and self.progress_bar["value"] != total_size_in_bytes:
                 print("ERROR, something went wrong")
 
         except requests.exceptions.HTTPError as e:
@@ -1065,11 +1068,13 @@ class PDFHighlighterApp:
 
     def update_progress_bar(self, start_time, total_size_in_bytes):
         elapsed_time = time.time() - start_time
-        speed = self.progress_bar['value'] / elapsed_time
-        remaining_time = (total_size_in_bytes - self.progress_bar['value']) / speed
-        downloaded_MB = self.progress_bar['value'] / (1024 * 1024)
+        speed = self.progress_bar["value"] / elapsed_time
+        remaining_time = (total_size_in_bytes - self.progress_bar["value"]) / speed
+        downloaded_MB = self.progress_bar["value"] / (1024 * 1024)
         total_MB = total_size_in_bytes / (1024 * 1024)
-        self.status_var.set(self._("Downloading... {0:.1f} MB of {1:.1f} MB, {2:.1f} seconds remaining").format(downloaded_MB, total_MB, remaining_time))
+        self.status_var.set(
+            self._("Downloading... {0:.1f} MB of {1:.1f} MB, {2:.1f} seconds remaining").format(downloaded_MB, total_MB, remaining_time)
+        )
         self.root.update()  # Update the GUI
 
 

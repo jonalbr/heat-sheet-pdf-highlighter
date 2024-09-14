@@ -1,8 +1,3 @@
-pillow==10.3.0
-pymupdf==1.24.4
-requests==2.32.0
-# certifi==2024.2.2 # Installed as dependency for requests
-# charset-normalizer==3.3.2 # Installed as dependency for requests
-# idna==3.7 # Installed as dependency for requests
-# pymupdfb==1.24.3 # Installed as dependency for pymupdf
-# urllib3==2.2.1 # Installed as dependency for requests
+pillow==10.4.0
+pymupdf==1.24.10
+requests==2.32.3
