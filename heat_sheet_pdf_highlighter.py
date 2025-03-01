@@ -147,10 +147,7 @@ class AppSettings:
         self.settings[key] = value
         self.save_settings()
 
-    def validate_settings(self, settings: Dict = None):
-        settings_dict = settings or getattr(self, "settings", {}) or {}
-
-        # Mapping of setting keys to their validation lambdas
+    def _validate_value(self, key: str, value):
         validators = {
             "version": lambda v: VERSION_STR,
             "search_str": lambda v: v if isinstance(v, str) else "",
@@ -169,23 +166,23 @@ class AppSettings:
             "watermark_size": lambda v: int(v) if str(v).isdigit() and int(v) > 0 else 16,
             "watermark_position": lambda v: v if v in ["top", "bottom"] else "top",
         }
+        return validators[key](value) if key in validators else None
 
-        for key in list(settings_dict.keys()):
-            if key in validators:
-                settings_dict[key] = validators[key](settings_dict[key])
-            else:
-                # Remove keys that are not recognized
-                settings_dict.pop(key)
+    def validate_settings(self, settings: Dict = None):
+        # Get provided settings or use saved settings
+        settings_dict = settings or getattr(self, "settings", {}) or {}
+        validated = {}
 
-        # Add default settings for missing keys
-        for key, value in self.default_settings.items():
-            if key not in settings_dict:
-                settings_dict[key] = value
+        # Validate known keys first
+        for key in self.default_settings:
+            value = settings_dict.get(key, self.default_settings[key])
+            validated[key] = self._validate_value(key, value)
 
-        if settings:
-            return settings_dict
+        # Optionally keep extra keys? Currently we ignore them.
+        if settings is not None:
+            return validated
 
-        self.settings = settings_dict
+        self.settings = validated
         self.save_settings()
 
 
