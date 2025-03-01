@@ -29,16 +29,17 @@ from tkinter import (
     messagebox,
     ttk,
 )
+from tkinter import Button as tkButton
 from typing import Dict, List
 
 import requests
 from PIL import Image, ImageTk
-from pymupdf import Document, Page, Rect, utils
+from pymupdf import Document, Page, Rect, utils, Pixmap
 
 ######################################################################
 # Constants
 APP_NAME = "Heat Sheet PDF Highlighter"
-VERSION_STR = "1.1.1"
+VERSION_STR = "1.2.0"
 
 CACHE_EXPIRY = datetime.timedelta(days=1)
 
@@ -115,6 +116,11 @@ class AppSettings:
             "newest_version_available": "0.0.0",
             "beta": "False",
             "names": "",
+            "watermark_enabled": "False",
+            "watermark_text": "",
+            "watermark_color": "#FFA500",
+            "watermark_size": 16,
+            "watermark_position": "top",
         }
         self.settings: Dict = self.load_settings()
         self.validate_settings()
@@ -200,6 +206,25 @@ class AppSettings:
                     if value not in ["True", "False"]:
                         # Set the default value for beta if not True or False
                         settings_dict[key] = "False"
+                # New watermark validations:
+                case "watermark_enabled":
+                    if value not in ["True", "False"]:
+                        settings_dict[key] = "False"
+                case "watermark_text":
+                    if not isinstance(value, str):
+                        settings_dict[key] = ""
+                case "watermark_color":
+                    if not (isinstance(value, str) and value.startswith("#")):
+                        settings_dict[key] = "#FFA500"
+                case "watermark_size":
+                    try:
+                        if int(value) <= 0:
+                            settings_dict[key] = 16
+                    except:  # noqa: E722
+                        settings_dict[key] = 16
+                case "watermark_position":
+                    if value not in ["top", "bottom"]:
+                        settings_dict[key] = "top"
                 case _:
                     # Remove any additional keys that are not part of the default settings
                     settings_dict.pop(key)
@@ -238,7 +263,7 @@ def get_settings_path():
 # Paths
 
 # get the bundle dir if bundled or simply the __file__ dir if not bundled
-bundle_dir = getattr(sys, "_MEIPASS", Path(__file__).resolve().parent)  # get the bundle dir if bundled or simply the __file__ dir if not bundled
+bundle_dir = getattr(sys, "_MEIPASS", Path(__file__).resolve().parent)
 locales_dir = Path(bundle_dir) / "locales"  # get the locales dir
 
 # Add the path to the Breeze theme
@@ -364,17 +389,71 @@ def highlight_matching_data(
     return matches_found, skipped_matches
 
 
-def add_watermark(page: Page, text: str, font_size: int = 16, color: tuple = (1, 0.6, 0.2)):
+def add_watermark(page: Page, text: str, font_size: int, color_hex: str, position: str):
     """
-    Adds a watermark to the top of the given page.
+    Adds a watermark on the given PDF page.
+    """
+    # Convert hex color to normalized RGB tuple
+    r = int(color_hex[1:3], 16) / 255
+    g = int(color_hex[3:5], 16) / 255
+    b = int(color_hex[5:7], 16) / 255
+    rect = page.rect
+    try:
+        from PIL import ImageFont
 
-    Args:
-        page (Page): The PDF page object.
-        text (str): The watermark text.
-        font_size (int, optional): The font size of the watermark. Defaults to 16.
-        color (tuple, optional): The RGB color of the watermark. Defaults to light orange.
+        font = ImageFont.truetype("arial.ttf", font_size)
+    except OSError:
+        from PIL import ImageFont
+
+        font = ImageFont.load_default()
+    bbox = font.getbbox(text)
+    text_width = bbox[2] - bbox[0]
+    text_height = bbox[3] - bbox[1]
+    if position == "top":
+        text_x = rect.x0 + (rect.width - text_width) / 2
+        text_y = rect.y0 + 20
+    elif position == "bottom":
+        text_x = rect.x0 + (rect.width - text_width) / 2
+        text_y = rect.y1 - text_height - 20
+    page: utils = page
+    page.insert_text((text_x, text_y), text, fontsize=font_size, color=(r, g, b))
+
+
+def watermark_pdf_page(page: Page, settings: Dict):
     """
-    page.insert_text((200, 26), text, fontsize=font_size, color=color)
+    Applies watermark on a PDF page using settings.
+    """
+    if settings.get("watermark_enabled") == "True" and settings.get("watermark_text"):
+        add_watermark(
+            page,
+            text=settings.get("watermark_text"),
+            font_size=int(settings.get("watermark_size")),
+            color_hex=settings.get("watermark_color"),
+            position=settings.get("watermark_position"),
+        )
+
+
+# Replace overlay_watermark_on_image with:
+def overlay_watermark_on_image(image, text: str, font_size: int, color_hex: str, position: str):
+    from PIL import ImageDraw, ImageFont
+
+    draw = ImageDraw.Draw(image, "RGBA")
+    try:
+        font = ImageFont.truetype("arial.ttf", font_size)
+    except OSError:
+        font = ImageFont.load_default()
+    # Use textbbox to get dimensions
+    bbox = draw.textbbox((0, 0), text, font=font)
+    text_width = bbox[2] - bbox[0]
+    text_height = bbox[3] - bbox[1]
+    img_width, img_height = image.size
+    if position == "top":
+        pos = ((img_width - text_width) / 2, 10)
+    else:  # bottom
+        pos = ((img_width - text_width) / 2, img_height - text_height - 10)
+    # Solid color (opacity set to full)
+    draw.text(pos, text, font=font, fill=color_hex)
+    return image
 
 
 #####################################################################################
@@ -444,6 +523,10 @@ class PDFHighlighterApp:
 
         # Initialize the UI components
         self.setup_ui()
+        self.preview_window = None  # Track active preview window
+        self.current_preview_page = 1
+        self.last_watermark_data = {}  # To store last settings
+        self.last_preview_origin = None
 
     def init_translatable_strings_version(self):
         self.translatable_strings_version = {
@@ -542,9 +625,7 @@ class PDFHighlighterApp:
             "write", lambda *args: self.app_settings.update_setting("mark_only_relevant_lines", self.relevant_lines_var.get())
         )
 
-        self.checkbox_relevant_lines = ttk.Checkbutton(
-            self.filter_frame, text=self._("Try to mark only relevant lines"), variable=self.relevant_lines_var
-        )
+        self.checkbox_relevant_lines = ttk.Checkbutton(self.filter_frame, text=self._("Mark only relevant lines"), variable=self.relevant_lines_var)
         self.checkbox_relevant_lines.grid(row=0, column=0, sticky="W", padx=10)
         Tooltip(self.checkbox_relevant_lines, text=self._("Only highlights the lines that contain the search term and match the expected format."))
 
@@ -561,13 +642,13 @@ class PDFHighlighterApp:
         self.enable_filter_var.set(self.app_settings.settings.get("enable_filter", 0))
         self.enable_filter_var.trace_add("write", lambda *args: self.app_settings.update_setting("enable_filter", self.enable_filter_var.get()))
 
-        self.checkbox_filter = ttk.Checkbutton(self.filter_frame, text=self._("Enable Filter"), variable=self.enable_filter_var)
-        self.checkbox_filter.grid(row=0, column=1, sticky="E", padx=10)
-        Tooltip(self.checkbox_filter, text=self._("Enable highlighting lines with specific names."))
-
         self.button_filter = ttk.Button(self.filter_frame, text=self._("Filter"), command=self.open_filter_window)
-        self.button_filter.grid(row=0, column=2, sticky="E", padx=10)
+        self.button_filter.grid(row=0, column=1, sticky="E", padx=10)
         Tooltip(self.button_filter, text=self._("Configure highlighting lines with specific names."))
+
+        self.button_watermark = ttk.Button(self.filter_frame, text=self._("Watermark"), command=self.open_watermark_window)
+        self.button_watermark.grid(row=0, column=2, sticky="E", padx=10)
+        Tooltip(self.button_watermark, text=self._("Configure watermark options."))
 
         # Progress bar
         self.progress_bar = ttk.Progressbar(self.root, orient="horizontal", length=400, mode="determinate")
@@ -613,15 +694,13 @@ class PDFHighlighterApp:
     def open_filter_window(self):
         window = Toplevel(self.root)
         window.title(self._("Filter"))
-
-        # Make the window modal
         window.grab_set()
         window.focus_set()
 
         def apply_changes():
-            # Update original variables with values from temporary variables
             self.names_var.set(entry_names.get("1.0", "end-1c"))
             self.highlight_mode_var.set(temp_highlight_mode_var.get())
+            self.enable_filter_var.set(self.enable_filter_var.get())
             window.destroy()
 
         def clear_text(*args):
@@ -648,19 +727,21 @@ class PDFHighlighterApp:
                 entry_names.insert("end", ", ")
             return "break"
 
-        # Create temporary variables
-        temp_highlight_mode_var = StringVar(value=self.highlight_mode_var.get())
+        self.checkbox_filter = ttk.Checkbutton(window, text=self._("Enable Filter"), variable=self.enable_filter_var)
+        self.checkbox_filter.grid(row=0, column=0, columnspan=2, sticky="W", padx=10, pady=5)
+        Tooltip(self.checkbox_filter, text=self._("Enable highlighting lines with specific names."))
 
+        temp_highlight_mode_var = StringVar(value=self.highlight_mode_var.get())
         label_names = ttk.Label(window, text=self._("Names"))
-        label_names.grid(row=0, column=0, sticky="W", padx=10)
+        label_names.grid(row=1, column=0, sticky="W", padx=10)
 
         entry_names = Text(window, height=6, width=50, wrap=WORD)
         entry_names.insert(1.0, self.names_var.get())
-        entry_names.grid(row=0, column=1, sticky="WE", padx=10)
+        entry_names.grid(row=1, column=1, sticky="WE", padx=10)
         entry_names.bind("<Return>", insert_comma)
 
         button_frame = ttk.Frame(window)
-        button_frame.grid(row=1, column=1, sticky="W", padx=10, pady=10)
+        button_frame.grid(row=2, column=1, sticky="W", padx=10, pady=10)
 
         button_clear = ttk.Button(button_frame, text=self._("Clear"), command=clear_text)
         button_clear.grid(row=0, column=0, sticky="W", padx=10)
@@ -671,29 +752,203 @@ class PDFHighlighterApp:
         label_highlight_mode = ttk.Label(window, text=self._("Highlight Mode"))
         label_highlight_mode.grid(row=3, column=0, sticky="W", padx=10)
 
-        # Define radio buttons for highlight mode
         radio_highlight_only = ttk.Radiobutton(
-            window, text=self._("Highlight only lines with matched names"), variable=temp_highlight_mode_var, value=HighlightMode.ONLY_NAMES.name
+            window,
+            text=self._("Highlight lines with matched names in blue, others are not highlighted"),
+            variable=temp_highlight_mode_var,
+            value=HighlightMode.ONLY_NAMES.name,
         )
         radio_highlight_only.grid(row=3, column=1, sticky="W", padx=10)
 
         radio_highlight_color = ttk.Radiobutton(
             window,
-            text=self._("Highlight lines with matched names in different color"),
+            text=self._("Highlight lines with matched names in blue, others in yellow"),
             variable=temp_highlight_mode_var,
             value=HighlightMode.NAMES_DIFF_COLOR.name,
         )
         radio_highlight_color.grid(row=4, column=1, sticky="W", padx=10)
 
-        # Create a frame for the buttons
-        button_frame = ttk.Frame(window)
-        button_frame.grid(row=5, column=0, columnspan=2, sticky="WE", padx=10, pady=10)
+        button_frame2 = ttk.Frame(window)
+        button_frame2.grid(row=5, column=0, columnspan=2, sticky="WE", padx=10, pady=10)
 
-        button_apply = ttk.Button(button_frame, text=self._("Apply"), command=apply_changes)
+        button_apply = ttk.Button(button_frame2, text=self._("Apply"), command=apply_changes)
         button_apply.pack(side="left", padx=10, expand=True)
 
-        button_abort = ttk.Button(button_frame, text=self._("Abort"), command=window.destroy)
+        button_abort = ttk.Button(button_frame2, text=self._("Cancel"), command=window.destroy)
         button_abort.pack(side="right", padx=10, expand=True)
+
+    # Update open_watermark_window (remove opacity; add preview page spinbox and color preselects):
+    def open_watermark_window(self):
+        window = Toplevel(self.root)
+        window.title(self._("Watermark Settings"))
+        # Removed window.grab_set() to allow closing/minimizing preview window
+        window.focus_set()
+        # Removed preview page input since navigation buttons now handle page changes
+        temp_enabled = IntVar(value=1 if self.app_settings.settings.get("watermark_enabled") == "True" else 0)
+        temp_text = StringVar(value=self.app_settings.settings.get("watermark_text"))
+        temp_color = StringVar(value=self.app_settings.settings.get("watermark_color"))
+        temp_size = StringVar(value=str(self.app_settings.settings.get("watermark_size")))
+        temp_position = StringVar(value=self.app_settings.settings.get("watermark_position"))
+        Label(window, text=self._("Enable Watermark")).grid(row=0, column=0, sticky="W", padx=10, pady=5)
+        chk = ttk.Checkbutton(window, variable=temp_enabled)
+        chk.grid(row=0, column=1, sticky="W", padx=10, pady=5)
+        Label(window, text=self._("Watermark Text")).grid(row=1, column=0, sticky="W", padx=10, pady=5)
+        entry_text = ttk.Entry(window, textvariable=temp_text)
+        entry_text.grid(row=1, column=1, padx=10, pady=5)
+        Label(window, text=self._("Color (hex)")).grid(row=2, column=0, sticky="W", padx=10, pady=5)
+        entry_color = ttk.Entry(window, textvariable=temp_color)
+        entry_color.grid(row=2, column=1, padx=10, pady=5)
+        # Preselect color frame remains unchanged...
+        preselect_frame = ttk.Frame(window)
+        preselect_frame.grid(row=3, column=0, columnspan=2, padx=10, pady=5, sticky="W")
+        Label(preselect_frame, text=self._("Preselect Color:")).pack(side="left")
+
+        preset_colors = ["#FFA500", "#FF0000", "#00FF00", "#0000FF"]
+        preselect_buttons = {}
+
+        def on_color_select(color):
+            temp_color.set(color)
+            for col, btn in preselect_buttons.items():
+                btn.config(relief="flat" if col != color else "sunken")
+
+        for col in preset_colors:
+            btn = tkButton(preselect_frame, bg=col, width=3, height=1, relief="flat", command=lambda c=col: on_color_select(c))
+            btn.pack(side="left", padx=2)
+            preselect_buttons[col] = btn
+
+        def on_color_entry(*args):
+            for btn in preselect_buttons.values():
+                btn.config(relief="flat")
+
+        temp_color.trace_add("write", on_color_entry)
+        Label(window, text=self._("Size")).grid(row=4, column=0, sticky="W", padx=10, pady=5)
+        entry_size = ttk.Spinbox(window, from_=1, to=100, textvariable=temp_size, width=5)
+        entry_size.grid(row=4, column=1, padx=10, pady=5, sticky="W")
+        Label(window, text=self._("Position")).grid(row=5, column=0, sticky="W", padx=10, pady=5)
+        # Allow only "top" and "bottom"
+        position_options = ["top", "bottom"]
+        option_position = ttk.OptionMenu(window, temp_position, temp_position.get(), *position_options)
+        option_position.grid(row=5, column=1, padx=10, pady=5, sticky="W")
+
+        # Remove preview page input
+        def preview(force_open=True):
+            # Use the current preview page (kept in self.current_preview_page)
+            self.preview_watermark(
+                temp_enabled.get(),
+                temp_text.get(),
+                temp_color.get(),
+                int(temp_size.get()),
+                temp_position.get(),
+                self.current_preview_page,
+                origin=window,
+                force_open=force_open,
+            )
+
+        # Dynamic update: only update if preview window exists (do not open one)
+        def update_preview(*args):
+            preview(force_open=False)
+
+        temp_enabled.trace_add("write", update_preview)
+        temp_text.trace_add("write", update_preview)
+        temp_color.trace_add("write", update_preview)
+        temp_size.trace_add("write", update_preview)
+        temp_position.trace_add("write", update_preview)
+        btn_preview = ttk.Button(window, text=self._("Preview"), command=lambda: preview(force_open=True))
+        btn_preview.grid(row=7, column=0, columnspan=2, pady=10)
+
+        def apply_changes():
+            self.app_settings.update_setting("watermark_enabled", "True" if temp_enabled.get() else "False")
+            self.app_settings.update_setting("watermark_text", temp_text.get())
+            self.app_settings.update_setting("watermark_color", temp_color.get())
+            self.app_settings.update_setting("watermark_size", int(temp_size.get()))
+            self.app_settings.update_setting("watermark_position", temp_position.get())
+            window.destroy()
+
+        btn_apply = ttk.Button(window, text=self._("Apply"), command=apply_changes)
+        btn_apply.grid(row=8, column=0, pady=10, padx=10, sticky="E")
+        btn_cancel = ttk.Button(window, text=self._("Cancel"), command=window.destroy)
+        btn_cancel.grid(row=8, column=1, pady=10, padx=10, sticky="W")
+
+    def preview_watermark(self, enabled, text, color, size, position, preview_page, origin=None, force_open=True):
+        if not hasattr(self, "input_file_full_path"):
+            messagebox.showerror(self._("Error"), self._("Please select a PDF first for preview."))
+            return
+        try:
+            document = Document(self.input_file_full_path)
+            if preview_page == len(document) + 1:
+                self.change_preview_page(-1) # Go back to last page
+                document.close()
+                return
+            elif preview_page > len(document) or preview_page < 1:
+                self.change_preview_page(0, reset=True)  # Reset to first page
+                document.close()
+            page: utils = document[preview_page - 1]
+            pix: Pixmap = page.get_pixmap()
+
+            image = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+            if enabled and text:
+                image = overlay_watermark_on_image(image, text, size, color, position)
+
+            # Save last settings and origin for dynamic updates and navigation
+            self.last_watermark_data = {"enabled": enabled, "text": text, "color": color, "size": size, "position": position}
+            self.last_preview_origin = origin if origin else self.root
+
+            # If preview_window exists, update image; otherwise, only open window if force_open is True.
+            if self.preview_window and self.preview_window.winfo_exists():
+                self.preview_window.lift()
+                if force_open:
+                    self.preview_window.focus_set()  # Only force focus when preview is explicitly opened
+                img_tk = ImageTk.PhotoImage(image)
+                # Find and update the image label without changing widget focus.
+                for widget in self.preview_window.winfo_children():
+                    if isinstance(widget, Label):
+                        widget.configure(image=img_tk)
+                        widget.image = img_tk  # keep reference
+                        break
+            else:
+                if force_open:
+                    self.preview_window = Toplevel()
+                    self.preview_window.title(self._("Watermark Preview"))
+                    # Position next to the origin window
+                    ox = self.last_preview_origin.winfo_rootx()
+                    oy = self.last_preview_origin.winfo_rooty()
+                    ow = self.last_preview_origin.winfo_width()
+                    self.preview_window.geometry(f"+{ox + ow + 10}+{oy}")
+                    self.preview_window.transient(None)
+                    self.preview_window.grab_release()
+                    self.preview_window.protocol("WM_DELETE_WINDOW", self.preview_window.destroy)
+                    img_tk = ImageTk.PhotoImage(image)
+                    img_label = Label(self.preview_window, image=img_tk)
+                    img_label.image = img_tk  # keep reference
+                    img_label.pack()
+                    # Navigation buttons frame
+                    nav_frame = ttk.Frame(self.preview_window)
+                    nav_frame.pack(pady=5)
+                    prev_btn = ttk.Button(nav_frame, text=self._("Previous Page"), command=lambda: self.change_preview_page(-1))
+                    prev_btn.pack(side="left", padx=5)
+                    next_btn = ttk.Button(nav_frame, text=self._("Next Page"), command=lambda: self.change_preview_page(1))
+                    next_btn.pack(side="left", padx=5)
+            document.close()
+        except Exception as e:
+            messagebox.showerror(self._("Error"), str(e))
+
+    # New method to change preview page
+    def change_preview_page(self, delta: int, reset: bool = False):
+        if reset:
+            self.current_preview_page = 1
+        else:
+            self.current_preview_page = max(1, self.current_preview_page + delta)
+        # Re-call preview_watermark with stored settings
+        if self.last_watermark_data:
+            self.preview_watermark(
+                self.last_watermark_data["enabled"],
+                self.last_watermark_data["text"],
+                self.last_watermark_data["color"],
+                self.last_watermark_data["size"],
+                self.last_watermark_data["position"],
+                self.current_preview_page,
+                origin=self.last_preview_origin,
+            )
 
     def update_version_labels_text(self, latest_version: Version, current_version: Version = Version.from_str(VERSION_STR)):
         self.init_translatable_strings_version()
@@ -730,15 +985,15 @@ class PDFHighlighterApp:
         # Update the text in the GUI
         self.label_pdf_file.config(text=self._("PDF-File:"))
         self.label_search_str.config(text=self._("Search term (Club name):"))
-        self.checkbox_relevant_lines.config(text=self._("Try to mark only relevant lines"))
-        self.status_var.set(self._("Status: Language changed to english"))
+        self.checkbox_relevant_lines.config(text=self._("Mark only relevant lines"))
+        self.status_var.set(self._("Status: Language changed to English."))
         self.start_abort_button.config(text=self._("Start"))
         self.browse_button.config(text=self._("Browse"))
         self.title.config(text=self._("Heat sheet highlighter"))
         self.language_menu.config(text=self._("Select language"))
         self.root.title(self._("Heat sheet highlighter"))
         self.button_filter.config(text=self._("Filter"))
-        self.checkbox_filter.config(text=self._("Enable Filter"))
+        self.button_watermark.config(text=self._("Watermark"))
         self.init_translatable_strings_version()
         self.update_version_labels_text(
             Version.from_str(self.app_settings.settings["newest_version_available"]), Version.from_str(self.app_settings.settings["version"])
@@ -752,8 +1007,8 @@ class PDFHighlighterApp:
         Tooltip(self.label_search_str, text=self._("Enter the name of the club to highlight the results."))
         Tooltip(self.entry_search_str, text=self._("Enter the name of the club to highlight the results."))
         Tooltip(self.checkbox_relevant_lines, text=self._("Only highlights the lines that contain the search term and match the expected format."))
-        Tooltip(self.checkbox_filter, text=self._("Enable highlighting lines with specific names."))
         Tooltip(self.button_filter, text=self._("Configure highlighting lines with specific names."))
+        Tooltip(self.button_watermark, text=self._("Configure watermark options."))
         Tooltip(self.start_abort_button, text=self._("Start or cancel the highlight process."))
         Tooltip(self.language_menu, text=self._("Select the language"))
 
@@ -777,7 +1032,6 @@ class PDFHighlighterApp:
         """
         Starts the PDF processing based on the selected file and search parameters.
         """
-        # Change the button to "Abort" and its command to abort_processing
         self.start_abort_button.config(text=self._("Abort"), command=self.finalize_processing)
 
         # Set processing flag to True
@@ -824,9 +1078,7 @@ class PDFHighlighterApp:
                     self.finalize_processing()
                     return
 
-                # Add watermark to the page
-                #add_watermark(page, "Jonas Albrecht - SGS Hamburg")
-
+                # Highlight the matching data on the page
                 matches_found, skipped_matches = highlight_matching_data(
                     page=page,
                     search_str=search_str,
@@ -837,6 +1089,11 @@ class PDFHighlighterApp:
                 )
                 total_matches += matches_found
                 total_skipped += skipped_matches
+                
+                # Apply watermark on each page if enabled
+                watermark_pdf_page(page, self.app_settings.settings)
+
+                # Update the progress bar and status message
                 self.update_progress(i, total_pages, total_matches, total_skipped)
 
             total_marked = total_matches - total_skipped
