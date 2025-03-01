@@ -3,7 +3,6 @@ import datetime
 import gettext
 import json
 import os
-import pickle
 import re
 import subprocess
 import sys
@@ -1166,30 +1165,56 @@ class PDFHighlighterApp:
 
     def check_for_app_updates(self, current_version: Version = Version.from_str(VERSION_STR), force_check: bool = False):
         """
-        Check for updates and prompt the user to install if a new version is available.
+        Checks for application updates by comparing the current version with the latest version available.
+        Args:
+            current_version (Version): The current version of the application. Defaults to the version specified by VERSION_STR.
+            force_check (bool): If True, forces an update check regardless of cache. Defaults to False.
+        Returns:
+            Version: The latest version available.
+        The function performs the following steps:
+        1. If `force_check` is False, it attempts to load the cached latest version and its cache time.
+        2. If the cache is valid (i.e., not expired), it returns the cached latest version.
+        3. If the cache is invalid or `force_check` is True, it fetches the latest version from GitHub.
+        4. Caches the fetched latest version and the current time.
+        5. Updates the version labels with the latest and current versions.
+        6. Returns the latest version.
         """
         now = datetime.datetime.now()
 
-        if not force_check and os.path.exists(CACHE_FILE):
-            with open(CACHE_FILE, "rb") as f:
-                cache_time, latest_version = pickle.load(f)
-                if now - cache_time < CACHE_EXPIRY:
-                    return latest_version
+        if not force_check:
+            cache_time, latest_version = load_cache()
+            if cache_time and now - cache_time < CACHE_EXPIRY:
+                return latest_version
 
-        # Perform the update check...
+        # ... perform the update check ...
         latest_version = self._get_latest_version_from_github(current_version=current_version, force_check=force_check)
 
-        # Cache the result
-        with open(CACHE_FILE, "wb") as f:
-            pickle.dump((now, latest_version), f)
+        # Cache the result using JSON
+        save_cache(now, latest_version)
 
-        # update the version label
         self.update_version_labels_text(latest_version, current_version)
         self.update_version_labels()
 
         return latest_version
 
     def _get_latest_version_from_github(self, current_version: Version = Version.from_str(VERSION_STR), force_check: bool = False):
+        """
+        Check for the latest version of the application on GitHub and prompt the user to update if a newer version is available.
+        Args:
+            current_version (Version): The current version of the application. Defaults to the version specified by VERSION_STR.
+            force_check (bool): If True, forces the check for updates and prompts the user even if they have previously declined. Defaults to False.
+        Returns:
+            Version: The latest version available on GitHub, or False if the check failed.
+        Raises:
+            requests.exceptions.RequestException: If there is an error while making the request to the GitHub API.
+        Behavior:
+            - Sends a GET request to the GitHub API to fetch the latest release information.
+            - If the application is set to check for beta versions, it also fetches pre-release information.
+            - Compares the latest version with the current version.
+            - Prompts the user to update if a newer version is available and the user has not previously declined.
+            - Updates application settings based on the user's choice.
+            - If force_check is True, informs the user if they are already up to date or retries on failure.
+        """
         # GitHub release URL
         release_url = "https://api.github.com/repos/jonalbr/heat-sheet-pdf-highlighter/releases/latest"
 
@@ -1390,6 +1415,27 @@ class Tooltip:
         self.tipwindow = None
         if tw:
             tw.destroy()
+
+
+def save_cache(cache_time, latest_version):
+    cache_data = {
+        "cache_time": cache_time.isoformat(),
+        "latest_version": str(latest_version)
+    }
+    CACHE_FILE.touch()
+    CACHE_FILE.write_text(json.dumps(cache_data, indent=4))
+
+def load_cache():
+    CACHE_FILE.touch()
+    try:
+        data = json.loads(CACHE_FILE.read_text())
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        CACHE_FILE.unlink()
+        CACHE_FILE.touch()
+        return None, None
+    cache_time = datetime.datetime.fromisoformat(data["cache_time"])
+    latest_version = Version.from_str(data["latest_version"])
+    return cache_time, latest_version
 
 
 if __name__ == "__main__":
