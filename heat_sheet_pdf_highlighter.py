@@ -29,7 +29,7 @@ from tkinter import (
     ttk,
 )
 from tkinter import Button as tkButton
-from typing import Dict, List
+from typing import Dict, List, Tuple
 
 import requests
 from PIL import Image, ImageTk
@@ -148,94 +148,43 @@ class AppSettings:
         self.save_settings()
 
     def validate_settings(self, settings: Dict = None):
-        """
-        Validates the given settings dictionary and updates it with default values if necessary.
-
-        Args:
-            settings (Dict, optional): The settings dictionary to be validated. Defaults to None.
-
-        Returns:
-            Dict: The validated settings dictionary.
-        """
         settings_dict = settings or getattr(self, "settings", {}) or {}
-        for key in list(settings_dict.keys()):
-            value = settings_dict[key]
-            match key:
-                case "version":
-                    if value != VERSION_STR:
-                        # Update the version to the current version
-                        settings_dict[key] = VERSION_STR
-                case "search_str":
-                    if not isinstance(value, str):
-                        # Set the default search string if not a string
-                        settings_dict[key] = ""
-                case "mark_only_relevant_lines":
-                    if value not in [0, 1]:
-                        # Set the default value for marking only relevant lines if not 0 or 1
-                        settings_dict[key] = 1
-                case "enable_filter":
-                    if value not in [0, 1]:
-                        # Set the default value for enabling the filter if not 0 or 1
-                        settings_dict[key] = 0
-                case "highlight_mode":
-                    if value not in ["ONLY_NAMES", "NAMES_DIFF_COLOR"]:
-                        # Set the default value for highlighting mode if not "ONLY_NAMES" or "NAMES_DIFF_COLOR"
-                        settings_dict[key] = "NAMES_DIFF_COLOR"
-                case "language":
-                    if value not in language_options:
-                        # Set the default language if not in the available options
-                        settings_dict[key] = "en"
-                case "ask_for_update":
-                    if value not in ["True", "False"]:
-                        # Set the default value for asking for update if not True or False
-                        settings_dict[key] = "True"
-                case "update_available":
-                    if value not in ["True", "False"]:
-                        # Set the default value for update available if not True or False
-                        settings_dict[key] = "False"
-                case "newest_version_available":
-                    if not isinstance(value, str) or value < VERSION_STR:
-                        # Set the default value for newest version available if not a string or smaller than VERSION_STR
-                        settings_dict[key] = "0.0.0"
-                case "names":
-                    if not isinstance(value, str):
-                        # Set the default value for names if not a string
-                        settings_dict[key] = ""
-                case "beta":
-                    if value not in ["True", "False"]:
-                        # Set the default value for beta if not True or False
-                        settings_dict[key] = "False"
-                # New watermark validations:
-                case "watermark_enabled":
-                    if value not in ["True", "False"]:
-                        settings_dict[key] = "False"
-                case "watermark_text":
-                    if not isinstance(value, str):
-                        settings_dict[key] = ""
-                case "watermark_color":
-                    if not (isinstance(value, str) and value.startswith("#")):
-                        settings_dict[key] = "#FFA500"
-                case "watermark_size":
-                    try:
-                        if int(value) <= 0:
-                            settings_dict[key] = 16
-                    except:  # noqa: E722
-                        settings_dict[key] = 16
-                case "watermark_position":
-                    if value not in ["top", "bottom"]:
-                        settings_dict[key] = "top"
-                case _:
-                    # Remove any additional keys that are not part of the default settings
-                    settings_dict.pop(key)
 
-        # add the default settings if they are not in the settings
+        # Mapping of setting keys to their validation lambdas
+        validators = {
+            "version": lambda v: VERSION_STR,
+            "search_str": lambda v: v if isinstance(v, str) else "",
+            "mark_only_relevant_lines": lambda v: v if v in [0, 1] else 1,
+            "enable_filter": lambda v: v if v in [0, 1] else 0,
+            "highlight_mode": lambda v: v if v in ["ONLY_NAMES", "NAMES_DIFF_COLOR"] else "NAMES_DIFF_COLOR",
+            "language": lambda v: v if v in language_options else "en",
+            "ask_for_update": lambda v: v if v in ["True", "False"] else "True",
+            "update_available": lambda v: v if v in ["True", "False"] else "False",
+            "newest_version_available": lambda v: v if isinstance(v, str) and v >= VERSION_STR else "0.0.0",
+            "names": lambda v: v if isinstance(v, str) else "",
+            "beta": lambda v: v if v in ["True", "False"] else "False",
+            "watermark_enabled": lambda v: v if v in ["True", "False"] else "False",
+            "watermark_text": lambda v: v if isinstance(v, str) else "",
+            "watermark_color": lambda v: v if isinstance(v, str) and v.startswith("#") else "#FFA500",
+            "watermark_size": lambda v: int(v) if str(v).isdigit() and int(v) > 0 else 16,
+            "watermark_position": lambda v: v if v in ["top", "bottom"] else "top",
+        }
+
+        for key in list(settings_dict.keys()):
+            if key in validators:
+                settings_dict[key] = validators[key](settings_dict[key])
+            else:
+                # Remove keys that are not recognized
+                settings_dict.pop(key)
+
+        # Add default settings for missing keys
         for key, value in self.default_settings.items():
-            if key not in settings_dict.keys():
+            if key not in settings_dict:
                 settings_dict[key] = value
-        # if called with settings as argument, update the settings attribute
+
         if settings:
             return settings_dict
-        # if called without argument, update the settings attribute and save the file
+
         self.settings = settings_dict
         self.save_settings()
 
@@ -875,7 +824,7 @@ class PDFHighlighterApp:
         try:
             document = Document(self.input_file_full_path)
             if preview_page == len(document) + 1:
-                self.change_preview_page(-1) # Go back to last page
+                self.change_preview_page(-1)  # Go back to last page
                 document.close()
                 return
             elif preview_page > len(document) or preview_page < 1:
@@ -1088,7 +1037,7 @@ class PDFHighlighterApp:
                 )
                 total_matches += matches_found
                 total_skipped += skipped_matches
-                
+
                 # Apply watermark on each page if enabled
                 watermark_pdf_page(page, self.app_settings.settings)
 
@@ -1197,116 +1146,77 @@ class PDFHighlighterApp:
 
         return latest_version
 
+    def _fetch_release_info(self, url: str):
+        response = requests.get(url)
+        response.raise_for_status()
+        return response.json()
+
+    def _handle_beta_releases(self, latest_version: Version, download_url: str) -> Tuple[Version, str]:
+        beta_url = "https://api.github.com/repos/jonalbr/heat-sheet-pdf-highlighter/releases"
+        releases_info = self._fetch_release_info(beta_url)
+        pre_releases = [release for release in releases_info if release["prerelease"]]
+        if pre_releases:
+            latest_pre_release = pre_releases[0]
+            latest_pre_release_version = Version.from_str(latest_pre_release["tag_name"])
+            if latest_pre_release_version > latest_version:
+                latest_version = latest_pre_release_version
+                download_url = latest_pre_release["assets"][0]["browser_download_url"]
+                self.app_settings.update_setting("newest_version_available", str(latest_version))
+                self.app_settings.update_setting("ask_for_update", True)
+        else:
+            self.app_settings.update_setting("newest_version_available", str(latest_version))
+            self.app_settings.update_setting("ask_for_update", True)
+        return latest_version, download_url
+
     def _get_latest_version_from_github(self, current_version: Version = Version.from_str(VERSION_STR), force_check: bool = False):
-        """
-        Check for the latest version of the application on GitHub and prompt the user to update if a newer version is available.
-        Args:
-            current_version (Version): The current version of the application. Defaults to the version specified by VERSION_STR.
-            force_check (bool): If True, forces the check for updates and prompts the user even if they have previously declined. Defaults to False.
-        Returns:
-            Version: The latest version available on GitHub, or False if the check failed.
-        Raises:
-            requests.exceptions.RequestException: If there is an error while making the request to the GitHub API.
-        Behavior:
-            - Sends a GET request to the GitHub API to fetch the latest release information.
-            - If the application is set to check for beta versions, it also fetches pre-release information.
-            - Compares the latest version with the current version.
-            - Prompts the user to update if a newer version is available and the user has not previously declined.
-            - Updates application settings based on the user's choice.
-            - If force_check is True, informs the user if they are already up to date or retries on failure.
-        """
-        # GitHub release URL
         release_url = "https://api.github.com/repos/jonalbr/heat-sheet-pdf-highlighter/releases/latest"
-
         try:
-            # Send GET request to GitHub API
-            response = requests.get(release_url)
-            response.raise_for_status()
-
-            # Parse the response JSON
-            release_info = response.json()
-
-            # Get the latest version number and download URL
+            release_info = self._fetch_release_info(release_url)
             latest_version = Version.from_str(release_info["tag_name"])
             download_url = release_info["assets"][0]["browser_download_url"]
 
             if self.app_settings.settings["beta"]:
-                release_url = "https://api.github.com/repos/jonalbr/heat-sheet-pdf-highlighter/releases"
+                latest_version, download_url = self._handle_beta_releases(latest_version, download_url)
 
-                # Send GET request to GitHub API
-                response = requests.get(release_url)
-                response.raise_for_status()
-
-                # Parse the response JSON
-                releases_info = response.json()
-
-                # Filter the releases to only include pre-releases
-                pre_releases = [release for release in releases_info if release["prerelease"]]
-
-                # If there are no pre-releases, return None or handle accordingly
-                if pre_releases:
-                    # Get the latest pre-release (the first one in the list as GitHub returns them in reverse chronological order)
-                    latest_pre_release = pre_releases[0]
-
-                    # Get the latest pre-release version number
-                    latest_pre_release_version = Version.from_str(latest_pre_release["tag_name"])
-
-                    # If the latest pre-release is newer than the latest release, update the latest version and download URL
-                    if latest_pre_release_version > latest_version:
-                        latest_version = latest_pre_release_version
-                        download_url = latest_pre_release["assets"][0]["browser_download_url"]
-                        self.app_settings.update_setting("newest_version_available", str(latest_version))
-                        self.app_settings.update_setting("ask_for_update", True)
-                else:
-                    self.app_settings.update_setting("newest_version_available", str(latest_version))
-                    self.app_settings.update_setting("ask_for_update", True)
-
-            # reset ask_for_update if newer version than in newest_version_available is found
+            # Use a guard clause to update settings when necessary
             if latest_version > Version.from_str(self.app_settings.settings["newest_version_available"]):
                 self.app_settings.update_setting("ask_for_update", True)
-                # safe the newest version in the settings
                 self.app_settings.update_setting("newest_version_available", str(latest_version))
 
-            # Compare the latest version with the current version
-            if latest_version > current_version and (self.app_settings.settings["ask_for_update"] or force_check):
-                # update
-
-                # Prompt the user to install the update
-                update_choice = messagebox.askyesnocancel(
-                    self._("Update Available"),
-                    self._("A new version ({0}) is available. Do you want to update?").format(latest_version),
-                    icon="question",
-                    default="yes",
-                    parent=self.root,
-                )
-                if update_choice is None:
-                    # User clicked "Aboard" - will ask again next time
-                    pass
-                elif update_choice:
-                    # User clicked "Yes"
-                    self.download_and_run_installer(download_url)
-                else:
-                    # Inform the user that they will not be asked again, but if there is a new version, they can still check manually
-                    # also if there is a newer new version than the one in newest_version_available, they will be asked again
-                    choice = messagebox.askokcancel(
-                        self._("Update Information"),
-                        self._(
-                            "Click 'yes' to not be asked again for this update. You can still check manually for updates. If there is a newer version available, you will be asked again."
-                        ),
-                    )
-                    if choice:
-                        self.app_settings.update_setting("ask_for_update", False)
-            else:
+            # Check if an update is needed
+            if not (latest_version > current_version and (self.app_settings.settings["ask_for_update"] or force_check)):
                 if force_check:
-                    # Inform the user that they are already up to date
                     messagebox.showinfo(self._("Up to Date"), self._("You are already using the latest version."))
+                return latest_version
+
+            # Prompt the user to install the update if needed
+            update_choice = messagebox.askyesnocancel(
+                self._("Update Available"),
+                self._("A new version ({0}) is available. Do you want to update?").format(latest_version),
+                icon="question",
+                default="yes",
+                parent=self.root,
+            )
+
+            if update_choice is None:
+                # User clicked "Abort" – ask again next time
+                return latest_version
+            elif update_choice:
+                self.download_and_run_installer(download_url)
+            else:
+                choice = messagebox.askokcancel(
+                    self._("Update Information"),
+                    self._(
+                        "Click 'yes' to not be asked again for this update. "
+                        "You can still check manually for updates. If there is a newer version available, you will be asked again."
+                    ),
+                )
+                if choice:
+                    self.app_settings.update_setting("ask_for_update", False)
             return latest_version
         except requests.exceptions.RequestException as e:
-            if force_check:
-                # Handle any errors that occur during the update check
-                choice = messagebox.askretrycancel(self._("Update Error"), self._("Failed to check for updates: {0}").format(str(e)))
-                if choice:
-                    self.check_for_app_updates(current_version, force_check)
+            if force_check and messagebox.askretrycancel(self._("Update Error"), self._("Failed to check for updates: {0}").format(str(e))):
+                return self.check_for_app_updates(current_version, force_check)
             else:
                 print(f"Failed to check for updates: {str(e)}")
             return False
@@ -1418,12 +1328,10 @@ class Tooltip:
 
 
 def save_cache(cache_time, latest_version):
-    cache_data = {
-        "cache_time": cache_time.isoformat(),
-        "latest_version": str(latest_version)
-    }
+    cache_data = {"cache_time": cache_time.isoformat(), "latest_version": str(latest_version)}
     CACHE_FILE.touch()
     CACHE_FILE.write_text(json.dumps(cache_data, indent=4))
+
 
 def load_cache():
     CACHE_FILE.touch()
