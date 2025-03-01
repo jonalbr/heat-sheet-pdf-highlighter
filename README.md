@@ -1,5 +1,7 @@
 # Heat Sheet PDF Highlighter
 
+[![CodeFactor](https://www.codefactor.io/repository/github/jonalbr/heat-sheet-pdf-highlighter/badge)](https://www.codefactor.io/repository/github/jonalbr/heat-sheet-pdf-highlighter)
+
 ## Overview
 Heat Sheet PDF Highlighter is a Python application designed to facilitate the highlighting of heat sheets in PDF format. This tool is especially useful for individuals and organizations needing to annotate and highlight structured documents like event line-ups or timetables in a standardized PDF format.
 

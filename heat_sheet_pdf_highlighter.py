@@ -3,13 +3,12 @@ import datetime
 import gettext
 import json
 import os
-import pickle
 import re
-import time
 import subprocess
 import sys
 import tempfile
 import threading
+import time
 from dataclasses import dataclass
 from enum import IntEnum
 from io import BytesIO
@@ -29,16 +28,17 @@ from tkinter import (
     messagebox,
     ttk,
 )
-from typing import Dict, List
+from tkinter import Button as tkButton
+from typing import Dict, List, Tuple
 
 import requests
 from PIL import Image, ImageTk
-from pymupdf import Document, Page, Rect, utils
+from pymupdf import Document, Page, Rect, utils, Pixmap
 
 ######################################################################
 # Constants
 APP_NAME = "Heat Sheet PDF Highlighter"
-VERSION_STR = "1.1.1"
+VERSION_STR = "1.2.0"
 
 CACHE_EXPIRY = datetime.timedelta(days=1)
 
@@ -115,6 +115,11 @@ class AppSettings:
             "newest_version_available": "0.0.0",
             "beta": "False",
             "names": "",
+            "watermark_enabled": "False",
+            "watermark_text": "",
+            "watermark_color": "#FFA500",
+            "watermark_size": 16,
+            "watermark_position": "top",
         }
         self.settings: Dict = self.load_settings()
         self.validate_settings()
@@ -142,77 +147,42 @@ class AppSettings:
         self.settings[key] = value
         self.save_settings()
 
+    def _validate_value(self, key: str, value):
+        validators = {
+            "version": lambda v: VERSION_STR,
+            "search_str": lambda v: v if isinstance(v, str) else "",
+            "mark_only_relevant_lines": lambda v: v if v in [0, 1] else 1,
+            "enable_filter": lambda v: v if v in [0, 1] else 0,
+            "highlight_mode": lambda v: v if v in ["ONLY_NAMES", "NAMES_DIFF_COLOR"] else "NAMES_DIFF_COLOR",
+            "language": lambda v: v if v in language_options else "en",
+            "ask_for_update": lambda v: v if v in ["True", "False"] else "True",
+            "update_available": lambda v: v if v in ["True", "False"] else "False",
+            "newest_version_available": lambda v: v if isinstance(v, str) and v >= VERSION_STR else "0.0.0",
+            "names": lambda v: v if isinstance(v, str) else "",
+            "beta": lambda v: v if v in ["True", "False"] else "False",
+            "watermark_enabled": lambda v: v if v in ["True", "False"] else "False",
+            "watermark_text": lambda v: v if isinstance(v, str) else "",
+            "watermark_color": lambda v: v if isinstance(v, str) and v.startswith("#") else "#FFA500",
+            "watermark_size": lambda v: int(v) if str(v).isdigit() and int(v) > 0 else 16,
+            "watermark_position": lambda v: v if v in ["top", "bottom"] else "top",
+        }
+        return validators[key](value) if key in validators else None
+
     def validate_settings(self, settings: Dict = None):
-        """
-        Validates the given settings dictionary and updates it with default values if necessary.
-
-        Args:
-            settings (Dict, optional): The settings dictionary to be validated. Defaults to None.
-
-        Returns:
-            Dict: The validated settings dictionary.
-        """
+        # Get provided settings or use saved settings
         settings_dict = settings or getattr(self, "settings", {}) or {}
-        for key in list(settings_dict.keys()):
-            value = settings_dict[key]
-            match key:
-                case "version":
-                    if value != VERSION_STR:
-                        # Update the version to the current version
-                        settings_dict[key] = VERSION_STR
-                case "search_str":
-                    if not isinstance(value, str):
-                        # Set the default search string if not a string
-                        settings_dict[key] = ""
-                case "mark_only_relevant_lines":
-                    if value not in [0, 1]:
-                        # Set the default value for marking only relevant lines if not 0 or 1
-                        settings_dict[key] = 1
-                case "enable_filter":
-                    if value not in [0, 1]:
-                        # Set the default value for enabling the filter if not 0 or 1
-                        settings_dict[key] = 0
-                case "highlight_mode":
-                    if value not in ["ONLY_NAMES", "NAMES_DIFF_COLOR"]:
-                        # Set the default value for highlighting mode if not "ONLY_NAMES" or "NAMES_DIFF_COLOR"
-                        settings_dict[key] = "NAMES_DIFF_COLOR"
-                case "language":
-                    if value not in language_options:
-                        # Set the default language if not in the available options
-                        settings_dict[key] = "en"
-                case "ask_for_update":
-                    if value not in ["True", "False"]:
-                        # Set the default value for asking for update if not True or False
-                        settings_dict[key] = "True"
-                case "update_available":
-                    if value not in ["True", "False"]:
-                        # Set the default value for update available if not True or False
-                        settings_dict[key] = "False"
-                case "newest_version_available":
-                    if not isinstance(value, str) or value < VERSION_STR:
-                        # Set the default value for newest version available if not a string or smaller than VERSION_STR
-                        settings_dict[key] = "0.0.0"
-                case "names":
-                    if not isinstance(value, str):
-                        # Set the default value for names if not a string
-                        settings_dict[key] = ""
-                case "beta":
-                    if value not in ["True", "False"]:
-                        # Set the default value for beta if not True or False
-                        settings_dict[key] = "False"
-                case _:
-                    # Remove any additional keys that are not part of the default settings
-                    settings_dict.pop(key)
+        validated = {}
 
-        # add the default settings if they are not in the settings
-        for key, value in self.default_settings.items():
-            if key not in settings_dict.keys():
-                settings_dict[key] = value
-        # if called with settings as argument, update the settings attribute
-        if settings:
-            return settings_dict
-        # if called without argument, update the settings attribute and save the file
-        self.settings = settings_dict
+        # Validate known keys first
+        for key in self.default_settings:
+            value = settings_dict.get(key, self.default_settings[key])
+            validated[key] = self._validate_value(key, value)
+
+        # Optionally keep extra keys? Currently we ignore them.
+        if settings is not None:
+            return validated
+
+        self.settings = validated
         self.save_settings()
 
 
@@ -238,7 +208,7 @@ def get_settings_path():
 # Paths
 
 # get the bundle dir if bundled or simply the __file__ dir if not bundled
-bundle_dir = getattr(sys, "_MEIPASS", Path(__file__).resolve().parent)  # get the bundle dir if bundled or simply the __file__ dir if not bundled
+bundle_dir = getattr(sys, "_MEIPASS", Path(__file__).resolve().parent)
 locales_dir = Path(bundle_dir) / "locales"  # get the locales dir
 
 # Add the path to the Breeze theme
@@ -325,7 +295,7 @@ def highlight_matching_data(
 
     # Adjusted regex to consider new lines between elements of the pattern
     relevant_line_pattern = re.compile(
-        r"(?i)(?:Bahn\s)?\d+\s.*?\s" + re.escape(search_str) + r"\s.*?(?:(?:\d{2}[:.,]\d{2}(?:,|\.)\d{2})|(?:\d{2},\d{2})|(?:\d{2}\.\d{2})|NT)",
+        r"(?i)(?:Bahn\s)?\d+\s.*?\s" + re.escape(search_str) + r"\s.*?(?:\d{1,2}[:.,;]\d{2}(?:,|\.)\d{2}|\d{1,2}[:.,;]\d{2}|NT|ohne)",
         re.DOTALL,  # Allows for matching across multiple lines
     )
     names_pattern = re.compile(r"\b(?:{})\b".format("|".join([re.escape(name) for name in names])), re.IGNORECASE)
@@ -362,6 +332,73 @@ def highlight_matching_data(
             highlight.update()
 
     return matches_found, skipped_matches
+
+
+def add_watermark(page: Page, text: str, font_size: int, color_hex: str, position: str):
+    """
+    Adds a watermark on the given PDF page.
+    """
+    # Convert hex color to normalized RGB tuple
+    r = int(color_hex[1:3], 16) / 255
+    g = int(color_hex[3:5], 16) / 255
+    b = int(color_hex[5:7], 16) / 255
+    rect = page.rect
+    try:
+        from PIL import ImageFont
+
+        font = ImageFont.truetype("arial.ttf", font_size)
+    except OSError:
+        from PIL import ImageFont
+
+        font = ImageFont.load_default()
+    bbox = font.getbbox(text)
+    text_width = bbox[2] - bbox[0]
+    text_height = bbox[3] - bbox[1]
+    if position == "top":
+        text_x = rect.x0 + (rect.width - text_width) / 2
+        text_y = rect.y0 + 20
+    elif position == "bottom":
+        text_x = rect.x0 + (rect.width - text_width) / 2
+        text_y = rect.y1 - text_height - 20
+    page: utils = page
+    page.insert_text((text_x, text_y), text, fontsize=font_size, color=(r, g, b))
+
+
+def watermark_pdf_page(page: Page, settings: Dict):
+    """
+    Applies watermark on a PDF page using settings.
+    """
+    if settings.get("watermark_enabled") == "True" and settings.get("watermark_text"):
+        add_watermark(
+            page,
+            text=settings.get("watermark_text"),
+            font_size=int(settings.get("watermark_size")),
+            color_hex=settings.get("watermark_color"),
+            position=settings.get("watermark_position"),
+        )
+
+
+# Replace overlay_watermark_on_image with:
+def overlay_watermark_on_image(image, text: str, font_size: int, color_hex: str, position: str):
+    from PIL import ImageDraw, ImageFont
+
+    draw = ImageDraw.Draw(image, "RGBA")
+    try:
+        font = ImageFont.truetype("arial.ttf", font_size)
+    except OSError:
+        font = ImageFont.load_default()
+    # Use textbbox to get dimensions
+    bbox = draw.textbbox((0, 0), text, font=font)
+    text_width = bbox[2] - bbox[0]
+    text_height = bbox[3] - bbox[1]
+    img_width, img_height = image.size
+    if position == "top":
+        pos = ((img_width - text_width) / 2, 10)
+    else:  # bottom
+        pos = ((img_width - text_width) / 2, img_height - text_height - 10)
+    # Solid color (opacity set to full)
+    draw.text(pos, text, font=font, fill=color_hex)
+    return image
 
 
 #####################################################################################
@@ -431,6 +468,10 @@ class PDFHighlighterApp:
 
         # Initialize the UI components
         self.setup_ui()
+        self.preview_window = None  # Track active preview window
+        self.current_preview_page = 1
+        self.last_watermark_data = {}  # To store last settings
+        self.last_preview_origin = None
 
     def init_translatable_strings_version(self):
         self.translatable_strings_version = {
@@ -529,9 +570,7 @@ class PDFHighlighterApp:
             "write", lambda *args: self.app_settings.update_setting("mark_only_relevant_lines", self.relevant_lines_var.get())
         )
 
-        self.checkbox_relevant_lines = ttk.Checkbutton(
-            self.filter_frame, text=self._("Try to mark only relevant lines"), variable=self.relevant_lines_var
-        )
+        self.checkbox_relevant_lines = ttk.Checkbutton(self.filter_frame, text=self._("Mark only relevant lines"), variable=self.relevant_lines_var)
         self.checkbox_relevant_lines.grid(row=0, column=0, sticky="W", padx=10)
         Tooltip(self.checkbox_relevant_lines, text=self._("Only highlights the lines that contain the search term and match the expected format."))
 
@@ -548,13 +587,13 @@ class PDFHighlighterApp:
         self.enable_filter_var.set(self.app_settings.settings.get("enable_filter", 0))
         self.enable_filter_var.trace_add("write", lambda *args: self.app_settings.update_setting("enable_filter", self.enable_filter_var.get()))
 
-        self.checkbox_filter = ttk.Checkbutton(self.filter_frame, text=self._("Enable Filter"), variable=self.enable_filter_var)
-        self.checkbox_filter.grid(row=0, column=1, sticky="E", padx=10)
-        Tooltip(self.checkbox_filter, text=self._("Enable highlighting lines with specific names."))
-
         self.button_filter = ttk.Button(self.filter_frame, text=self._("Filter"), command=self.open_filter_window)
-        self.button_filter.grid(row=0, column=2, sticky="E", padx=10)
+        self.button_filter.grid(row=0, column=1, sticky="E", padx=10)
         Tooltip(self.button_filter, text=self._("Configure highlighting lines with specific names."))
+
+        self.button_watermark = ttk.Button(self.filter_frame, text=self._("Watermark"), command=self.open_watermark_window)
+        self.button_watermark.grid(row=0, column=2, sticky="E", padx=10)
+        Tooltip(self.button_watermark, text=self._("Configure watermark options."))
 
         # Progress bar
         self.progress_bar = ttk.Progressbar(self.root, orient="horizontal", length=400, mode="determinate")
@@ -600,15 +639,13 @@ class PDFHighlighterApp:
     def open_filter_window(self):
         window = Toplevel(self.root)
         window.title(self._("Filter"))
-
-        # Make the window modal
         window.grab_set()
         window.focus_set()
 
         def apply_changes():
-            # Update original variables with values from temporary variables
             self.names_var.set(entry_names.get("1.0", "end-1c"))
             self.highlight_mode_var.set(temp_highlight_mode_var.get())
+            self.enable_filter_var.set(self.enable_filter_var.get())
             window.destroy()
 
         def clear_text(*args):
@@ -635,19 +672,21 @@ class PDFHighlighterApp:
                 entry_names.insert("end", ", ")
             return "break"
 
-        # Create temporary variables
-        temp_highlight_mode_var = StringVar(value=self.highlight_mode_var.get())
+        self.checkbox_filter = ttk.Checkbutton(window, text=self._("Enable Filter"), variable=self.enable_filter_var)
+        self.checkbox_filter.grid(row=0, column=0, columnspan=2, sticky="W", padx=10, pady=5)
+        Tooltip(self.checkbox_filter, text=self._("Enable highlighting lines with specific names."))
 
+        temp_highlight_mode_var = StringVar(value=self.highlight_mode_var.get())
         label_names = ttk.Label(window, text=self._("Names"))
-        label_names.grid(row=0, column=0, sticky="W", padx=10)
+        label_names.grid(row=1, column=0, sticky="W", padx=10)
 
         entry_names = Text(window, height=6, width=50, wrap=WORD)
         entry_names.insert(1.0, self.names_var.get())
-        entry_names.grid(row=0, column=1, sticky="WE", padx=10)
+        entry_names.grid(row=1, column=1, sticky="WE", padx=10)
         entry_names.bind("<Return>", insert_comma)
 
         button_frame = ttk.Frame(window)
-        button_frame.grid(row=1, column=1, sticky="W", padx=10, pady=10)
+        button_frame.grid(row=2, column=1, sticky="W", padx=10, pady=10)
 
         button_clear = ttk.Button(button_frame, text=self._("Clear"), command=clear_text)
         button_clear.grid(row=0, column=0, sticky="W", padx=10)
@@ -658,29 +697,203 @@ class PDFHighlighterApp:
         label_highlight_mode = ttk.Label(window, text=self._("Highlight Mode"))
         label_highlight_mode.grid(row=3, column=0, sticky="W", padx=10)
 
-        # Define radio buttons for highlight mode
         radio_highlight_only = ttk.Radiobutton(
-            window, text=self._("Highlight only lines with matched names"), variable=temp_highlight_mode_var, value=HighlightMode.ONLY_NAMES.name
+            window,
+            text=self._("Highlight lines with matched names in blue, others are not highlighted"),
+            variable=temp_highlight_mode_var,
+            value=HighlightMode.ONLY_NAMES.name,
         )
         radio_highlight_only.grid(row=3, column=1, sticky="W", padx=10)
 
         radio_highlight_color = ttk.Radiobutton(
             window,
-            text=self._("Highlight lines with matched names in different color"),
+            text=self._("Highlight lines with matched names in blue, others in yellow"),
             variable=temp_highlight_mode_var,
             value=HighlightMode.NAMES_DIFF_COLOR.name,
         )
         radio_highlight_color.grid(row=4, column=1, sticky="W", padx=10)
 
-        # Create a frame for the buttons
-        button_frame = ttk.Frame(window)
-        button_frame.grid(row=5, column=0, columnspan=2, sticky="WE", padx=10, pady=10)
+        button_frame2 = ttk.Frame(window)
+        button_frame2.grid(row=5, column=0, columnspan=2, sticky="WE", padx=10, pady=10)
 
-        button_apply = ttk.Button(button_frame, text=self._("Apply"), command=apply_changes)
+        button_apply = ttk.Button(button_frame2, text=self._("Apply"), command=apply_changes)
         button_apply.pack(side="left", padx=10, expand=True)
 
-        button_abort = ttk.Button(button_frame, text=self._("Abort"), command=window.destroy)
+        button_abort = ttk.Button(button_frame2, text=self._("Cancel"), command=window.destroy)
         button_abort.pack(side="right", padx=10, expand=True)
+
+    # Update open_watermark_window (remove opacity; add preview page spinbox and color preselects):
+    def open_watermark_window(self):
+        window = Toplevel(self.root)
+        window.title(self._("Watermark Settings"))
+        # Removed window.grab_set() to allow closing/minimizing preview window
+        window.focus_set()
+        # Removed preview page input since navigation buttons now handle page changes
+        temp_enabled = IntVar(value=1 if self.app_settings.settings.get("watermark_enabled") == "True" else 0)
+        temp_text = StringVar(value=self.app_settings.settings.get("watermark_text"))
+        temp_color = StringVar(value=self.app_settings.settings.get("watermark_color"))
+        temp_size = StringVar(value=str(self.app_settings.settings.get("watermark_size")))
+        temp_position = StringVar(value=self.app_settings.settings.get("watermark_position"))
+        Label(window, text=self._("Enable Watermark")).grid(row=0, column=0, sticky="W", padx=10, pady=5)
+        chk = ttk.Checkbutton(window, variable=temp_enabled)
+        chk.grid(row=0, column=1, sticky="W", padx=10, pady=5)
+        Label(window, text=self._("Watermark Text")).grid(row=1, column=0, sticky="W", padx=10, pady=5)
+        entry_text = ttk.Entry(window, textvariable=temp_text)
+        entry_text.grid(row=1, column=1, padx=10, pady=5)
+        Label(window, text=self._("Color (hex)")).grid(row=2, column=0, sticky="W", padx=10, pady=5)
+        entry_color = ttk.Entry(window, textvariable=temp_color)
+        entry_color.grid(row=2, column=1, padx=10, pady=5)
+        # Preselect color frame remains unchanged...
+        preselect_frame = ttk.Frame(window)
+        preselect_frame.grid(row=3, column=0, columnspan=2, padx=10, pady=5, sticky="W")
+        Label(preselect_frame, text=self._("Preselect Color:")).pack(side="left")
+
+        preset_colors = ["#FFA500", "#FF0000", "#00FF00", "#0000FF"]
+        preselect_buttons = {}
+
+        def on_color_select(color):
+            temp_color.set(color)
+            for col, btn in preselect_buttons.items():
+                btn.config(relief="flat" if col != color else "sunken")
+
+        for col in preset_colors:
+            btn = tkButton(preselect_frame, bg=col, width=3, height=1, relief="flat", command=lambda c=col: on_color_select(c))
+            btn.pack(side="left", padx=2)
+            preselect_buttons[col] = btn
+
+        def on_color_entry(*args):
+            for btn in preselect_buttons.values():
+                btn.config(relief="flat")
+
+        temp_color.trace_add("write", on_color_entry)
+        Label(window, text=self._("Size")).grid(row=4, column=0, sticky="W", padx=10, pady=5)
+        entry_size = ttk.Spinbox(window, from_=1, to=100, textvariable=temp_size, width=5)
+        entry_size.grid(row=4, column=1, padx=10, pady=5, sticky="W")
+        Label(window, text=self._("Position")).grid(row=5, column=0, sticky="W", padx=10, pady=5)
+        # Allow only "top" and "bottom"
+        position_options = ["top", "bottom"]
+        option_position = ttk.OptionMenu(window, temp_position, temp_position.get(), *position_options)
+        option_position.grid(row=5, column=1, padx=10, pady=5, sticky="W")
+
+        # Remove preview page input
+        def preview(force_open=True):
+            # Use the current preview page (kept in self.current_preview_page)
+            self.preview_watermark(
+                temp_enabled.get(),
+                temp_text.get(),
+                temp_color.get(),
+                int(temp_size.get()),
+                temp_position.get(),
+                self.current_preview_page,
+                origin=window,
+                force_open=force_open,
+            )
+
+        # Dynamic update: only update if preview window exists (do not open one)
+        def update_preview(*args):
+            preview(force_open=False)
+
+        temp_enabled.trace_add("write", update_preview)
+        temp_text.trace_add("write", update_preview)
+        temp_color.trace_add("write", update_preview)
+        temp_size.trace_add("write", update_preview)
+        temp_position.trace_add("write", update_preview)
+        btn_preview = ttk.Button(window, text=self._("Preview"), command=lambda: preview(force_open=True))
+        btn_preview.grid(row=7, column=0, columnspan=2, pady=10)
+
+        def apply_changes():
+            self.app_settings.update_setting("watermark_enabled", "True" if temp_enabled.get() else "False")
+            self.app_settings.update_setting("watermark_text", temp_text.get())
+            self.app_settings.update_setting("watermark_color", temp_color.get())
+            self.app_settings.update_setting("watermark_size", int(temp_size.get()))
+            self.app_settings.update_setting("watermark_position", temp_position.get())
+            window.destroy()
+
+        btn_apply = ttk.Button(window, text=self._("Apply"), command=apply_changes)
+        btn_apply.grid(row=8, column=0, pady=10, padx=10, sticky="E")
+        btn_cancel = ttk.Button(window, text=self._("Cancel"), command=window.destroy)
+        btn_cancel.grid(row=8, column=1, pady=10, padx=10, sticky="W")
+
+    def preview_watermark(self, enabled, text, color, size, position, preview_page, origin=None, force_open=True):
+        if not hasattr(self, "input_file_full_path"):
+            messagebox.showerror(self._("Error"), self._("Please select a PDF first for preview."))
+            return
+        try:
+            document = Document(self.input_file_full_path)
+            if preview_page == len(document) + 1:
+                self.change_preview_page(-1)  # Go back to last page
+                document.close()
+                return
+            elif preview_page > len(document) or preview_page < 1:
+                self.change_preview_page(0, reset=True)  # Reset to first page
+                document.close()
+            page: utils = document[preview_page - 1]
+            pix: Pixmap = page.get_pixmap()
+
+            image = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+            if enabled and text:
+                image = overlay_watermark_on_image(image, text, size, color, position)
+
+            # Save last settings and origin for dynamic updates and navigation
+            self.last_watermark_data = {"enabled": enabled, "text": text, "color": color, "size": size, "position": position}
+            self.last_preview_origin = origin if origin else self.root
+
+            # If preview_window exists, update image; otherwise, only open window if force_open is True.
+            if self.preview_window and self.preview_window.winfo_exists():
+                self.preview_window.lift()
+                if force_open:
+                    self.preview_window.focus_set()  # Only force focus when preview is explicitly opened
+                img_tk = ImageTk.PhotoImage(image)
+                # Find and update the image label without changing widget focus.
+                for widget in self.preview_window.winfo_children():
+                    if isinstance(widget, Label):
+                        widget.configure(image=img_tk)
+                        widget.image = img_tk  # keep reference
+                        break
+            else:
+                if force_open:
+                    self.preview_window = Toplevel()
+                    self.preview_window.title(self._("Watermark Preview"))
+                    # Position next to the origin window
+                    ox = self.last_preview_origin.winfo_rootx()
+                    oy = self.last_preview_origin.winfo_rooty()
+                    ow = self.last_preview_origin.winfo_width()
+                    self.preview_window.geometry(f"+{ox + ow + 10}+{oy}")
+                    self.preview_window.transient(None)
+                    self.preview_window.grab_release()
+                    self.preview_window.protocol("WM_DELETE_WINDOW", self.preview_window.destroy)
+                    img_tk = ImageTk.PhotoImage(image)
+                    img_label = Label(self.preview_window, image=img_tk)
+                    img_label.image = img_tk  # keep reference
+                    img_label.pack()
+                    # Navigation buttons frame
+                    nav_frame = ttk.Frame(self.preview_window)
+                    nav_frame.pack(pady=5)
+                    prev_btn = ttk.Button(nav_frame, text=self._("Previous Page"), command=lambda: self.change_preview_page(-1))
+                    prev_btn.pack(side="left", padx=5)
+                    next_btn = ttk.Button(nav_frame, text=self._("Next Page"), command=lambda: self.change_preview_page(1))
+                    next_btn.pack(side="left", padx=5)
+            document.close()
+        except Exception as e:
+            messagebox.showerror(self._("Error"), str(e))
+
+    # New method to change preview page
+    def change_preview_page(self, delta: int, reset: bool = False):
+        if reset:
+            self.current_preview_page = 1
+        else:
+            self.current_preview_page = max(1, self.current_preview_page + delta)
+        # Re-call preview_watermark with stored settings
+        if self.last_watermark_data:
+            self.preview_watermark(
+                self.last_watermark_data["enabled"],
+                self.last_watermark_data["text"],
+                self.last_watermark_data["color"],
+                self.last_watermark_data["size"],
+                self.last_watermark_data["position"],
+                self.current_preview_page,
+                origin=self.last_preview_origin,
+            )
 
     def update_version_labels_text(self, latest_version: Version, current_version: Version = Version.from_str(VERSION_STR)):
         self.init_translatable_strings_version()
@@ -717,15 +930,15 @@ class PDFHighlighterApp:
         # Update the text in the GUI
         self.label_pdf_file.config(text=self._("PDF-File:"))
         self.label_search_str.config(text=self._("Search term (Club name):"))
-        self.checkbox_relevant_lines.config(text=self._("Try to mark only relevant lines"))
-        self.status_var.set(self._("Status: Language changed to english"))
+        self.checkbox_relevant_lines.config(text=self._("Mark only relevant lines"))
+        self.status_var.set(self._("Status: Language changed to English."))
         self.start_abort_button.config(text=self._("Start"))
         self.browse_button.config(text=self._("Browse"))
         self.title.config(text=self._("Heat sheet highlighter"))
         self.language_menu.config(text=self._("Select language"))
         self.root.title(self._("Heat sheet highlighter"))
         self.button_filter.config(text=self._("Filter"))
-        self.checkbox_filter.config(text=self._("Enable Filter"))
+        self.button_watermark.config(text=self._("Watermark"))
         self.init_translatable_strings_version()
         self.update_version_labels_text(
             Version.from_str(self.app_settings.settings["newest_version_available"]), Version.from_str(self.app_settings.settings["version"])
@@ -739,8 +952,8 @@ class PDFHighlighterApp:
         Tooltip(self.label_search_str, text=self._("Enter the name of the club to highlight the results."))
         Tooltip(self.entry_search_str, text=self._("Enter the name of the club to highlight the results."))
         Tooltip(self.checkbox_relevant_lines, text=self._("Only highlights the lines that contain the search term and match the expected format."))
-        Tooltip(self.checkbox_filter, text=self._("Enable highlighting lines with specific names."))
         Tooltip(self.button_filter, text=self._("Configure highlighting lines with specific names."))
+        Tooltip(self.button_watermark, text=self._("Configure watermark options."))
         Tooltip(self.start_abort_button, text=self._("Start or cancel the highlight process."))
         Tooltip(self.language_menu, text=self._("Select the language"))
 
@@ -764,7 +977,6 @@ class PDFHighlighterApp:
         """
         Starts the PDF processing based on the selected file and search parameters.
         """
-        # Change the button to "Abort" and its command to abort_processing
         self.start_abort_button.config(text=self._("Abort"), command=self.finalize_processing)
 
         # Set processing flag to True
@@ -811,6 +1023,7 @@ class PDFHighlighterApp:
                     self.finalize_processing()
                     return
 
+                # Highlight the matching data on the page
                 matches_found, skipped_matches = highlight_matching_data(
                     page=page,
                     search_str=search_str,
@@ -821,6 +1034,11 @@ class PDFHighlighterApp:
                 )
                 total_matches += matches_found
                 total_skipped += skipped_matches
+
+                # Apply watermark on each page if enabled
+                watermark_pdf_page(page, self.app_settings.settings)
+
+                # Update the progress bar and status message
                 self.update_progress(i, total_pages, total_matches, total_skipped)
 
             total_marked = total_matches - total_skipped
@@ -893,122 +1111,109 @@ class PDFHighlighterApp:
 
     def check_for_app_updates(self, current_version: Version = Version.from_str(VERSION_STR), force_check: bool = False):
         """
-        Check for updates and prompt the user to install if a new version is available.
+        Checks for application updates by comparing the current version with the latest version available.
+        Args:
+            current_version (Version): The current version of the application. Defaults to the version specified by VERSION_STR.
+            force_check (bool): If True, forces an update check regardless of cache. Defaults to False.
+        Returns:
+            Version: The latest version available.
+        The function performs the following steps:
+        1. If `force_check` is False, it attempts to load the cached latest version and its cache time.
+        2. If the cache is valid (i.e., not expired), it returns the cached latest version.
+        3. If the cache is invalid or `force_check` is True, it fetches the latest version from GitHub.
+        4. Caches the fetched latest version and the current time.
+        5. Updates the version labels with the latest and current versions.
+        6. Returns the latest version.
         """
         now = datetime.datetime.now()
 
-        if not force_check and os.path.exists(CACHE_FILE):
-            with open(CACHE_FILE, "rb") as f:
-                cache_time, latest_version = pickle.load(f)
-                if now - cache_time < CACHE_EXPIRY:
-                    return latest_version
+        if not force_check:
+            cache_time, latest_version = load_cache()
+            if cache_time and now - cache_time < CACHE_EXPIRY:
+                return latest_version
 
-        # Perform the update check...
+        # ... perform the update check ...
         latest_version = self._get_latest_version_from_github(current_version=current_version, force_check=force_check)
 
-        # Cache the result
-        with open(CACHE_FILE, "wb") as f:
-            pickle.dump((now, latest_version), f)
+        # Cache the result using JSON
+        save_cache(now, latest_version)
 
-        # update the version label
         self.update_version_labels_text(latest_version, current_version)
         self.update_version_labels()
 
         return latest_version
 
+    def _fetch_release_info(self, url: str):
+        response = requests.get(url)
+        response.raise_for_status()
+        return response.json()
+
+    def _handle_beta_releases(self, latest_version: Version, download_url: str) -> Tuple[Version, str]:
+        beta_url = "https://api.github.com/repos/jonalbr/heat-sheet-pdf-highlighter/releases"
+        releases_info = self._fetch_release_info(beta_url)
+        pre_releases = [release for release in releases_info if release["prerelease"]]
+        if pre_releases:
+            latest_pre_release = pre_releases[0]
+            latest_pre_release_version = Version.from_str(latest_pre_release["tag_name"])
+            if latest_pre_release_version > latest_version:
+                latest_version = latest_pre_release_version
+                download_url = latest_pre_release["assets"][0]["browser_download_url"]
+                self.app_settings.update_setting("newest_version_available", str(latest_version))
+                self.app_settings.update_setting("ask_for_update", True)
+        else:
+            self.app_settings.update_setting("newest_version_available", str(latest_version))
+            self.app_settings.update_setting("ask_for_update", True)
+        return latest_version, download_url
+
     def _get_latest_version_from_github(self, current_version: Version = Version.from_str(VERSION_STR), force_check: bool = False):
-        # GitHub release URL
         release_url = "https://api.github.com/repos/jonalbr/heat-sheet-pdf-highlighter/releases/latest"
-
         try:
-            # Send GET request to GitHub API
-            response = requests.get(release_url)
-            response.raise_for_status()
-
-            # Parse the response JSON
-            release_info = response.json()
-
-            # Get the latest version number and download URL
+            release_info = self._fetch_release_info(release_url)
             latest_version = Version.from_str(release_info["tag_name"])
             download_url = release_info["assets"][0]["browser_download_url"]
 
             if self.app_settings.settings["beta"]:
-                release_url = "https://api.github.com/repos/jonalbr/heat-sheet-pdf-highlighter/releases"
+                latest_version, download_url = self._handle_beta_releases(latest_version, download_url)
 
-                # Send GET request to GitHub API
-                response = requests.get(release_url)
-                response.raise_for_status()
-
-                # Parse the response JSON
-                releases_info = response.json()
-
-                # Filter the releases to only include pre-releases
-                pre_releases = [release for release in releases_info if release["prerelease"]]
-
-                # If there are no pre-releases, return None or handle accordingly
-                if pre_releases:
-                    # Get the latest pre-release (the first one in the list as GitHub returns them in reverse chronological order)
-                    latest_pre_release = pre_releases[0]
-
-                    # Get the latest pre-release version number
-                    latest_pre_release_version = Version.from_str(latest_pre_release["tag_name"])
-
-                    # If the latest pre-release is newer than the latest release, update the latest version and download URL
-                    if latest_pre_release_version > latest_version:
-                        latest_version = latest_pre_release_version
-                        download_url = latest_pre_release["assets"][0]["browser_download_url"]
-                        self.app_settings.update_setting("newest_version_available", str(latest_version))
-                        self.app_settings.update_setting("ask_for_update", True)
-                else:
-                    self.app_settings.update_setting("newest_version_available", str(latest_version))
-                    self.app_settings.update_setting("ask_for_update", True)
-
-            # reset ask_for_update if newer version than in newest_version_available is found
+            # Use a guard clause to update settings when necessary
             if latest_version > Version.from_str(self.app_settings.settings["newest_version_available"]):
                 self.app_settings.update_setting("ask_for_update", True)
-                # safe the newest version in the settings
                 self.app_settings.update_setting("newest_version_available", str(latest_version))
 
-            # Compare the latest version with the current version
-            if latest_version > current_version and (self.app_settings.settings["ask_for_update"] or force_check):
-                # update
-
-                # Prompt the user to install the update
-                update_choice = messagebox.askyesnocancel(
-                    self._("Update Available"),
-                    self._("A new version ({0}) is available. Do you want to update?").format(latest_version),
-                    icon="question",
-                    default="yes",
-                    parent=self.root,
-                )
-                if update_choice is None:
-                    # User clicked "Aboard" - will ask again next time
-                    pass
-                elif update_choice:
-                    # User clicked "Yes"
-                    self.download_and_run_installer(download_url)
-                else:
-                    # Inform the user that they will not be asked again, but if there is a new version, they can still check manually
-                    # also if there is a newer new version than the one in newest_version_available, they will be asked again
-                    choice = messagebox.askokcancel(
-                        self._("Update Information"),
-                        self._(
-                            "Click 'yes' to not be asked again for this update. You can still check manually for updates. If there is a newer version available, you will be asked again."
-                        ),
-                    )
-                    if choice:
-                        self.app_settings.update_setting("ask_for_update", False)
-            else:
+            # Check if an update is needed
+            if not (latest_version > current_version and (self.app_settings.settings["ask_for_update"] or force_check)):
                 if force_check:
-                    # Inform the user that they are already up to date
                     messagebox.showinfo(self._("Up to Date"), self._("You are already using the latest version."))
+                return latest_version
+
+            # Prompt the user to install the update if needed
+            update_choice = messagebox.askyesnocancel(
+                self._("Update Available"),
+                self._("A new version ({0}) is available. Do you want to update?").format(latest_version),
+                icon="question",
+                default="yes",
+                parent=self.root,
+            )
+
+            if update_choice is None:
+                # User clicked "Abort" – ask again next time
+                return latest_version
+            elif update_choice:
+                self.download_and_run_installer(download_url)
+            else:
+                choice = messagebox.askokcancel(
+                    self._("Update Information"),
+                    self._(
+                        "Click 'yes' to not be asked again for this update. "
+                        "You can still check manually for updates. If there is a newer version available, you will be asked again."
+                    ),
+                )
+                if choice:
+                    self.app_settings.update_setting("ask_for_update", False)
             return latest_version
         except requests.exceptions.RequestException as e:
-            if force_check:
-                # Handle any errors that occur during the update check
-                choice = messagebox.askretrycancel(self._("Update Error"), self._("Failed to check for updates: {0}").format(str(e)))
-                if choice:
-                    self.check_for_app_updates(current_version, force_check)
+            if force_check and messagebox.askretrycancel(self._("Update Error"), self._("Failed to check for updates: {0}").format(str(e))):
+                return self.check_for_app_updates(current_version, force_check)
             else:
                 print(f"Failed to check for updates: {str(e)}")
             return False
@@ -1073,7 +1278,7 @@ class PDFHighlighterApp:
         downloaded_MB = self.progress_bar["value"] / (1024 * 1024)
         total_MB = total_size_in_bytes / (1024 * 1024)
         self.status_var.set(
-            self._("Downloading... {0:.1f} MB of {1:.1f} MB, {2:.1f} seconds remaining").format(downloaded_MB, total_MB, remaining_time)
+            self._("Downloading... {0:.1f} MB of {1:.1f} MB, {2:.0f} seconds remaining").format(downloaded_MB, total_MB, remaining_time)
         )
         self.root.update()  # Update the GUI
 
@@ -1117,6 +1322,25 @@ class Tooltip:
         self.tipwindow = None
         if tw:
             tw.destroy()
+
+
+def save_cache(cache_time, latest_version):
+    cache_data = {"cache_time": cache_time.isoformat(), "latest_version": str(latest_version)}
+    CACHE_FILE.touch()
+    CACHE_FILE.write_text(json.dumps(cache_data, indent=4))
+
+
+def load_cache():
+    CACHE_FILE.touch()
+    try:
+        data = json.loads(CACHE_FILE.read_text())
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        CACHE_FILE.unlink()
+        CACHE_FILE.touch()
+        return None, None
+    cache_time = datetime.datetime.fromisoformat(data["cache_time"])
+    latest_version = Version.from_str(data["latest_version"])
+    return cache_time, latest_version
 
 
 if __name__ == "__main__":
