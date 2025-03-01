@@ -5,11 +5,11 @@ import json
 import os
 import pickle
 import re
-import time
 import subprocess
 import sys
 import tempfile
 import threading
+import time
 from dataclasses import dataclass
 from enum import IntEnum
 from io import BytesIO
@@ -325,7 +325,7 @@ def highlight_matching_data(
 
     # Adjusted regex to consider new lines between elements of the pattern
     relevant_line_pattern = re.compile(
-        r"(?i)(?:Bahn\s)?\d+\s.*?\s" + re.escape(search_str) + r"\s.*?(?:(?:\d{2}[:.,]\d{2}(?:,|\.)\d{2})|(?:\d{2},\d{2})|(?:\d{2}\.\d{2})|NT)",
+        r"(?i)(?:Bahn\s)?\d+\s.*?\s" + re.escape(search_str) + r"\s.*?(?:\d{1,2}[:.,;]\d{2}(?:,|\.)\d{2}|\d{1,2}[:.,;]\d{2}|NT|ohne)",
         re.DOTALL,  # Allows for matching across multiple lines
     )
     names_pattern = re.compile(r"\b(?:{})\b".format("|".join([re.escape(name) for name in names])), re.IGNORECASE)
@@ -362,6 +362,19 @@ def highlight_matching_data(
             highlight.update()
 
     return matches_found, skipped_matches
+
+
+def add_watermark(page: Page, text: str, font_size: int = 16, color: tuple = (1, 0.6, 0.2)):
+    """
+    Adds a watermark to the top of the given page.
+
+    Args:
+        page (Page): The PDF page object.
+        text (str): The watermark text.
+        font_size (int, optional): The font size of the watermark. Defaults to 16.
+        color (tuple, optional): The RGB color of the watermark. Defaults to light orange.
+    """
+    page.insert_text((200, 26), text, fontsize=font_size, color=color)
 
 
 #####################################################################################
@@ -811,6 +824,9 @@ class PDFHighlighterApp:
                     self.finalize_processing()
                     return
 
+                # Add watermark to the page
+                #add_watermark(page, "Jonas Albrecht - SGS Hamburg")
+
                 matches_found, skipped_matches = highlight_matching_data(
                     page=page,
                     search_str=search_str,
@@ -1073,7 +1089,7 @@ class PDFHighlighterApp:
         downloaded_MB = self.progress_bar["value"] / (1024 * 1024)
         total_MB = total_size_in_bytes / (1024 * 1024)
         self.status_var.set(
-            self._("Downloading... {0:.1f} MB of {1:.1f} MB, {2:.1f} seconds remaining").format(downloaded_MB, total_MB, remaining_time)
+            self._("Downloading... {0:.1f} MB of {1:.1f} MB, {2:.0f} seconds remaining").format(downloaded_MB, total_MB, remaining_time)
         )
         self.root.update()  # Update the GUI
 
