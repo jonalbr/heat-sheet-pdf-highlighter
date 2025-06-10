@@ -1,4 +1,4 @@
 cx_Freeze==7.2.1
 pillow==10.4.0
 pymupdf==1.24.10
-requests==2.32.3
+requests==2.32.4
