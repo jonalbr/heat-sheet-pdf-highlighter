@@ -3,7 +3,7 @@ import re
 
 SETUP_PY = "setup.py"
 SETUP_ISS = "setup.iss"
-HEAT_SHEET_PDF_HIGHLIGHTER = "heat_sheet_pdf_highlighter.py"
+CONSTANTS_PY = "src/constants.py"
 
 
 def update_version(version):
@@ -24,15 +24,15 @@ def update_version(version):
     except Exception as e:
         print(f"Error updating setup.iss: {e}")
 
-    # Update version in heat_sheet_pdf_highlighter.py
+    # Update version in src/constants.py
     try:
-        with open(HEAT_SHEET_PDF_HIGHLIGHTER, "r") as file:
-            gui_content = file.read()
-        gui_content = re.sub(r"(VERSION_STR\s*=\s*['\"])([^'\"]+)(['\"])", r"\g<1>" + version + r"\g<3>", gui_content)
-        with open(HEAT_SHEET_PDF_HIGHLIGHTER, "w") as file:
-            file.write(gui_content)
+        with open(CONSTANTS_PY, "r") as file:
+            constants_content = file.read()
+        constants_content = re.sub(r"(VERSION_STR\s*=\s*['\"])([^'\"]+)(['\"])", r"\g<1>" + version + r"\g<3>", constants_content)
+        with open(CONSTANTS_PY, "w") as file:
+            file.write(constants_content)
     except Exception as e:
-        print(f"Error updating heat_sheet_pdf_highlighter.py: {e}")
+        print(f"Error updating src/constants.py: {e}")
 
 
 def check_version_input(version):
