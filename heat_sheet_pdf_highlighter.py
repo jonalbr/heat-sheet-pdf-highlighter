@@ -128,13 +128,7 @@ class AppSettings:
         """Load settings from a JSON file. If the file doesn't exist, return default settings."""
         if self.settings_file.exists():
             settings: Dict = json.loads(self.settings_file.read_text())
-            # validate if from right version and
-            if settings.get("version") == VERSION_STR:
-                validated = self.validate_settings(settings)
-                return validated
-            else:
-                validated = self.validate_settings(settings)
-                return validated
+            return self.validate_settings(settings)
         else:
             return self.default_settings
 
@@ -509,9 +503,9 @@ class PDFHighlighterApp:
             "select_language": self._("Select language"),
             "select_pdf": self._("Select the heat sheet pdf."),
             "enter_club": self._("Enter the name of the club to highlight the results."),
-            "only_highlight_lines": self._("Only highlights the lines that contain the search term and match the expected format (Lane Name ... Time)."),
+            "only_highlight_lines": self._("Only highlights the lines that contain the search term and match the expected format (Lane Name ... Time).\nYou usually want to keep that enabled."),
             "configure_filter": self._("Configure highlighting lines with specific names."),
-            "configure_watermark": self._("Configure watermark options."),
+            "configure_watermark": self._("Configure the watermark options."),
             "start_cancel": self._("Start or cancel the highlighting process."),
             "error": self._("Error"),
             "info": self._("Info"),
