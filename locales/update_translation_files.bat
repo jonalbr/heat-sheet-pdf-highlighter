@@ -9,13 +9,16 @@ set XGETTEXT_PATH=C:\msys64\usr\bin\xgettext.exe
 set MSGMERGE_PATH=C:\msys64\usr\bin\msgmerge.exe
 set MSGINIT_PATH=C:\msys64\usr\bin\msginit.exe
 
-REM Set the names of your source code file, .pot file, and .po file
-set SOURCE_CODE_FILE=..\heat_sheet_pdf_highlighter.py
+REM Set the names of your source code files, .pot file, and .po file
 set POT_FILE=base.pot
 set PO_FILE=base.po
 
-REM Run xgettext to create a .pot file from the source code file
-"%XGETTEXT_PATH%" --from-code=UTF-8 --language=Python --keyword=ngettext:1,2 --keyword=n_:1,2 -o "%POT_FILE%" "%SOURCE_CODE_FILE%"
+REM Run xgettext to create a .pot file from files with translatable strings
+"%XGETTEXT_PATH%" --from-code=UTF-8 --language=Python ^
+  --keyword=ngettext:1,2 --keyword=n_:1,2 --keyword=_:1 --keyword=gettext:1 ^
+  --keyword=self._:1 --keyword=self.n_:1,2 ^
+  -o "%POT_FILE%" ^
+  ..\src\gui\main_window.py
 
 REM Loop over each directory
 for /D %%G in ("*") do (

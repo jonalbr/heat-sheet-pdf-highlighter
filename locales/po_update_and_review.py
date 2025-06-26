@@ -5,7 +5,7 @@ This script is intended to be run directly from the command line:
     python po_update_and_review.py
 
 Workflow:
-- The script reads the batch file 'update_po_files.bat' to determine the .po file names for English and German locales.
+- The script reads the batch file 'update_translation_files.bat' to determine the .po file names for English and German locales.
 - It loads the English and German .po files from the 'en/LC_MESSAGES' and 'de/LC_MESSAGES' directories, respectively.
 - For each entry in the English .po file:
     - If the entry is missing in the German .po, the user is prompted to provide a German translation (including plural forms if needed), and the entry is added.
@@ -14,7 +14,9 @@ Workflow:
 - After reviewing and updating the German .po file, the script autofills the English .po file by setting each msgstr to its msgid and removing any 'fuzzy' flags.
 - Changes are saved to the respective .po files if any updates are made.
 
-This workflow ensures that new or updated English strings are reviewed for German translation and that the English .po file is always up to date for use as a template or fallback.
+This workflow ensures that new or updated English strings from the modular src/ structure are reviewed for German translation and that the English .po file is always up to date for use as a template or fallback.
+
+Note: Translatable strings are centralized in main_window.py using self._() and self.n_() patterns, with all dialogs using the self.app.strings dictionary for consistency and performance.
 """
 
 import polib
