@@ -1,6 +1,9 @@
 @echo off
 setlocal
 
+REM Change to the directory where this script is located
+cd /d "%~dp0"
+
 REM Set the paths to your xgettext, msginit, and msgmerge executables
 set XGETTEXT_PATH=C:\msys64\usr\bin\xgettext.exe
 set MSGMERGE_PATH=C:\msys64\usr\bin\msgmerge.exe
@@ -29,6 +32,22 @@ for /D %%G in ("*") do (
 
     REM Change back to the parent directory
     cd ..\..
+)
+
+REM Run the review/update script for German and autofill for English
+echo Running po_update_and_review.py to update German and autofill English...
+call ..\.venv\Scripts\activate.bat
+python po_update_and_review.py
+
+REM Compile .po to .mo files
+echo Compiling .po files to .mo files...
+set MSGFMT_PATH=C:\msys64\usr\bin\msgfmt.exe
+for /D %%G in ("*") do (
+    if exist "%%G\\LC_MESSAGES" (
+        pushd "%%G\\LC_MESSAGES"
+        "%MSGFMT_PATH%" -o base.mo base.po
+        popd
+    )
 )
 
 endlocal
