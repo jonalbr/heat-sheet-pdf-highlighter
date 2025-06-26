@@ -33,7 +33,7 @@ from typing import Dict, List, Tuple
 
 import requests
 from PIL import Image, ImageTk
-from pymupdf import Document, Page, Rect, utils, Pixmap
+from pymupdf import Document, Page, Rect, utils
 
 ######################################################################
 # Constants
@@ -49,7 +49,7 @@ class Version:
     major: int = 0
     minor: int = 0
     patch: int = 0
-    rc: int = None
+    rc: int | None = None
 
     def __str__(self):
         if self.rc:
@@ -105,11 +105,11 @@ class AppSettings:
         self.settings_file = settings_file
         self.default_settings = {
             "version": VERSION_STR,
-            "search_str": "",
+            "search_str": "SGS Hamburg",
             "mark_only_relevant_lines": 1,  # 0 or 1
             "enable_filter": 0,  # 0 or 1
             "highlight_mode": "NAMES_DIFF_COLOR",  # "ONLY_NAMES" or "NAMES_DIFF_COLOR
-            "language": "en",
+            "language": "de",
             "ask_for_update": "True",
             "update_available": "False",
             "newest_version_available": "0.0.0",
@@ -128,13 +128,7 @@ class AppSettings:
         """Load settings from a JSON file. If the file doesn't exist, return default settings."""
         if self.settings_file.exists():
             settings: Dict = json.loads(self.settings_file.read_text())
-            # validate if from right version and
-            if settings.get("version") == VERSION_STR:
-                settings = self.validate_settings(settings)
-                return settings
-            else:
-                settings = self.validate_settings(settings)
-                return settings
+            return self.validate_settings(settings)
         else:
             return self.default_settings
 
@@ -168,7 +162,7 @@ class AppSettings:
         }
         return validators[key](value) if key in validators else None
 
-    def validate_settings(self, settings: Dict = None):
+    def validate_settings(self, settings: Dict | None = None):
         # Get provided settings or use saved settings
         settings_dict = settings or getattr(self, "settings", {}) or {}
         validated = {}
@@ -184,16 +178,20 @@ class AppSettings:
 
         self.settings = validated
         self.save_settings()
+        return validated  # Ensure a Dict is always returned
 
 
 def get_settings_path():
     """Determine the correct path for storing application settings based on the operating system."""
     match os.name:
         case "nt":  # Windows
-            appdata = Path(os.getenv("APPDATA"))  # Roaming folder
+            appdata_env = os.getenv("APPDATA")
+            if appdata_env is None:
+                raise RuntimeError("APPDATA environment variable is not set.")
+            appdata = Path(appdata_env)  # Roaming folder
             settings_dir = appdata / APP_NAME
         case "posix":
-            if "darwin" in os.sys.platform:  # macOS
+            if "darwin" in sys.platform:  # macOS
                 settings_dir = Path.home() / f"Library/Application Support/{APP_NAME}"
             else:  # Assuming Linux
                 settings_dir = Path.home() / f".config/{APP_NAME}"
@@ -308,6 +306,14 @@ def highlight_matching_data(
             # Find the line of text that contains the instance
             line_text = utils.get_text(page, "text", clip=line_rect)  # Extract text within this rectangle
 
+            # Ensure line_text is a string for regex search
+            if isinstance(line_text, list):
+                line_text = " ".join(str(item) for item in line_text)
+            elif isinstance(line_text, dict):
+                line_text = json.dumps(line_text)
+            elif not isinstance(line_text, str):
+                line_text = str(line_text)
+
             # Check if the extracted line matches the relevant line pattern
             if not re.search(relevant_line_pattern, line_text):
                 skipped_matches += 1
@@ -342,7 +348,7 @@ def add_watermark(page: Page, text: str, font_size: int, color_hex: str, positio
     r = int(color_hex[1:3], 16) / 255
     g = int(color_hex[3:5], 16) / 255
     b = int(color_hex[5:7], 16) / 255
-    rect = page.rect
+    rect: Rect = page.rect
     try:
         from PIL import ImageFont
 
@@ -360,8 +366,11 @@ def add_watermark(page: Page, text: str, font_size: int, color_hex: str, positio
     elif position == "bottom":
         text_x = rect.x0 + (rect.width - text_width) / 2
         text_y = rect.y1 - text_height - 20
-    page: utils = page
-    page.insert_text((text_x, text_y), text, fontsize=font_size, color=(r, g, b))
+    else:
+        # Default to top if position is invalid
+        text_x = rect.x0 + (rect.width - text_width) / 2
+        text_y = rect.y0 + 20
+    utils.insert_text(page, (text_x, text_y), text, fontsize=font_size, color=(r, g, b))
 
 
 def watermark_pdf_page(page: Page, settings: Dict):
@@ -369,13 +378,12 @@ def watermark_pdf_page(page: Page, settings: Dict):
     Applies watermark on a PDF page using settings.
     """
     if settings.get("watermark_enabled") == "True" and settings.get("watermark_text"):
-        add_watermark(
-            page,
-            text=settings.get("watermark_text"),
-            font_size=int(settings.get("watermark_size")),
-            color_hex=settings.get("watermark_color"),
-            position=settings.get("watermark_position"),
-        )
+        text = settings.get("watermark_text")
+        font_size = int(settings.get("watermark_size", 16))
+        color_hex = settings.get("watermark_color")
+        position = settings.get("watermark_position")
+        if text and font_size > 0 and color_hex and position in ["top", "bottom"]:
+            add_watermark(page, text=text, font_size=font_size, color_hex=color_hex, position=position)
 
 
 # Replace overlay_watermark_on_image with:
@@ -458,7 +466,7 @@ class PDFHighlighterApp:
         self._ = staticmethod(self.lang.gettext)
         self.n_ = staticmethod(self.lang.ngettext)
 
-        self.init_translatable_strings_version()
+        self.init_translatable_strings()
 
         # Initialize the settings
         self.app_settings = AppSettings(SETTINGS_FILE)
@@ -473,22 +481,73 @@ class PDFHighlighterApp:
         self.last_watermark_data = {}  # To store last settings
         self.last_preview_origin = None
 
-    def init_translatable_strings_version(self):
-        self.translatable_strings_version = {
+    def init_translatable_strings(self):
+        """
+        Initialize all translatable strings as instance variables.
+        Call this after (re)loading gettext translations.
+        """
+        self.strings = {
+            "title": self._("Heat sheet highlighter"),
+            "pdf_file": self._("PDF-File:"),
+            "search_term": self._("Search term (Club name):"),
+            "mark_only_relevant": self._("Mark only relevant lines"),
+            "status_waiting": self._("Status: Waiting"),
+            "status_importing": self._("Status: Importing PDF. Please wait..."),
+            "status_imported": self._("Status: PDF imported."),
+            "status_language_changed": self._("Status: Language changed to English."),
+            "start": self._("Start"),
+            "abort": self._("Abort"),
+            "browse": self._("Browse"),
+            "filter": self._("Filter"),
+            "watermark": self._("Watermark"),
+            "select_language": self._("Select language"),
+            "select_pdf": self._("Select the heat sheet pdf."),
+            "enter_club": self._("Enter the name of the club to highlight the results."),
+            "only_highlight_lines": self._("Only highlights the lines that contain the search term and match the expected format (Lane Name ... Time).\nYou usually want to keep that enabled."),
+            "configure_filter": self._("Configure highlighting lines with specific names."),
+            "configure_watermark": self._("Configure the watermark options."),
+            "start_cancel": self._("Start or cancel the highlighting process."),
+            "error": self._("Error"),
+            "info": self._("Info"),
+            # Version/update related
             "version_update_failed": self._("Version: {0} (Update check failed)"),
             "version_new_available": self._("Version: {0} (New version available)"),
             "version_no_update": self._("Version: {0}"),
-        }
-        self.translatable_strings_update = {
-            "Check for Updates": self._("Check for Updates"),
-            "Install Update": self._("Install Update"),
+            "check_for_updates": self._("Check for Updates"),
+            "install_update": self._("Install Update"),
         }
 
+    def update_all_widget_texts(self):
+        """
+        Update all widget texts from self.strings. Call after changing language or initializing UI.
+        """
+        self.root.title(self.strings["title"])
+        self.title.config(text=self.strings["title"])
+        self.label_pdf_file.config(text=self.strings["pdf_file"])
+        self.label_search_str.config(text=self.strings["search_term"])
+        self.checkbox_relevant_lines.config(text=self.strings["mark_only_relevant"])
+        self.start_abort_button.config(text=self.strings["start"])
+        self.browse_button.config(text=self.strings["browse"])
+        self.button_filter.config(text=self.strings["filter"])
+        self.button_watermark.config(text=self.strings["watermark"])
+        self.language_menu.config(text=self.strings["select_language"])
+        # Tooltips
+        Tooltip(self.entry_file, text=self.strings["select_pdf"])
+        Tooltip(self.label_pdf_file, text=self.strings["select_pdf"])
+        Tooltip(self.label_search_str, text=self.strings["enter_club"])
+        Tooltip(self.entry_search_str, text=self.strings["enter_club"])
+        Tooltip(self.checkbox_relevant_lines, text=self.strings["only_highlight_lines"])
+        Tooltip(self.button_filter, text=self.strings["configure_filter"])
+        Tooltip(self.button_watermark, text=self.strings["configure_watermark"])
+        Tooltip(self.start_abort_button, text=self.strings["start_cancel"])
+        Tooltip(self.language_menu, text=self.strings["select_language"])
+
     def setup_ui(self):
+        self.init_translatable_strings()
         """
         Sets up the user interface for the PDFHighlighterApp.
         """
-        title_text = self._("Heat sheet highlighter")
+        title_text = "..."
         self.root.title(title_text)
         self.root.geometry("600x350")  # Adjusted size for a better layout
         self.root.minsize(width=600, height=350)
@@ -516,11 +575,11 @@ class PDFHighlighterApp:
         logo_image = logo_image.resize((title_height, title_height))
         logo_photo = ImageTk.PhotoImage(logo_image)
         logo_label = Label(self.root, image=logo_photo)
-        logo_label.image = logo_photo  # Store a reference to the image to prevent it from being garbage collected
+        setattr(logo_label, "image", logo_photo)  # Store a reference to the image to prevent it from being garbage collected
         logo_label.grid(row=0, column=0, sticky="W", padx=10, pady=10)
 
         # Application title next to the logo
-        self.title = ttk.Label(self.root, text=title_text, font=title_font)
+        self.title = ttk.Label(self.root, text="...", font=title_font)
         self.title.grid(row=0, column=1, sticky="EW", padx=10, pady=10)
 
         lang_var = StringVar()
@@ -528,25 +587,20 @@ class PDFHighlighterApp:
         lang_var.trace_add("write", lambda *args: self.app_settings.update_setting("language", lang_var.get()))
 
         self.language_menu = ttk.OptionMenu(
-            self.root, lang_var, self.app_settings.settings["language"], *language_options, command=self.on_language_change
+            self.root, lang_var, self.app_settings.settings["language"], *language_options, command=lambda _: self.on_language_change(lang_var.get())
         )
         self.language_menu.grid(row=0, column=2, sticky="E", padx=10, pady=10)
-        Tooltip(self.language_menu, text=self._("Select the language"))
 
-        # PDF file selection
-        self.label_pdf_file = ttk.Label(self.root, text=self._("PDF-File:"))
+        self.label_pdf_file = ttk.Label(self.root, text="...")
         self.label_pdf_file.grid(row=1, column=0, sticky="E", padx=10, pady=2)
         self.pdf_file_var = StringVar()
         self.entry_file = ttk.Entry(self.root, textvariable=self.pdf_file_var, state="readonly")
         self.entry_file.grid(row=1, column=1, sticky="WE", padx=10)
-        Tooltip(self.entry_file, text=self._("Select the heat sheet pdf."))
-        Tooltip(self.label_pdf_file, text=self._("Select the heat sheet pdf."))
 
-        self.browse_button = ttk.Button(self.root, text=self._("Browse"), command=self.browse_file, width=11)
+        self.browse_button = ttk.Button(self.root, text="...", command=self.browse_file, width=11)
         self.browse_button.grid(row=1, column=2, padx=10, sticky="E")
 
-        # Search term entry
-        self.label_search_str = ttk.Label(self.root, text=self._("Search term (Club name):"))
+        self.label_search_str = ttk.Label(self.root, text="...")
         self.label_search_str.grid(row=2, column=0, sticky="E", padx=10, pady=2)
 
         self.search_phrase_var = StringVar()
@@ -554,13 +608,10 @@ class PDFHighlighterApp:
 
         self.entry_search_str = ttk.Entry(self.root, textvariable=self.search_phrase_var)
         self.entry_search_str.grid(row=2, column=1, sticky="WE", columnspan=2, padx=10)
-        Tooltip(self.label_search_str, text=self._("Enter the name of the club to highlight the results."))
-        Tooltip(self.entry_search_str, text=self._("Enter the name of the club to highlight the results."))
 
         # frame  for filters
         self.filter_frame = ttk.Frame(self.root)
         self.filter_frame.grid(row=3, column=0, columnspan=3, sticky="WE", pady=2)
-
         self.filter_frame.grid_columnconfigure(1, weight=1)
 
         # Options for highlighting
@@ -570,9 +621,8 @@ class PDFHighlighterApp:
             "write", lambda *args: self.app_settings.update_setting("mark_only_relevant_lines", self.relevant_lines_var.get())
         )
 
-        self.checkbox_relevant_lines = ttk.Checkbutton(self.filter_frame, text=self._("Mark only relevant lines"), variable=self.relevant_lines_var)
+        self.checkbox_relevant_lines = ttk.Checkbutton(self.filter_frame, text="...", variable=self.relevant_lines_var)
         self.checkbox_relevant_lines.grid(row=0, column=0, sticky="W", padx=10)
-        Tooltip(self.checkbox_relevant_lines, text=self._("Only highlights the lines that contain the search term and match the expected format."))
 
         # Filter
         self.names_var = StringVar()
@@ -587,26 +637,23 @@ class PDFHighlighterApp:
         self.enable_filter_var.set(self.app_settings.settings.get("enable_filter", 0))
         self.enable_filter_var.trace_add("write", lambda *args: self.app_settings.update_setting("enable_filter", self.enable_filter_var.get()))
 
-        self.button_filter = ttk.Button(self.filter_frame, text=self._("Filter"), command=self.open_filter_window)
+        self.button_filter = ttk.Button(self.filter_frame, text="...", command=self.open_filter_window)
         self.button_filter.grid(row=0, column=1, sticky="E", padx=10)
-        Tooltip(self.button_filter, text=self._("Configure highlighting lines with specific names."))
 
-        self.button_watermark = ttk.Button(self.filter_frame, text=self._("Watermark"), command=self.open_watermark_window)
+        self.button_watermark = ttk.Button(self.filter_frame, text="...", command=self.open_watermark_window)
         self.button_watermark.grid(row=0, column=2, sticky="E", padx=10)
-        Tooltip(self.button_watermark, text=self._("Configure watermark options."))
 
         # Progress bar
         self.progress_bar = ttk.Progressbar(self.root, orient="horizontal", length=400, mode="determinate")
         self.progress_bar.grid(row=4, column=0, columnspan=3, padx=10, pady=20, sticky="WE")
 
         # Status label
-        self.status_var = StringVar(value=self._("Status: Waiting"))
+        self.status_var = StringVar(value="...")
         ttk.Label(self.root, textvariable=self.status_var).grid(row=5, column=0, columnspan=3, padx=10, pady=2)
 
         # Start/Abort button
-        self.start_abort_button = ttk.Button(self.root, text=self._("Start"), command=self.start_processing)
+        self.start_abort_button = ttk.Button(self.root, text="...", command=self.start_processing)
         self.start_abort_button.grid(row=6, column=1, pady=10)
-        Tooltip(self.start_abort_button, text=self._("Start or cancel the highlight process."))
 
         # add version label and update button
         self.version_frame = ttk.Frame(self.root)
@@ -616,10 +663,10 @@ class PDFHighlighterApp:
         latest_version = Version.from_str(self.app_settings.settings["newest_version_available"])
         self.update_version_labels_text(latest_version, current_version)
 
-        self.version_label = ttk.Label(self.version_frame, text=self.version_label_text, foreground=self.version_color)
+        self.version_label = ttk.Label(self.version_frame, text="...", foreground=self.version_color)
         self.version_label.pack(side="left")
 
-        self.update_label = ttk.Label(self.version_frame, text=self.update_label_text, foreground="#5c5c5c", cursor="hand2")
+        self.update_label = ttk.Label(self.version_frame, text="...", foreground="#5c5c5c", cursor="hand2")
         self.update_label.pack(side="left", padx=10)
 
         self.update_label.bind("<Button-1>", lambda event: self.check_for_app_updates(current_version, force_check=True))
@@ -633,6 +680,7 @@ class PDFHighlighterApp:
         self.root.grid_columnconfigure(1, weight=1)  # Allow column 1 to expand and fill space
         self.root.grid_columnconfigure(2, weight=0, minsize=120)  # Set a fixed minimum width for column 2
 
+        self.update_all_widget_texts()
         # Set the initial state of the UI based on the settings
         self.on_language_change(self.app_settings.settings["language"])
 
@@ -827,8 +875,8 @@ class PDFHighlighterApp:
             elif preview_page > len(document) or preview_page < 1:
                 self.change_preview_page(0, reset=True)  # Reset to first page
                 document.close()
-            page: utils = document[preview_page - 1]
-            pix: Pixmap = page.get_pixmap()
+            page = document[preview_page - 1]
+            pix = utils.get_pixmap(page)
 
             image = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
             if enabled and text:
@@ -848,7 +896,8 @@ class PDFHighlighterApp:
                 for widget in self.preview_window.winfo_children():
                     if isinstance(widget, Label):
                         widget.configure(image=img_tk)
-                        widget.image = img_tk  # keep reference
+                        setattr(widget, "image", img_tk)  # Store a reference to the image to prevent it from being garbage collected
+                        # widget.image = img_tk  # keep reference
                         break
             else:
                 if force_open:
@@ -864,7 +913,8 @@ class PDFHighlighterApp:
                     self.preview_window.protocol("WM_DELETE_WINDOW", self.preview_window.destroy)
                     img_tk = ImageTk.PhotoImage(image)
                     img_label = Label(self.preview_window, image=img_tk)
-                    img_label.image = img_tk  # keep reference
+                    setattr(img_label, "image", img_tk)  # Store a reference to the image to prevent it from being garbage collected
+                    # img_label.image = img_tk  # keep reference
                     img_label.pack()
                     # Navigation buttons frame
                     nav_frame = ttk.Frame(self.preview_window)
@@ -895,20 +945,19 @@ class PDFHighlighterApp:
                 origin=self.last_preview_origin,
             )
 
-    def update_version_labels_text(self, latest_version: Version, current_version: Version = Version.from_str(VERSION_STR)):
-        self.init_translatable_strings_version()
+    def update_version_labels_text(self, latest_version: Version | None | bool, current_version: Version = Version.from_str(VERSION_STR)):
         if latest_version is None or latest_version is False:
-            self.version_label_text = self.translatable_strings_version["version_update_failed"]
+            self.version_label_text = self.strings["version_update_failed"]
             self.version_color = "#9d6363"
-            self.update_label_text = self.translatable_strings_update["Check for Updates"]
+            self.update_label_text = self.strings["check_for_updates"]
         elif latest_version and latest_version > current_version:
-            self.version_label_text = self.translatable_strings_version["version_new_available"]
+            self.version_label_text = self.strings["version_new_available"]
             self.version_color = "#ff9f14"
-            self.update_label_text = self.translatable_strings_update["Install Update"]
+            self.update_label_text = self.strings["install_update"]
         else:
-            self.version_label_text = self.translatable_strings_version["version_no_update"]
+            self.version_label_text = self.strings["version_no_update"]
             self.version_color = "#808080"
-            self.update_label_text = self.translatable_strings_update["Check for Updates"]
+            self.update_label_text = self.strings["check_for_updates"]
 
     def update_version_labels(self):
         self.version_label.config(text=self.version_label_text.format(self.app_settings.settings["version"]), foreground=self.version_color)
@@ -926,36 +975,14 @@ class PDFHighlighterApp:
         self.lang.install()
         self._ = staticmethod(self.lang.gettext)
         self.n_ = staticmethod(self.lang.ngettext)
-
-        # Update the text in the GUI
-        self.label_pdf_file.config(text=self._("PDF-File:"))
-        self.label_search_str.config(text=self._("Search term (Club name):"))
-        self.checkbox_relevant_lines.config(text=self._("Mark only relevant lines"))
-        self.status_var.set(self._("Status: Language changed to English."))
-        self.start_abort_button.config(text=self._("Start"))
-        self.browse_button.config(text=self._("Browse"))
-        self.title.config(text=self._("Heat sheet highlighter"))
-        self.language_menu.config(text=self._("Select language"))
-        self.root.title(self._("Heat sheet highlighter"))
-        self.button_filter.config(text=self._("Filter"))
-        self.button_watermark.config(text=self._("Watermark"))
-        self.init_translatable_strings_version()
+        self.init_translatable_strings()
+        self.update_all_widget_texts()
+        self.status_var.set(self.strings["status_language_changed"])
         self.update_version_labels_text(
             Version.from_str(self.app_settings.settings["newest_version_available"]), Version.from_str(self.app_settings.settings["version"])
         )
         self.update_version_labels()
         self.root.update_idletasks()
-
-        # Update the tooltips
-        Tooltip(self.entry_file, text=self._("Select the heat sheet pdf."))
-        Tooltip(self.label_pdf_file, text=self._("Select the heat sheet pdf."))
-        Tooltip(self.label_search_str, text=self._("Enter the name of the club to highlight the results."))
-        Tooltip(self.entry_search_str, text=self._("Enter the name of the club to highlight the results."))
-        Tooltip(self.checkbox_relevant_lines, text=self._("Only highlights the lines that contain the search term and match the expected format."))
-        Tooltip(self.button_filter, text=self._("Configure highlighting lines with specific names."))
-        Tooltip(self.button_watermark, text=self._("Configure watermark options."))
-        Tooltip(self.start_abort_button, text=self._("Start or cancel the highlight process."))
-        Tooltip(self.language_menu, text=self._("Select the language"))
 
     def browse_file(self):
         """
@@ -1017,7 +1044,10 @@ class PDFHighlighterApp:
             total_skipped = 0
             total_pages = len(document)
 
-            for i, page in enumerate(document, start=1):
+            for i in range(len(document)):
+                page = document[i]
+
+            # for i, page in enumerate(document, start=1):
                 if not self.processing_active:  # Check if the process should continue
                     self.status_var.set(self._("Status: Aborted by user."))
                     self.finalize_processing()
@@ -1043,7 +1073,7 @@ class PDFHighlighterApp:
 
             total_marked = total_matches - total_skipped
 
-            if self.processing_active and total_marked > 0:  # Check we finished normally and have matches
+            if self.processing_active and total_marked > 0: # Check we finished normally and have matches
                 # Prompt for output file location
                 self.root.update_idletasks()  # Ensure GUI is updated before showing dialog
                 self.status_var.set(self._("Status: Saving PDF.. Please wait..."))
@@ -1133,8 +1163,8 @@ class PDFHighlighterApp:
                 return latest_version
 
         # ... perform the update check ...
-        latest_version = self._get_latest_version_from_github(current_version=current_version, force_check=force_check)
-
+        latest_version = self._get_latest_version_from_github(current_version=current_version, force_check=force_check)           
+        
         # Cache the result using JSON
         save_cache(now, latest_version)
 
@@ -1148,7 +1178,7 @@ class PDFHighlighterApp:
         response.raise_for_status()
         return response.json()
 
-    def _handle_beta_releases(self, latest_version: Version, download_url: str) -> Tuple[Version, str]:
+    def _handle_beta_releases(self, latest_version: Version | None | bool, download_url: str) -> Tuple[Version | None | bool, str]:
         beta_url = "https://api.github.com/repos/jonalbr/heat-sheet-pdf-highlighter/releases"
         releases_info = self._fetch_release_info(beta_url)
         pre_releases = [release for release in releases_info if release["prerelease"]]
@@ -1314,7 +1344,7 @@ class Tooltip:
         self.tipwindow = tw = Toplevel(self.widget)
         tw.wm_overrideredirect(True)
         tw.wm_geometry("+%d+%d" % (self.x, self.y))
-        label = Label(tw, text=self.text, justify=LEFT, background="#ffffe0", relief=SOLID, borderwidth=1, font=("tahoma", "8", "normal"))
+        label = Label(tw, text=self.text, justify=LEFT, background="#ffffe0", relief=SOLID, borderwidth=1, font=("tahoma", 8, "normal"))
         label.pack(ipadx=1)
 
     def hide_tip(self, event=None):
