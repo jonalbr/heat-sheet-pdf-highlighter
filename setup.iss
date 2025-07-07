@@ -1,4 +1,4 @@
-#define MyAppVersion "1.3.0"
+#define MyAppVersion "1.3.1"
 #define MyAppPublisher "Jonas Albrecht"
 #define MyFilename="heat_sheet_pdf_highlighter_installer"
 #define MyAppURL "https://github.com/jonalbr/heat-sheet-pdf-highlighter"
@@ -59,16 +59,7 @@ Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Uninstall\{#MyApp
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
 [Files]
-Source: "cx_build\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
-Source: "cx_build\update_app.bat"; DestDir: "{app}"; Flags: ignoreversion
-Source: "cx_build\assets\*"; DestDir: "{app}/assets"; Flags: ignoreversion recursesubdirs createallsubdirs 
-Source: "cx_build\lib\*"; DestDir: "{app}/lib"; Flags: ignoreversion recursesubdirs createallsubdirs 
-Source: "cx_build\locales\*.mo"; DestDir: "{app}/locales"; Flags: ignoreversion recursesubdirs createallsubdirs 
-Source: "cx_build\share\*"; DestDir: "{app}/share"; Flags: ignoreversion recursesubdirs createallsubdirs 
-Source: "cx_build\frozen_application_license.txt"; DestDir: "{app}"; Flags: ignoreversion 
-Source: "cx_build\python3.dll"; DestDir: "{app}"; Flags: ignoreversion 
-Source: "cx_build\python311.dll"; DestDir: "{app}"; Flags: ignoreversion 
-; NOTE: Don't use "Flags: ignoreversion" on any shared system files
+Source: "cx_build\*";            DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{autoprograms}\{cm:MyAppName}"; Filename: "{app}\{#MyAppExeName}"

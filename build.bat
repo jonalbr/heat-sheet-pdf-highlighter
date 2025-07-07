@@ -9,8 +9,8 @@ if defined VIRTUAL_ENV (
     echo Using virtual environment: %VIRTUAL_ENV%
     set PY_LAUNCHER=%VIRTUAL_ENV%\Scripts\python.exe
 ) else (
-    echo Using global Python environment
-    set PY_LAUNCHER=py -3.11
+    echo Error: No virtual environment detected. Please activate a Python virtual environment before running this script.
+    goto end
 )
 
 set CX_FREEZE_SETUP=setup.py

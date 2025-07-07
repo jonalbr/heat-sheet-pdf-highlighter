@@ -120,7 +120,7 @@ Click the **"Watermark"** button to add custom watermarks:
 - **Enable Watermark:** Toggle watermark on/off
 - **Watermark Text:** Custom text to overlay on pages
 - **Color Selection:** Choose from presets or enter custom hex colors
-- **Size Control:** Adjust watermark size (1-100)
+- **Size Control:** Adjust watermark size
 - **Position:** Place watermark at top or bottom of pages
 - **Live Preview:** See changes in real-time on different PDF pages
 
