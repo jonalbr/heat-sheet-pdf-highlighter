@@ -2,6 +2,7 @@ import sys
 import logging
 from pathlib import Path
 from cx_Freeze import setup, Executable
+import importlib.util
 
 # Set up logging
 logging.basicConfig(filename="cx_freeze.log", filemode="w", level=logging.DEBUG)
@@ -28,86 +29,41 @@ sys.stderr = StreamToLogger(logger, logging.ERROR)
 # Define the base directory for your project
 base_dir = Path(__file__).parent
 
+def wheel_native_files(pkg):
+    spec = importlib.util.find_spec(pkg)
+    if spec is None or spec.origin is None:
+        raise ImportError(f"Cannot find package '{pkg}' or its origin.")
+    here = Path(spec.origin).parent
+    return list(here.glob("*.pyd")) + list(here.glob("*.dll"))
+
 # Dependencies are automatically detected, but it might need fine tuning.
 build_exe_options = {
-    "packages": ["tkinter", "src"],  # Required packages
-    "excludes": [
-        "PyQt6",
-        "matplotlib",
-        "PySide2",
-        "numpy",
-        "unittest",
-        "jupyter_client",
-        "jupyter_core",
-        "matplotlib_inline",
-        "multiprocessing",
-        "scipy",
-        # Debug and development tools
-        "debugpy",
-        "ipykernel",
-        "IPython",
-        "jupyter",
-        "notebook",
-        "jedi",
-        "parso",
-        "executing",
-        "asttokens",
-        "backcall",
-        "stack_data",
-        "pure_eval",
-        "comm",
-        "traitlets",
-        "tornado",
-        "pyzmq",
-        "zmq",
-        # Data analysis libraries
-        "pandas",
-        "pytz",
-        # Font and markup libraries
-        "fontTools",
-        "markupsafe",
-        "jinja2",
-        # Web scraping
-        "bs4",
-        "soupsieve",
-        # JSON schema validation
-        "jsonschema",
-        "jsonschema_specifications",
-        "referencing",
-        "rpds",
-        "fastjsonschema",
-        "nbformat",
-        "defusedxml",
-        # Terminal libraries
-        "prompt_toolkit",
-        "pygments",
-        "wcwidth",
-        "colorama",
-        # System monitoring
-        "psutil",
-        # Progress bars
-        "tqdm",
-        # Parsing
-        "pyparsing",
-        # Compression
-        "zstandard",
-        # Windows-specific that we don't need
-        "win32com",
-        # Others
-        "attr",
-        "attrs",
-        "fsspec",
-        "pkg_resources",
-    ],  # Exclude unnecessary packages to reduce size
-    "includes": ["pymupdf", "PIL", "requests", "pymupdf.mupdf", "pymupdf.utils", "gettext"],  # Include required packages
+    "packages": ["tkinter", "pymupdf"],
+    "includes": [
+        "PIL", 
+        "requests", 
+        "gettext"
+    ],
     "include_files": [
-        (str(base_dir / "src"), "src"),
         (str(base_dir / "assets"), "assets"),
         (str(base_dir / "locales"), "locales"),
         (str(base_dir / "update_app.bat"), "update_app.bat"),
     ],
     "build_exe": "cx_build",  # Output directory
+    "optimize": 2,  # Enable optimization level 2 (new recommended setting)
+    "include_msvcr": True,  # Include MSVC runtime (essential for PyMuPDF DLLs)
+    "silent_level": 1,
+    # Keep PyMuPDF unzipped for proper DLL loading
+    "zip_exclude_packages": ["pymupdf"],
+    # Add this to exclude problematic modules that might interfere
+    "excludes": ["test", "unittest"],
 }
+
+build_exe_options["include_files"].extend(
+    (str(f), f"lib/{pkg}/{f.name}")
+    for pkg in ["pymupdf"]
+    for f in wheel_native_files(pkg)
+)
 
 # GUI applications require a different base on Windows (the default is for a console application).
 base = None
@@ -116,7 +72,7 @@ if sys.platform == "win32":
 
 setup(
     name="Heat Sheet PDF Highlighter",
-    version="1.3.0",
+    version="1.3.1",
     description="Heat Sheet PDF Highlighter",
     author="Jonas Albrecht",
     maintainer="Jonas Albrecht",

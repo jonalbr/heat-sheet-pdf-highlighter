@@ -3,7 +3,6 @@ Main application window
 """
 import re
 import threading
-from io import BytesIO
 from pathlib import Path
 from tkinter import (
     Tk, StringVar, IntVar, Label, messagebox, filedialog
@@ -503,7 +502,6 @@ class PDFHighlighterApp:
                 self.finalize_processing()
                 return
                 
-            output_buffer = BytesIO()
             total_matches = 0
             total_skipped = 0
             total_pages = len(document)
@@ -538,18 +536,17 @@ class PDFHighlighterApp:
 
             if self.processing_active and total_marked > 0:  # Check we finished normally and have matches
                 # Prompt for output file location - schedule on main thread
-                self.root.after_idle(lambda: self._handle_save_dialog(document, output_buffer, input_file, total_matches, total_skipped))
+                self.root.after_idle(lambda: self._handle_save_dialog(document, input_file, total_matches, total_skipped))
             elif self.processing_active and total_marked == 0:
                 self.root.after_idle(lambda: messagebox.showinfo(self.strings["info"], self.strings["Nothing to highlight; no file saved."]))
 
-            document.close()
         except Exception as e:
             error_msg = str(e)
             self.root.after_idle(lambda: messagebox.showerror("Error", error_msg))
         finally:
             self.root.after_idle(self.finalize_processing)
-    
-    def _handle_save_dialog(self, document, output_buffer, input_file, total_matches, total_skipped):
+
+    def _handle_save_dialog(self, document: Document, input_file: str, total_matches: int, total_skipped: int):
         """Handle the save dialog and file operations on the main thread."""
         self.status_var.set(self.strings["Status: Saving PDF.. Please wait..."])
         output_file = filedialog.asksaveasfilename(
@@ -558,14 +555,14 @@ class PDFHighlighterApp:
             initialfile=self.strings["{0}_marked.pdf"].format(input_file.rsplit(".", 1)[0]),
         )
         if output_file:  # If user specifies a file
-            document.save(output_buffer)
-            with open(output_file, mode="wb") as f:
-                f.write(output_buffer.getbuffer())
+            document.save(output_file)
+            document.close()
             messagebox.showinfo(
                 self.strings["Finished"],
                 self.get_plural_string("processing_complete", total_matches).format(total_matches, total_skipped),
             )
         else:
+            document.close()
             messagebox.showinfo(self.strings["info"], self.strings["No output file selected; processing aborted after matches were found."])
 
     def finalize_processing(self):
