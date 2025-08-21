@@ -43,5 +43,5 @@ if %ERRORLEVEL% neq 0 (
 
 echo Build and compilation successful!
 :end
-pause
+timeout /t 10
 endlocal
