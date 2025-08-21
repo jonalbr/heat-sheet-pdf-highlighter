@@ -179,3 +179,4 @@ dist/
 build/
 cx_build/
 *.exe
+*.exe.sha256

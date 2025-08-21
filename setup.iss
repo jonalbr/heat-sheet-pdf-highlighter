@@ -5,7 +5,19 @@
 #define MyAppSupportURL "https://github.com/jonalbr/heat-sheet-pdf-highlighter/issues"
 #define MyAppUpdateURL "https://api.github.com/repos/jonalbr/heat-sheet-pdf-highlighter/releases/latest"
 #define MyAppExeName "heat_sheet_pdf_highlighter.exe"
-#define MyAppId GetEnv('AppId')
+#if GetEnv('AppId') == ""
+    #error "AppId environment variable is required. Define AppId in .env (AppId={{YOUR-GUID}}) or set it in the environment before building."
+#else
+    #define MyAppId GetEnv('AppId')
+#endif
+
+; Optional code signing configuration via environment variables
+; Set one of the following before building to enable signing:
+;  - PFX file:   set CODESIGN_PFX=path\to\cert.pfx  and  set CODESIGN_PFX_PASS=yourpassword
+;  - Cert store: set CODESIGN_SUBJECT=Your Certificate Subject (CN)
+#define MySignPfx GetEnv('CODESIGN_PFX')
+#define MySignPass GetEnv('CODESIGN_PFX_PASS')
+#define MySignSubject GetEnv('CODESIGN_SUBJECT')
 
 [Setup]
 AppName={cm:MyAppName}
@@ -33,6 +45,14 @@ Compression=lzma2/max
 SolidCompression=yes
 MissingMessagesWarning=yes
 NotRecognizedMessagesWarning=yes
+
+#if (MySignPfx != "")
+SignedUninstaller=yes
+SignTool=signtool sign /fd SHA256 /f "{#MySignPfx}" /p "{#MySignPass}" /tr http://timestamp.digicert.com /td SHA256 /d "Heat Sheet PDF Highlighter" /du "{#MyAppURL}" $f
+#elif (MySignSubject != "")
+SignedUninstaller=yes
+SignTool=signtool sign /fd SHA256 /sm /s "My" /n "{#MySignSubject}" /tr http://timestamp.digicert.com /td SHA256 /d "Heat Sheet PDF Highlighter" /du "{#MyAppURL}" $f
+#endif
 
 [Languages]
 Name: "en"; MessagesFile: "compiler:Default.isl"
