@@ -5,7 +5,7 @@ import datetime
 
 # Application metadata
 APP_NAME = "Heat Sheet PDF Highlighter"
-VERSION_STR = "1.3.3"
+VERSION_STR = "1.3.4-rc1"
 
 # Cache settings
 CACHE_EXPIRY = datetime.timedelta(days=1)
