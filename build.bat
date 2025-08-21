@@ -68,5 +68,11 @@ for %%F in (heat_sheet_pdf_highlighter_installer.exe) do (
 
 echo Build and compilation successful!
 :end
-timeout /t 10
+REM In GitHub Actions, timeout reads from redirected stdin and returns an error.
+REM Skip waiting when running in CI to avoid non-zero exit codes post-build.
+if /i "%GITHUB_ACTIONS%"=="true" (
+    rem CI detected, no pause
+) else (
+    timeout /t 10 /nobreak >nul 2>&1
+)
 endlocal
