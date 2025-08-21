@@ -40,10 +40,8 @@ jobs:
     needs: test
     runs-on: windows-latest
     permissions:
-  contents: write
-  pull-requests: write
-    env:
-      AppId: ${{ secrets.INNO_APP_ID }}
+      contents: write
+      pull-requests: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -56,11 +54,6 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install -r requirements_build.txt
-      - name: Install Inno Setup (via Chocolatey)
-        shell: pwsh
-        run: |
-          choco install innosetup --no-progress -y
       - name: Update version files to input version
         shell: pwsh
         run: |
@@ -77,50 +70,53 @@ jobs:
           git add setup.py setup.iss src/constants.py
           if (-not (git diff --cached --quiet)) { git commit -m "chore(release): v${{ inputs.version }}" }
           git push -u origin HEAD
-              contents: write
-              pull-requests: write
-            env:
-              AppId: ${{ secrets.INNO_APP_ID }}
-            steps:
+      - name: Open Pull Request to main
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          branch: release/v${{ inputs.version }}
           base: main
           title: "chore(release): v${{ inputs.version }}"
           body: |
             Automated release PR for v${{ inputs.version }}.
             - Bumps version via update_version.py
-            - Builds on Windows runner
-            - Will tag and create release after merge
-              - name: Install dependencies
-                run: |
-                  python -m pip install --upgrade pip
-                  pip install -r requirements.txt
-              $h = (Get-FileHash 'heat_sheet_pdf_highlighter_installer.exe' -Algorithm SHA256).Hash.ToLower()
-              "$h  heat_sheet_pdf_highlighter_installer.exe" | Out-File -Encoding ascii -NoNewline 'heat_sheet_pdf_highlighter_installer.exe.sha256'
-            }
-          }
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: v${{ inputs.version }}
-          name: Release v${{ inputs.version }}
-          draft: false
-          prerelease: ${{ inputs.prerelease || contains(inputs.version, '-rc') || contains(inputs.version, '-beta') }}
-          files: |
-            heat_sheet_pdf_highlighter_installer.exe
-            heat_sheet_pdf_highlighter_installer.exe.sha256
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        if: always() && github.ref == format('refs/heads/{0}', 'main')
+            - Merge this PR to proceed to tagging and release.
 
   release_on_tag:
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: windows-latest
     permissions:
       contents: write
-    env:
-      AppId: ${{ secrets.INNO_APP_ID }}
     steps:
       - uses: actions/checkout@v4
-              # Release creation happens on tag push in the release_on_tag job.
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13.7'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r requirements_build.txt
+      - name: Install Inno Setup (via Chocolatey)
+        shell: pwsh
+        run: |
+          choco install innosetup --no-progress -y
+      - name: Build installer
+        shell: cmd
+        env:
+          AppId: ${{ secrets.INNO_APP_ID }}
+        run: |
+          call build.bat
+      - name: Ensure SHA256 exists
+        shell: pwsh
+        run: |
+          if (-not (Test-Path 'heat_sheet_pdf_highlighter_installer.exe.sha256')) {
+            if (Test-Path 'heat_sheet_pdf_highlighter_installer.exe') {
+              $h = (Get-FileHash 'heat_sheet_pdf_highlighter_installer.exe' -Algorithm SHA256).Hash.ToLower()
+              "$h  heat_sheet_pdf_highlighter_installer.exe" | Out-File -Encoding ascii -NoNewline 'heat_sheet_pdf_highlighter_installer.exe.sha256'
+            }
+          }
       - name: Create GitHub Release from tag
         uses: softprops/action-gh-release@v2
         with:
