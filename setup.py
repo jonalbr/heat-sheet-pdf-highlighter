@@ -72,13 +72,14 @@ if sys.platform == "win32":
 
 setup(
     name="Heat Sheet PDF Highlighter",
-    version="1.3.1",
+    version="1.3.2",
     description="Heat Sheet PDF Highlighter",
     author="Jonas Albrecht",
     maintainer="Jonas Albrecht",
     url="https://github.com/jonalbr/heat-sheet-pdf-highlighter",
     license="GPL-3.0",
-    license_file=str(base_dir / "LICENSE"),
+    # Use relative license file path per setuptools requirements
+    license_files=["LICENSE"],
     options={"build_exe": build_exe_options},
     executables=[
         Executable(
