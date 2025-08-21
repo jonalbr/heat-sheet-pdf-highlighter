@@ -1,16 +1,20 @@
 @echo off
 setlocal
 
-REM --- Load environment variables from .env file ---
-for /f "delims== tokens=1,2" %%a in (.env) do set %%a=%%b
+REM --- Load environment variables from .env file (if present) ---
+if exist .env (
+     for /f "usebackq delims== tokens=1,2" %%a in (".env") do set %%a=%%b
+ ) else (
+     echo .env not found, continuing without loading extra environment vars.
+ )
 
-REM --- Check if virtual environment is activated ---
+REM --- Select Python interpreter ---
 if defined VIRTUAL_ENV (
     echo Using virtual environment: %VIRTUAL_ENV%
     set PY_LAUNCHER=%VIRTUAL_ENV%\Scripts\python.exe
 ) else (
-    echo Error: No virtual environment detected. Please activate a Python virtual environment before running this script.
-    goto end
+    echo No virtual environment detected, using system Python on PATH.
+    set PY_LAUNCHER=python
 )
 
 set CX_FREEZE_SETUP=setup.py
