@@ -71,9 +71,30 @@ def ensure_ssh_signing() -> None:
 
 def create_and_push_signed_tag(version: str) -> None:
     tag = f"v{version}"
-    # Create signed tag
-    run(["git", "tag", "-s", tag, "-m", tag])
-    # Push tag
+    # Helper functions
+    def tag_exists_local(t: str) -> bool:
+        return run(["git", "rev-parse", "-q", "--verify", f"{t}^{{tag}}"], check=False).returncode == 0
+
+    def tag_exists_remote(t: str) -> bool:
+        return run(["git", "ls-remote", "--exit-code", "--tags", "origin", f"refs/tags/{t}"], check=False).returncode == 0
+
+    # Try to create signed tag
+    create = run(["git", "tag", "-s", tag, "-m", tag], check=False)
+    if create.returncode != 0:
+        # If it already exists locally, try to push if missing remotely; otherwise noop
+        if tag_exists_local(tag):
+            if not tag_exists_remote(tag):
+                print(f"Tag {tag} exists locally but not on origin; pushing…")
+                run(["git", "push", "origin", tag])
+                return
+            else:
+                print(f"Tag {tag} already exists on origin; nothing to do.")
+                return
+        # Unknown error creating the tag
+        print(f"Failed to create tag {tag}. Ensure your git is configured for signing and try again.")
+        sys.exit(1)
+
+    # Tag created successfully; push it
     run(["git", "push", "origin", tag])
 
 
