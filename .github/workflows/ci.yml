@@ -6,10 +6,8 @@ on:
       - 'v*'
 
 jobs:
-  release_on_tag:
+  build_installer:
     runs-on: windows-latest
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@v4
       - name: Set up Python
@@ -17,14 +15,35 @@ jobs:
         with:
           python-version: '3.13.7'
       - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install -r requirements_build.txt
-      - name: Install Inno Setup (via Chocolatey)
         shell: pwsh
         run: |
-          choco install innosetup --no-progress -y
+          python -m pip install --upgrade pip
+          pip install -r requirements_build.txt
+      - name: Install Inno Setup (winget → direct download → choco)
+        shell: pwsh
+        run: |
+          try {
+            if (Get-Command winget -ErrorAction SilentlyContinue) {
+              Write-Output "✅ winget is available. Installing Inno Setup..."
+              winget install --id JRSoftware.InnoSetup -e -s winget --accept-package-agreements --accept-source-agreements
+              if ($LASTEXITCODE -eq 0) { return }
+              else { Write-Output "⚠️ winget install failed, falling back..." }
+            }
+
+            Write-Output "⬇️ Downloading Inno Setup 6.5.1 directly..."
+            $url = 'https://jrsoftware.org/download.php/is-6.5.1-unicode.exe'
+            $installer = 'innosetup-6.5.1.exe'
+            Invoke-WebRequest -Uri $url -OutFile $installer -UseBasicParsing
+            Start-Process -FilePath ".\$installer" -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -Wait
+            if ($LASTEXITCODE -eq 0) { return }
+            else { Write-Output "⚠️ direct download install failed, falling back..." }
+          }
+          catch {
+            Write-Output "⚠️ direct download failed: $($_.Exception.Message)"
+          }
+
+          Write-Output "🍫 Using Chocolatey as last resort..."
+          choco install innosetup --no-progress -y --force
       - name: Build installer
         shell: cmd
         env:
@@ -40,11 +59,225 @@ jobs:
               "$h  heat_sheet_pdf_highlighter_installer.exe" | Out-File -Encoding ascii -NoNewline 'heat_sheet_pdf_highlighter_installer.exe.sha256'
             }
           }
+      - name: Upload installer artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: installer
+          if-no-files-found: error
+          path: |
+            heat_sheet_pdf_highlighter_installer.exe
+            heat_sheet_pdf_highlighter_installer.exe.sha256
+
+  generate_notes:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+      models: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Determine previous tag
+        shell: pwsh
+        run: |
+          git fetch --tags --force
+          $current = "${{ github.ref_name }}"
+          $prev = (git describe --tags --abbrev=0 "$current^") 2>$null
+          if (-not $prev) { $prev = "" }
+          "CURRENT_TAG=$current" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "PREV_TAG=$prev"       | Out-File -FilePath $env:GITHUB_ENV -Append
+          Write-Output "Current tag: $current"
+          Write-Output "Previous tag: $prev"
+      - name: Collect commit messages
+        shell: pwsh
+        run: |
+          if ($env:PREV_TAG) {
+            git log --pretty=format:"%s%n%n%b" "$env:PREV_TAG..$env:CURRENT_TAG" > commits_raw.txt
+          } else {
+            git log -1 --pretty=format:"%s%n%n%b" "$env:CURRENT_TAG" > commits_raw.txt
+          }
+          if (-not (Get-Content commits_raw.txt | Where-Object {$_})) {
+            'No commits found between tags.' | Out-File commits_raw.txt
+          }
+          (Get-Content commits_raw.txt) | ForEach-Object { '- ' + $_ } | Out-File commits.txt -Encoding utf8
+          Get-Content commits.txt | Select-Object -First 50
+      - name: Generate deterministic release notes
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          git fetch --tags --force | Out-Null
+
+          $current = $env:CURRENT_TAG
+          $prev = $env:PREV_TAG
+          if ([string]::IsNullOrWhiteSpace($prev)) {
+            $prev = (git rev-list --max-parents=0 HEAD).Trim()
+          }
+
+          $range = "$prev..$current"
+          $rawCommits = git log --no-merges --pretty=format:"%s" $range
+
+          $repo = "${{ github.repository }}"
+          $fullChangelog = "https://github.com/$repo/compare/$prev...$current"
+
+          $categories = [ordered]@{
+            'Features'      = @()
+            'Fixes'         = @()
+            'Performance'   = @()
+            'Docs'          = @()
+            'Refactor'      = @()
+            'Tests'         = @()
+            'Build'         = @()
+            'CI'            = @()
+            'Style'         = @()
+            'Dependencies'  = @()
+            'Reverts'       = @()
+            'Other'         = @()
+          }
+
+          $emoji = @{
+            'Features'     = '✨'
+            'Fixes'        = '🐛'
+            'Performance'  = '🚀'
+            'Docs'         = '📝'
+            'Refactor'     = '♻️'
+            'Tests'        = '✅'
+            'Build'        = '📦'
+            'CI'           = '🔧'
+            'Style'        = '🎨'
+            'Dependencies' = '⬆️'
+            'Reverts'      = '🔙'
+            'Other'        = '•'
+          }
+
+          foreach ($c in $rawCommits) {
+            $c = $c.Trim()
+            if (-not $c) { continue }
+            if ($c -eq $current) { continue }
+
+            $lower = $c.ToLowerInvariant()
+            $target = 'Other'
+            if     ($lower -match '^(feat)(\(.+\))?!?:\s') { $target = 'Features' }
+            elseif ($lower -match '^(fix|hotfix|bugfix)(\(.+\))?!?:\s') { $target = 'Fixes' }
+            elseif ($lower -match '^(perf)(\(.+\))?!?:\s') { $target = 'Performance' }
+            elseif ($lower -match '^(docs?)(\(.+\))?!?:\s') { $target = 'Docs' }
+            elseif ($lower -match '^(refactor)(\(.+\))?!?:\s') { $target = 'Refactor' }
+            elseif ($lower -match '^(test)(\(.+\))?!?:\s') { $target = 'Tests' }
+            elseif ($lower -match '^(build)(\(.+\))?!?:\s') { $target = 'Build' }
+            elseif ($lower -match '^(ci)(\(.+\))?!?:\s') { $target = 'CI' }
+            elseif ($lower -match '^(style)(\(.+\))?!?:\s') { $target = 'Style' }
+            elseif ($lower -match '^(revert)') { $target = 'Reverts' }
+            elseif ($lower -match '(dependabot|^deps?:|\bbump\b)') { $target = 'Dependencies' }
+
+            $pretty = $c -replace '^[a-zA-Z]+(\(.+?\))?!?:\s*',''
+            $pretty = $pretty.TrimEnd('.')
+            $categories[$target] += "- $pretty"
+          }
+
+          $lines = @()
+          $lines += "What's Changed"
+          $lines += ""
+
+          $addedAny = $false
+          foreach ($k in $categories.Keys) {
+            $items = $categories[$k]
+            if ($items.Count -gt 0) {
+              $addedAny = $true
+              $lines += "${($emoji[$k])} $k"
+              $lines += $items
+              $lines += ""
+            }
+          }
+
+          if (-not $addedAny) {
+            $lines += "- Internal updates"
+            $lines += ""
+          }
+
+          $lines += "Full Changelog: [$prev...$current]($fullChangelog)"
+
+          $outPath = "release_notes.md"
+          $lines -join "`r`n" | Out-File -FilePath $outPath -Encoding utf8 -NoNewline
+      - name: Polish release notes with GitHub Models
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $outPath = "release_notes.md"
+          if (-not (Test-Path $outPath)) { exit 0 }
+
+          $original = Get-Content $outPath -Raw
+          if ([string]::IsNullOrWhiteSpace($original)) { exit 0 }
+
+          $lines = $original -split "`r`n"
+          $footer = $lines[-1]
+
+          $system = @(
+            'You are a precise release-notes editor. Improve clarity and flow without inventing changes. Keep it concise.',
+            '- Only rewrite the "What''s Changed" section lines.',
+            '- Do NOT add or remove items beyond rewriting text and grouping.',
+            '- Do NOT include the final line (Full Changelog) in your output.',
+            '- Use short, parallel, present-tense bullet points.',
+            '- Preserve technical accuracy; no speculation.'
+          ) -join "`n"
+
+          $user = @(
+            "Rewrite the following What's Changed bullets for clarity and concision. Keep the existing categories and bullets, but you may merge obviously redundant lines. Do not add new items. Output only Markdown for the section, without a trailing Full Changelog line.",
+            '',
+            $original
+          ) -join "`n"
+
+          $payload = @{ 
+            model = 'openai/gpt-4o'
+            messages = @(
+              @{ role = 'system'; content = $system },
+              @{ role = 'user'; content = $user }
+            )
+            temperature = 0.2
+          } | ConvertTo-Json -Depth 6
+
+          try {
+            $resp = Invoke-RestMethod -Method Post -Uri 'https://models.github.ai/inference/chat/completions' -ContentType 'application/json' -Headers @{ Authorization = "Bearer $env:GITHUB_TOKEN" } -Body $payload
+            $content = $resp.choices[0].message.content
+            if (-not $content) { throw 'Empty model response' }
+
+            $clean = [regex]::Replace($content, '(?im)^\s*Full Changelog:.*$', '')
+            $final = $clean.TrimEnd() + "`r`n`r`n" + $footer
+            $final | Out-File -FilePath $outPath -Encoding utf8 -NoNewline
+          }
+          catch {
+            Write-Host "AI polish failed: $($_.Exception.Message). Using original notes."
+          }
+      - name: Upload release notes artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release_notes
+          if-no-files-found: error
+          path: release_notes.md
+
+  release:
+    runs-on: windows-latest
+    needs: [build_installer, generate_notes]
+    permissions:
+      contents: write
+    steps:
+      - name: Download installer artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: installer
+          path: .
+      - name: Download release notes artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: release_notes
+          path: .
       - name: Create GitHub Release from tag
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
-          name: Release ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          generate_release_notes: false
+          body_path: release_notes.md
           draft: false
           prerelease: ${{ contains(github.ref_name, '-rc') || contains(github.ref_name, '-beta') }}
           files: |

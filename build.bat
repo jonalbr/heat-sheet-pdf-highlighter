@@ -18,8 +18,14 @@ if defined VIRTUAL_ENV (
 )
 
 set CX_FREEZE_SETUP=setup.py
-set INNO_COMPILER="C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
-set INNO_SCRIPT=setup.iss
+REM --- Resolve Inno Setup compiler path (prefer ProgramFiles(x86), fallback to ProgramFiles) ---
+if defined ProgramFiles(x86) (
+     set "INNO_COMPILER=%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe"
+ ) else (
+     set "INNO_COMPILER=%ProgramFiles%\Inno Setup 6\ISCC.exe"
+ )
+
+set "INNO_SCRIPT=setup.iss"
 
 REM --- Ensure Python 3.13 is used ---
 echo Using Python version:
@@ -31,18 +37,23 @@ cd
 
 REM --- Building the application with cx_Freeze ---
 echo Building application with cx_Freeze...
-%PY_LAUNCHER% %CX_FREEZE_SETUP% build
+"%PY_LAUNCHER%" "%CX_FREEZE_SETUP%" build
 if %ERRORLEVEL% neq 0 (
     echo Failed to build with cx_Freeze!
-    goto end
+    exit /b 1
 )
 
 REM --- Compiling the installer with Inno Setup ---
 echo Compiling Inno Setup Script...
-%INNO_COMPILER% %INNO_SCRIPT%
+if not exist "%INNO_COMPILER%" (
+    echo Inno Setup compiler not found at: "%INNO_COMPILER%"
+    echo Ensure Inno Setup 6 is installed on this machine.
+    exit /b 1
+)
+"%INNO_COMPILER%" "%INNO_SCRIPT%"
 if %ERRORLEVEL% neq 0 (
     echo Failed to compile Inno Setup script!
-    goto end
+    exit /b 1
 )
 
 REM --- Generate SHA256 file for the installer ---
