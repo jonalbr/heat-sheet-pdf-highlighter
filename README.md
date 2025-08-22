@@ -44,13 +44,20 @@ Heat Sheet PDF Highlighter is a Python application designed to facilitate the hi
 4. Follow the on-screen instructions to complete the installation.
 5. Once installed, launch the application by searching for "Heat Sheet PDF Highlighter" in the Start menu or using the desktop shortcut.
 
+### (Optional) Verify installer checksum
+To verify the integrity of the downloaded installer, compare its SHA-256 hash with the checksum file provided alongside the release (`.exe.sha256`):
+
+1. Download the corresponding `.sha256` file from the same release.
+2. On Windows (PowerShell), compute the hash of your downloaded installer and compare it with the contents of the `.sha256` file.
+3. The hashes must match exactly; if they don't, re-download the installer.
+
 **Note:** The .exe installer is only available for Windows operating systems. For other platforms, use the Python script method below.
 
 ### Run from Source Code
 **For developers and advanced users**
 
 #### Prerequisites
-- Python 3.11 or higher
+- Python 3.13 or higher
 - Windows, macOS (untested), or Linux (untested)
 
 #### Setup Instructions
@@ -63,7 +70,7 @@ To run Heat Sheet PDF Highlighter directly from source code:
    ```
 
 2. **Create and activate a virtual environment (recommended):**
-   If you are planing to develop, please read [Development Setup](#development-setup).
+   If you are planning to develop, please read [Development Setup](#development-setup).
     
    ```bash
    python -m venv .venv
@@ -233,9 +240,9 @@ To build the application for Windows deployment as an installer.
 
 Create a `.env` file in the project root:
 ```
-AppId={{Your_AppId}
+AppId={{Your_AppId}}
 ```
-Replace `{Your_AppId}` with a GUID (format: `{12345678-1234-1234-1234-123456789012}`). The two `{{` are not a mistake. Example: `AppId={{12345678-1234-1234-1234-123456789012}`
+Replace `{Your_AppId}` with a GUID (format: `{12345678-1234-1234-1234-123456789012}`). The two `{{` are not a mistake. Example: `AppId={{12345678-1234-1234-1234-123456789012}}`
 
 **Important:** Do not share your `.env` file as it now contains sensitive information!
 
