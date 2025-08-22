@@ -10,6 +10,39 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from src.utils.updater import UpdateChecker
 from src.version import Version
+class _PopenPatch:
+    """Context manager to temporarily replace subprocess.Popen with a stub/captor."""
+    def __init__(self, capture_calls: bool = False):
+        self.capture_calls = capture_calls
+        self.calls = []
+        self._orig = None
+
+    def __enter__(self):
+        self._orig = subprocess.Popen
+
+        if self.capture_calls:
+            calls_ref = self.calls
+            def append_call(call):
+                calls_ref.append(call)
+            class _StubProc:
+                def __init__(self, *a, **k):
+                    # capture args for assertions
+                    append_call((a, k))
+                    self.pid = 0
+            subprocess.Popen = _StubProc  # type: ignore[assignment]
+        else:
+            class _StubProcNoop:
+                def __init__(self, *a, **k):
+                    self.args = a
+                    self.kwargs = k
+                    self.pid = 0
+            subprocess.Popen = _StubProcNoop  # type: ignore[assignment]
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        subprocess.Popen = self._orig  # type: ignore[assignment]
+        return False
+
 
 
 class DummyGUI:
@@ -116,20 +149,11 @@ def test_checksum_mismatch():
         app = DummyApp(beta=False)
         uc = UpdateChecker(app)  # type: ignore[arg-type]
         # Avoid actually spawning update script if it somehow gets that far
-        class _StubProc:
-            def __init__(self, *a, **k):
-                self.args = a
-                self.kwargs = k
-                self.pid = 0
-        subprocess_popen_orig = subprocess.Popen
-        subprocess.Popen = _StubProc
-        try:
+        with _PopenPatch():
             uc.download_and_run_installer(
                 f"http://127.0.0.1:{port}/heat_sheet_pdf_highlighter_installer.exe",
                 f"http://127.0.0.1:{port}/heat_sheet_pdf_highlighter_installer.exe.sha256",
             )
-        finally:
-            subprocess.Popen = subprocess_popen_orig
         assert any(e[0] == "download" and "Checksum" in e[1] for e in app.update_dialogs.errors), "Expected checksum mismatch error"
         print("OK: checksum mismatch handled")
     finally:
@@ -148,20 +172,11 @@ def test_beta_cancelled_download():
         # Cancel immediately before download loop starts
         app.update_dialogs.cancel = True
 
-        class _StubProc:
-            def __init__(self, *a, **k):
-                self.args = a
-                self.kwargs = k
-                self.pid = 0
-        subprocess_popen_orig = subprocess.Popen
-        subprocess.Popen = _StubProc
-        try:
+        with _PopenPatch():
             uc.download_and_run_installer(
                 f"http://127.0.0.1:{port}/heat_sheet_pdf_highlighter_installer.exe",
                 None,
             )
-        finally:
-            subprocess.Popen = subprocess_popen_orig
         print("OK: beta cancel path returns without spawn")
     finally:
         server.shutdown()
@@ -205,23 +220,13 @@ def test_checksum_ok_runs():
         uc = UpdateChecker(app)  # type: ignore[arg-type]
 
         # Capture Popen invocations
-        calls = []
-        class _StubProc:
-            def __init__(self, *a, **k):
-                calls.append((a, k))
-                self.pid = 0
-        subprocess_popen_orig = subprocess.Popen
-        subprocess.Popen = _StubProc
-        try:
+        with _PopenPatch(capture_calls=True) as pp:
             uc.download_and_run_installer(
                 f"http://127.0.0.1:{port}/heat_sheet_pdf_highlighter_installer.exe",
                 f"http://127.0.0.1:{port}/heat_sheet_pdf_highlighter_installer.exe.sha256",
             )
-        finally:
-            subprocess.Popen = subprocess_popen_orig
-
         assert not app.update_dialogs.errors, f"Unexpected errors: {app.update_dialogs.errors}"
-        assert calls, "Expected installer to be spawned after successful checksum"
+        assert pp.calls, "Expected installer to be spawned after successful checksum"
         print("OK: checksum verified and installer spawned")
     finally:
         server.shutdown()

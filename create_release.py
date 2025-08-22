@@ -2,6 +2,7 @@ import subprocess
 import sys
 import re
 from pathlib import Path
+import shutil
 
 SETUP_PY = Path("setup.py")
 SETUP_ISS = Path("setup.iss")
@@ -46,8 +47,20 @@ def update_version(version: str) -> None:
         CONSTANTS_PY.write_text(text, encoding="utf-8")
 
 
+def _resolve_exec(cmd: list[str]) -> list[str]:
+    if not cmd:
+        return cmd
+    exe = cmd[0]
+    # If first element has no path separators, resolve via PATH
+    if not any(sep in exe for sep in ("/", "\\")):
+        resolved = shutil.which(exe)
+        if resolved:
+            return [resolved, *cmd[1:]]
+    return cmd
+
+
 def run(cmd: list[str], check: bool = True) -> subprocess.CompletedProcess:
-    return subprocess.run(cmd, check=check)
+    return subprocess.run(_resolve_exec(cmd), check=check)
 
 
 def ensure_ssh_signing() -> None:
@@ -76,7 +89,7 @@ def main() -> None:
     # Optionally stage and commit version bumps if there are changes
     run(["git", "add", str(SETUP_PY), str(SETUP_ISS), str(CONSTANTS_PY)], check=False)
     # Commit only if there is any staged change
-    commit = subprocess.run(["git", "diff", "--cached", "--quiet"])  # returncode 0 if no diff
+    commit = run(["git", "diff", "--cached", "--quiet"], check=False)  # returncode 0 if no diff
     if commit.returncode == 1:
         run(["git", "commit", "-m", f"chore(release): v{version}"])
         # Pushing the commit might be blocked by branch policies; user can open PR.

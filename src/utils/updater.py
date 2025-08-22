@@ -118,36 +118,14 @@ class UpdateChecker:
                 return latest_version
 
             # Use a guard clause to update settings when necessary (only after SHA check for stable)
-            if latest_version > Version.from_str(self.app_settings.settings["newest_version_available"]):
-                self.app_settings.update_setting("ask_for_update", "True")
-                self.app_settings.update_setting("newest_version_available", str(latest_version))
+            self._update_settings_if_newer(latest_version)
 
             # Check if an update is needed
-            if not (latest_version > current_version and (self.app_settings.settings["ask_for_update"] == "True" or force_check)):
-                if force_check:
-                    self.gui_callbacks.show_up_to_date()
+            if not self._should_prompt_user(latest_version, current_version, force_check):
                 return latest_version
 
             # Prompt the user to install the update if needed
-            update_choice = self.gui_callbacks.show_update_available(latest_version)
-
-            if update_choice is None:
-                # User clicked "Cancel" – ask again next time
-                return latest_version
-            elif update_choice:
-                # User clicked "Yes" - download and install (on main thread like original)
-                # Only verify SHA for stable channel; beta can proceed without sha
-                verify_sha = (self.app_settings.settings["beta"] != "True")
-                if not download_url:
-                    self.gui_callbacks.show_download_error("Installer asset not found in the selected release.")
-                    return latest_version
-                self.download_and_run_installer(download_url, sha_url if verify_sha else None)
-            else:
-                # User clicked "No" - ask if they want to be reminded again
-                choice = self.gui_callbacks.show_update_reminder_choice()
-                if choice:
-                    self.app_settings.update_setting("ask_for_update", "False")
-                
+            self._handle_user_prompt(latest_version, download_url, sha_url)
             return latest_version
 
         except requests.exceptions.RequestException as e:
@@ -175,104 +153,118 @@ class UpdateChecker:
         with tempfile.NamedTemporaryFile(suffix=".exe", delete=False) as temp_file:
             installer_path = temp_file.name
 
-        download_cancelled = False
-        
-        # Download the installer exe
         try:
-            response = requests.get(download_url, stream=True)
-            response.raise_for_status()
-
-            total_size_in_bytes = int(response.headers.get("content-length", 0))
-            block_size = 1024  # 1 KB
-
-            self.gui_callbacks.setup_download_progress(total_size_in_bytes)
-            
-            start_time = time.time()
-
-            with open(installer_path, "wb") as file:
-                last_update_time = time.time()
-                for data in response.iter_content(block_size):
-                    # Check if download was cancelled
-                    if self.gui_callbacks.is_download_cancelled():
-                        download_cancelled = True
-                        break
-                    
-                    file.write(data)
-                    self.gui_callbacks.update_download_progress(len(data))
-                    current_time = time.time()
-                    if current_time - last_update_time >= 0.25:  # Update the GUI every 1/4 second
-                        self.gui_callbacks.update_download_status(start_time, total_size_in_bytes)
-                        last_update_time = current_time
-
-            # File is now closed, safe to delete if cancelled
-            if download_cancelled:
-                try:
-                    os.unlink(installer_path)  # Delete partial file
-                except OSError:
-                    pass
-                return
-
-            if total_size_in_bytes != 0:
-                current_value = self.gui_callbacks.get_progress_value()
-                if current_value != total_size_in_bytes:
-                    print("ERROR, something went wrong")
-
+            cancelled, total_size_in_bytes = self._download_with_progress(download_url, installer_path)
         except requests.exceptions.HTTPError as e:
             self.gui_callbacks.show_download_error(str(e))
-            # Clean up partial file on error
-            try:
-                os.unlink(installer_path)
-            except OSError:
-                pass
+            self._safe_unlink(installer_path)
             return
         except Exception:
-            # Clean up partial file on any other error
-            try:
-                os.unlink(installer_path)
-            except OSError:
-                pass
+            self._safe_unlink(installer_path)
             raise
+
+        if cancelled:
+            self._safe_unlink(installer_path)
+            return
+
+        if total_size_in_bytes != 0:
+            current_value = self.gui_callbacks.get_progress_value()
+            if current_value != total_size_in_bytes:
+                print("ERROR, something went wrong")
 
         # Finish download UI state
         self.gui_callbacks.finish_download_ui()
 
         # Verify SHA256 if URL provided (stable updates)
-        if sha_url:
-            try:
-                sha_resp = requests.get(sha_url, timeout=30)
-                sha_resp.raise_for_status()
-                # Extract first 64-hex sequence from the file
-                m = re.search(r"\b[a-fA-F0-9]{64}\b", sha_resp.text)
-                if not m:
-                    raise ValueError("Invalid .sha256 file format")
-                expected_sha = m.group(0).lower()
+        if sha_url and not self._verify_sha256(installer_path, sha_url):
+            # Error already shown inside _verify_sha256
+            self._safe_unlink(installer_path)
+            return
 
-                # Compute sha256 of downloaded installer
-                sha256 = hashlib.sha256()
-                with open(installer_path, "rb") as f:
-                    for chunk in iter(lambda: f.read(1024 * 1024), b""):
-                        sha256.update(chunk)
-                actual_sha = sha256.hexdigest().lower()
-
-                if actual_sha != expected_sha:
-                    self.gui_callbacks.show_download_error("Checksum mismatch. Downloaded file is corrupted.")
-                    try:
-                        os.unlink(installer_path)
-                    except OSError:
-                        pass
-                    return
-            except Exception as e:
-                self.gui_callbacks.show_download_error(str(e))
-                try:
-                    os.unlink(installer_path)
-                except OSError:
-                    pass
-                return
-
-        # Close the application
+        # Close the application and run installer
         self.gui_callbacks.close_application()
+        self._spawn_installer(installer_path)
 
-        # Get the current process id
+    # --- helper methods to reduce complexity ---
+
+    def _update_settings_if_newer(self, latest_version: Version) -> None:
+        if latest_version > Version.from_str(self.app_settings.settings["newest_version_available"]):
+            self.app_settings.update_setting("ask_for_update", "True")
+            self.app_settings.update_setting("newest_version_available", str(latest_version))
+
+    def _should_prompt_user(self, latest_version: Version, current_version: Version, force_check: bool) -> bool:
+        should_prompt = latest_version > current_version and (
+            self.app_settings.settings["ask_for_update"] == "True" or force_check
+        )
+        if not should_prompt and force_check:
+            self.gui_callbacks.show_up_to_date()
+        return should_prompt
+
+    def _handle_user_prompt(self, latest_version: Version, download_url: str | None, sha_url: str | None) -> None:
+        update_choice = self.gui_callbacks.show_update_available(latest_version)
+        if update_choice is None:
+            return  # Cancel
+        if update_choice:
+            verify_sha = (self.app_settings.settings["beta"] != "True")
+            if not download_url:
+                self.gui_callbacks.show_download_error("Installer asset not found in the selected release.")
+                return
+            self.download_and_run_installer(download_url, sha_url if verify_sha else None)
+            return
+        # User clicked "No"
+        if self.gui_callbacks.show_update_reminder_choice():
+            self.app_settings.update_setting("ask_for_update", "False")
+
+    def _download_with_progress(self, url: str, dest_path: str) -> tuple[bool, int]:
+        """Download a file streaming to dest_path with GUI progress. Returns (cancelled, total_size)."""
+        response = requests.get(url, stream=True)
+        response.raise_for_status()
+
+        total_size_in_bytes = int(response.headers.get("content-length", 0))
+        block_size = 1024
+
+        self.gui_callbacks.setup_download_progress(total_size_in_bytes)
+        start_time = time.time()
+        cancelled = False
+
+        with open(dest_path, "wb") as file:
+            last_update_time = time.time()
+            for data in response.iter_content(block_size):
+                if self.gui_callbacks.is_download_cancelled():
+                    cancelled = True
+                    break
+                file.write(data)
+                self.gui_callbacks.update_download_progress(len(data))
+                current_time = time.time()
+                if current_time - last_update_time >= 0.25:
+                    self.gui_callbacks.update_download_status(start_time, total_size_in_bytes)
+                    last_update_time = current_time
+        return cancelled, total_size_in_bytes
+
+    def _verify_sha256(self, installer_path: str, sha_url: str) -> bool:
+        try:
+            sha_resp = requests.get(sha_url, timeout=30)
+            sha_resp.raise_for_status()
+            m = re.search(r"\b[a-fA-F0-9]{64}\b", sha_resp.text)
+            if not m:
+                raise ValueError("Invalid .sha256 file format")
+            expected_sha = m.group(0).lower()
+
+            sha256 = hashlib.sha256()
+            with open(installer_path, "rb") as f:
+                for chunk in iter(lambda: f.read(1024 * 1024), b""):
+                    sha256.update(chunk)
+            actual_sha = sha256.hexdigest().lower()
+
+            if actual_sha != expected_sha:
+                self.gui_callbacks.show_download_error("Checksum mismatch. Downloaded file is corrupted.")
+                return False
+            return True
+        except Exception as e:
+            self.gui_callbacks.show_download_error(str(e))
+            return False
+
+    def _spawn_installer(self, installer_path: str) -> None:
         pid = os.getpid()
 
         # Create a STARTUPINFO object
@@ -283,3 +275,10 @@ class UpdateChecker:
 
         # Run the update script without showing a window
         subprocess.Popen([str(self.paths.update_script_path), str(pid), installer_path], startupinfo=startupinfo)
+
+    @staticmethod
+    def _safe_unlink(path: str) -> None:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
