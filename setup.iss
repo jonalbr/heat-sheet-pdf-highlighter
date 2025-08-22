@@ -1,4 +1,5 @@
 #define MyAppVersion "1.3.4-rc1"
+#define MyAppVersionNumeric "1.3.4.0"
 #define MyAppPublisher "Jonas Albrecht"
 #define MyFilename="heat_sheet_pdf_highlighter_installer"
 #define MyAppURL "https://github.com/jonalbr/heat-sheet-pdf-highlighter"
@@ -22,8 +23,8 @@
 [Setup]
 AppName={cm:MyAppName}
 AppId={#MyAppId}
-AppVersion={#MyAppVersion}
-VersionInfoVersion={#MyAppVersion}
+AppVersion={#MyAppVersionNumeric}
+VersionInfoVersion={#MyAppVersionNumeric}
 AppVerName={cm:MyAppVerName, {#MyAppVersion}}
 WizardStyle=modern
 DefaultDirName={autopf}\{cm:MyAppName}
