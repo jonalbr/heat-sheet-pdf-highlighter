@@ -31,7 +31,7 @@ def update_version(version: str) -> None:
     if SETUP_ISS.exists():
         text = SETUP_ISS.read_text(encoding="utf-8")
         # Update display version
-    text = re.sub(r'(#define\s+MyAppVersion\s*")([^"]+)(")', rf"\g<1>{version}\g<3>", text)
+        text = re.sub(r'(#define\s+MyAppVersion\s*")([^"]+)(")', rf"\g<1>{version}\g<3>", text)
         # Ensure numeric file version define exists and is updated
         if re.search(r'#define\s+MyAppVersionNumeric\s*"[^"]*"', text):
             text = re.sub(r'(#define\s+MyAppVersionNumeric\s*")([^"]*)(")', rf"\g<1>{file_version}\g<3>", text)
