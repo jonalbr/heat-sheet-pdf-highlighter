@@ -72,7 +72,7 @@ if sys.platform == "win32":
 
 setup(
     name="Heat Sheet PDF Highlighter",
-    version="1.3.3-rc2",
+    version="1.3.3-rc3",
     description="Heat Sheet PDF Highlighter",
     author="Jonas Albrecht",
     maintainer="Jonas Albrecht",
