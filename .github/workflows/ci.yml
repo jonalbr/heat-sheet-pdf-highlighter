@@ -119,7 +119,7 @@ jobs:
           $rawCommits = git log --no-merges --pretty=format:"%s" $range
 
           $repo = "${{ github.repository }}"
-          $fullChangelog = https://github.com/$repo/compare/$prev...$current
+          $fullChangelog = "https://github.com/$repo/compare/$prev...$current"
 
           $categories = [ordered]@{
             'Features'      = @()
@@ -197,7 +197,7 @@ jobs:
             $lines += ""
           }
 
-          $lines += "**Full Changelog**: [$prev...$current]($fullChangelog)"
+          $lines += "**Full Changelog**: $fullChangelog"
 
           $outPath = "release_notes.md"
           $lines -join "`r`n" | Out-File -FilePath $outPath -Encoding utf8 -NoNewline
