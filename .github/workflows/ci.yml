@@ -25,13 +25,13 @@ jobs:
           try {
             if (Get-Command winget -ErrorAction SilentlyContinue) {
               Write-Output "✅ winget is available. Installing Inno Setup..."
-              winget install --id JRSoftware.InnoSetup -e -s winget --accept-package-agreements --accept-source-agreements
+              winget install --id JRSoftware.InnoSetup -e -s winget --silent --accept-package-agreements --accept-source-agreements --disable-interactivity
               if ($LASTEXITCODE -eq 0) { return }
               else { Write-Output "⚠️ winget install failed, falling back..." }
             }
 
             Write-Output "⬇️ Downloading Inno Setup 6.5.1 directly..."
-            $url = 'https://jrsoftware.org/download.php/is-6.5.1-unicode.exe'
+            $url = 'https://jrsoftware.org/download.php/is.exe?site=2'
             $installer = 'innosetup-6.5.1.exe'
             Invoke-WebRequest -Uri $url -OutFile $installer -UseBasicParsing
             Start-Process -FilePath ".\$installer" -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -Wait
@@ -42,8 +42,8 @@ jobs:
             Write-Output "⚠️ direct download failed: $($_.Exception.Message)"
           }
 
-          Write-Output "🍫 Using Chocolatey as last resort..."
-          choco install innosetup --no-progress -y --force
+          Write-Output "🍫 Using Chocolatey..."
+          choco install innosetup --no-progress -y
       - name: Build installer
         shell: cmd
         env:
@@ -117,7 +117,7 @@ jobs:
           $rawCommits = git log --no-merges --pretty=format:"%s" $range
 
           $repo = "${{ github.repository }}"
-          $fullChangelog = "https://github.com/$repo/compare/$prev...$current"
+          $fullChangelog = https://github.com/$repo/compare/$prev...$current
 
           $categories = [ordered]@{
             'Features'      = @()
@@ -153,6 +153,8 @@ jobs:
             $c = $c.Trim()
             if (-not $c) { continue }
             if ($c -eq $current) { continue }
+            # Skip pure tag/version messages like "v1.3.3-rc1"
+            if ($c -match '^(?i)v?\d+\.\d+\.\d+(?:[-+\.][0-9A-Za-z.-]+)?$') { continue }
 
             $lower = $c.ToLowerInvariant()
             $target = 'Other'
@@ -193,7 +195,7 @@ jobs:
             $lines += ""
           }
 
-          $lines += "Full Changelog: [$prev...$current]($fullChangelog)"
+          $lines += "**Full Changelog**: [$prev...$current]($fullChangelog)"
 
           $outPath = "release_notes.md"
           $lines -join "`r`n" | Out-File -FilePath $outPath -Encoding utf8 -NoNewline
@@ -217,6 +219,7 @@ jobs:
             '- Only rewrite the "What''s Changed" section lines.',
             '- Do NOT add or remove items beyond rewriting text and grouping.',
             '- Do NOT include the final line (Full Changelog) in your output.',
+            '- Do NOT wrap the output in code fences or blocks (no code-fenced Markdown).',
             '- Use short, parallel, present-tense bullet points.',
             '- Preserve technical accuracy; no speculation.'
           ) -join "`n"
@@ -242,6 +245,8 @@ jobs:
             if (-not $content) { throw 'Empty model response' }
 
             $clean = [regex]::Replace($content, '(?im)^\s*Full Changelog:.*$', '')
+            # Strip any accidental Markdown code fences (``` or ```lang)
+            $clean = [regex]::Replace($clean, '(?im)^\s*```[a-zA-Z0-9_-]*\s*$', '')
             $final = $clean.TrimEnd() + "`r`n`r`n" + $footer
             $final | Out-File -FilePath $outPath -Encoding utf8 -NoNewline
           }
