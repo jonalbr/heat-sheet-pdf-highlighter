@@ -1,4 +1,4 @@
-#define MyAppVersion "1.3.3-rc1"
+#define MyAppVersion "1.3.3-rc2"
 #define MyAppVersionNumeric "1.3.3.0"
 #define MyAppPublisher "Jonas Albrecht"
 #define MyFilename="heat_sheet_pdf_highlighter_installer"
