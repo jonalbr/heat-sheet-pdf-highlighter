@@ -24,28 +24,66 @@ jobs:
       - name: Install Inno Setup (winget → direct download → choco)
         shell: pwsh
         run: |
-          try {
-            if (Get-Command winget -ErrorAction SilentlyContinue) {
-              Write-Output "✅ winget is available. Installing Inno Setup..."
-              winget install --id JRSoftware.InnoSetup -e -s winget --silent --accept-package-agreements --accept-source-agreements --disable-interactivity
-              if ($LASTEXITCODE -eq 0) { return }
-              else { Write-Output "⚠️ winget install failed, falling back..." }
-            }
+          $ErrorActionPreference = 'Continue'
+          function Get-InnoVersion {
+            try {
+              $path = (Get-Command iscc.exe -ErrorAction SilentlyContinue).Source
+              if (-not $path) {
+                $path = (Get-ChildItem "C:/Program Files (x86)/Inno Setup*" -Recurse -Filter iscc.exe -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
+              }
+              if ($path) {
+                return (Get-Item $path).VersionInfo.ProductVersion
+              }
+            } catch {}
+            return $null
+          }
 
-            Write-Output "⬇️ Downloading Inno Setup 6.5.1 directly..."
-            $url = 'https://jrsoftware.org/download.php/is.exe?site=2'
+          $targetVersion = [Version]'6.5.1.0'
+          $installed = $null
+          $raw = Get-InnoVersion
+          if ($raw) {
+            try { $installed = [Version]$raw } catch {}
+          }
+          if ($installed -and $installed -ge $targetVersion) {
+            Write-Output "✅ Inno Setup $($installed) already installed."
+            return
+          }
+
+          # Try winget if available (often missing on Windows Server images)
+          $winget = Get-Command winget -ErrorAction SilentlyContinue
+          if ($winget) {
+            Write-Output "✅ winget found. Installing/Upgrading Inno Setup..."
+            winget install --id JRSoftware.InnoSetup -e -s winget --silent --accept-package-agreements --accept-source-agreements --disable-interactivity
+            if ($LASTEXITCODE -eq 0) {
+              Write-Output "✅ winget succeeded"
+              return
+            } else {
+              Write-Output "⚠️ winget failed with exit code $LASTEXITCODE; will try direct download."
+            }
+          } else {
+            Write-Output "ℹ️ winget not available on this runner; trying direct download."
+          }
+
+          # Direct download (static URL for 6.5.1)
+          try {
+            Write-Output "⬇️ Downloading Inno Setup 6.5.1 (static URL)..."
+            $url = 'https://files.jrsoftware.org/is/6/innosetup-6.5.1.exe'
             $installer = 'innosetup-6.5.1.exe'
             Invoke-WebRequest -Uri $url -OutFile $installer -UseBasicParsing
-            Start-Process -FilePath ".\$installer" -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -Wait
-            if ($LASTEXITCODE -eq 0) { return }
-            else { Write-Output "⚠️ direct download install failed, falling back..." }
-          }
-          catch {
+            $proc = Start-Process -FilePath ".\$installer" -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -PassThru -Wait
+            if ($proc.ExitCode -eq 0) {
+              Write-Output "✅ direct download install succeeded"
+              return
+            } else {
+              Write-Output "⚠️ direct download install failed with exit code $($proc.ExitCode)."
+            }
+          } catch {
             Write-Output "⚠️ direct download failed: $($_.Exception.Message)"
           }
 
-          Write-Output "🍫 Using Chocolatey..."
-          choco install innosetup --no-progress -y
+          # Chocolatey fallback (upgrade to latest available)
+          Write-Output "🍫 Using Chocolatey to upgrade..."
+          choco upgrade innosetup --no-progress -y
       - name: Build installer
         shell: cmd
         env:
@@ -84,8 +122,32 @@ jobs:
         run: |
           git fetch --tags --force
           $current = "${{ github.ref_name }}"
-          $prev = (git describe --tags --abbrev=0 "$current^") 2>$null
-          if (-not $prev) { $prev = "" }
+
+          # Determine previous FINAL tag (vX.Y.Z) below current version, even if current is prerelease
+          $base = ($current -replace '^v','') -replace '[-+].*$',''
+          try { $currentVersion = [Version]$base } catch { $currentVersion = $null }
+
+          $all = git tag -l 'v*' --sort=-v:refname
+          $final = @()
+          foreach ($t in $all) {
+            if ($t -match '^v\d+\.\d+\.\d+$') {
+              $ver = $t.Substring(1)
+              try { $final += [PSCustomObject]@{ Tag=$t; Version=[Version]$ver } } catch {}
+            }
+          }
+
+          $prev = ""
+          if ($currentVersion -ne $null) {
+            $prevObj = $final | Where-Object { $_.Version -lt $currentVersion } | Select-Object -First 1
+            if ($prevObj) { $prev = $prevObj.Tag }
+          }
+
+          # Fallback to previous tag by history if none found
+          if (-not $prev) {
+            $prev = (git describe --tags --abbrev=0 "$current^") 2>$null
+            if (-not $prev) { $prev = "" }
+          }
+
           "CURRENT_TAG=$current" | Out-File -FilePath $env:GITHUB_ENV -Append
           "PREV_TAG=$prev"       | Out-File -FilePath $env:GITHUB_ENV -Append
           Write-Output "Current tag: $current"
@@ -157,8 +219,13 @@ jobs:
             if ($c -eq $current) { continue }
             # Skip pure tag/version messages like "v1.3.3-rc1"
             if ($c -match '^(?i)v?\d+\.\d+\.\d+(?:[-+\.][0-9A-Za-z.-]+)?$') { continue }
+            # Skip messages that are just a list of versions like
+            # "v1.3.4-rc2, v1.3.4-rc1, v1.3.3-rc3" (optional trailing period)
+            if ($c -match '^(?i)\s*(?:v?\d+\.\d+\.\d+(?:[-+\.][0-9A-Za-z.-]+)?)(?:\s*,\s*v?\d+\.\d+\.\d+(?:[-+\.][0-9A-Za-z.-]+)?)*(?:\s*(?:and|&)\s*v?\d+\.\d+\.\d+(?:[-+\.][0-9A-Za-z.-]+)?)?\s*\.?\s*$') { continue }
 
             $lower = $c.ToLowerInvariant()
+            # Skip release/tag housekeeping commits that include a version
+            if ($lower -match '\b(tag|release|prepare|prep|bump|version|cut|publish|changelog)\b' -and $lower -match '\bv?\d+\.\d+\.\d+') { continue }
             $target = 'Other'
             if     ($lower -match '^(feat)(\(.+\))?!?:\s') { $target = 'Features' }
             elseif ($lower -match '^(fix|hotfix|bugfix)(\(.+\))?!?:\s') { $target = 'Fixes' }
