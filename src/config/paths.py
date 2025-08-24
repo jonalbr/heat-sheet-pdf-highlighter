@@ -52,7 +52,8 @@ class Paths:
 
     settings_path = get_settings_path()
     settings_file = settings_path / "settings.json"
-    cache_file = settings_path / "update_check_cache.json"
+    update_cache_file = settings_path / "update_check_cache.json"
+    releases_cache_file = settings_path / "releases_cache.json"
 
     @staticmethod
     def is_valid_path(path: str):

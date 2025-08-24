@@ -1,13 +1,14 @@
 """
-Update checking and downloading functionality - Pure logic, no GUI dependencies
+Update checking and downloading functionality
 """
+
 import datetime
+import hashlib
 import os
+import re
 import subprocess
 import tempfile
 import time
-import hashlib
-import re
 from typing import TYPE_CHECKING
 
 import requests
@@ -16,9 +17,8 @@ if TYPE_CHECKING:
     from src.gui.main_window import PDFHighlighterApp
 
 from ..config.paths import Paths
-from ..constants import CACHE_EXPIRY
 from ..version import Version
-from .cache import save_cache, load_cache
+from .cache import load_update_cache, save_update_cache
 
 
 class UpdateChecker:
@@ -29,32 +29,44 @@ class UpdateChecker:
         self.gui_callbacks = self.app_instance.update_dialogs
         self.paths = Paths()
 
-    def check_for_app_updates(self, current_version: Version, force_check: bool = False):
+    def check_for_app_updates(self, current_version: Version, force_check: bool = False, quiet: bool = False):
         """
         Checks for application updates by comparing the current version with the latest version available.
         Args:
             current_version (Version): The current version of the application.
             force_check (bool): If True, forces an update check regardless of cache. Defaults to False.
+            quiet (bool): Suppress any popups and only update labels/callbacks.
         Returns:
             Version: The latest version available.
         """
         now = datetime.datetime.now()
 
+        # Use TTL from app settings when available
+        ttl_seconds = int(self.app_settings.settings.get("update_cache_ttl_seconds", 86400))
+        cache_expiry = datetime.timedelta(seconds=ttl_seconds)
+
         if not force_check:
-            cache_time, latest_version = load_cache()
-            if cache_time and now - cache_time < CACHE_EXPIRY:
+            cache_time, latest_version = load_update_cache()
+            if cache_time and now - cache_time < cache_expiry:
                 self.update_callback(latest_version, current_version)
                 return latest_version
+        else:
+            # If a forced update is requested, invalidate the releases cache so UI components refresh
+            try:
+                releases_cache = self.paths.releases_cache_file
+                if releases_cache.exists():
+                    releases_cache.unlink()
+            except Exception:
+                pass
 
         # Perform the update check
-        latest_version = self._get_latest_version_from_github(current_version=current_version, force_check=force_check)           
-        
+        latest_version = self._get_latest_version_from_github(current_version=current_version, force_check=force_check, quiet=quiet)
+
         # Cache the result using JSON - only cache if we got a valid version
         if isinstance(latest_version, Version):
-            save_cache(now, latest_version)
+            save_update_cache(fetched_at=now, latest_version=latest_version)
 
         self.update_callback(latest_version, current_version)
-
         return latest_version
 
     def _fetch_release_info(self, url: str):
@@ -62,12 +74,34 @@ class UpdateChecker:
         response.raise_for_status()
         return response.json()
 
+    def list_releases(self, channel: str = "stable") -> list[dict]:
+        """Return a list of release dicts with tag, prerelease flag, and assets filtered by channel."""
+        url = "https://api.github.com/repos/jonalbr/heat-sheet-pdf-highlighter/releases"
+        releases_info = self._fetch_release_info(url)
+        items: list[dict] = []
+        for rel in releases_info:
+            rel: dict
+            if channel != "rc" and rel.get("prerelease"):
+                continue
+            tag = rel.get("tag_name", "")
+            exe_url, sha_url = self._select_release_assets(rel)
+            items.append(
+                {
+                    "tag": tag,
+                    "prerelease": bool(rel.get("prerelease")),
+                    "exe_url": exe_url,
+                    "sha_url": sha_url,
+                }
+            )
+        return items
+
     def _select_release_assets(self, release: dict) -> tuple[str | None, str | None]:
         """Pick the .exe and .sha256 assets from a release, if present."""
         exe_url = None
         sha_url = None
-        for asset in release.get("assets", []):
-            name = asset.get("name", "")
+        assets: list[dict] = release.get("assets", [])
+        for asset in assets:
+            name: str = asset.get("name", "")
             if name.lower().endswith(".exe"):
                 exe_url = asset.get("browser_download_url")
             elif name.lower().endswith(".sha256"):
@@ -85,7 +119,7 @@ class UpdateChecker:
                 latest_version = latest_pre_release_version
                 exe_url, sha_pre = self._select_release_assets(latest_pre_release)
                 download_url = exe_url or download_url
-                sha_url = sha_pre  # for beta we'll ignore sha requirement
+                sha_url = sha_pre
                 self.app_settings.update_setting("newest_version_available", str(latest_version))
                 self.app_settings.update_setting("ask_for_update", "True")
         else:
@@ -93,35 +127,36 @@ class UpdateChecker:
             self.app_settings.update_setting("ask_for_update", "True")
         return latest_version, download_url, sha_url
 
-    def _get_latest_version_from_github(self, current_version: Version, force_check: bool = False):
+    def _get_latest_version_from_github(self, current_version: Version, force_check: bool = False, quiet: bool = False):
         release_url = "https://api.github.com/repos/jonalbr/heat-sheet-pdf-highlighter/releases/latest"
         try:
             release_info = self._fetch_release_info(release_url)
             latest_version = Version.from_str(release_info["tag_name"])
             download_url, sha_url = self._select_release_assets(release_info)
 
-            if self.app_settings.settings["beta"] == "True":
+            # Channel selection via update_channel only
+            channel = self.app_settings.settings.get("update_channel", "stable")
+            if channel == "rc":
                 latest_version, download_url, sha_url = self._handle_beta_releases(latest_version, download_url, sha_url)
 
-            # If we're on stable channel (beta disabled) require a SHA asset; otherwise treat as no update
-            if self.app_settings.settings["beta"] != "True":
-                if latest_version > current_version and not sha_url:
-                    # No sha file found for a newer stable release -> treat as no update found
-                    if force_check:
-                        self.gui_callbacks.show_up_to_date()
-                    return current_version
+            # If SHA verification is required globally and missing for a newer release, treat as no update
+            verify_sha_globally = self.app_settings.settings.get("verify_sha", "True") == "True"
+            if verify_sha_globally and latest_version > current_version and not sha_url:
+                if force_check and not quiet:
+                    self.gui_callbacks.show_up_to_date()
+                return current_version
 
             # If there's no installer asset at all, we cannot update
             if latest_version > current_version and not download_url:
-                if force_check:
+                if force_check and not quiet:
                     self.gui_callbacks.show_update_error_retry("Installer asset not found for the latest release.")
                 return latest_version
 
-            # Use a guard clause to update settings when necessary (only after SHA check for stable)
+            # Use a guard clause to update settings when necessary
             self._update_settings_if_newer(latest_version)
 
             # Check if an update is needed
-            if not self._should_prompt_user(latest_version, current_version, force_check):
+            if quiet or not self._should_prompt_user(latest_version, current_version, force_check):
                 return latest_version
 
             # Prompt the user to install the update if needed
@@ -129,7 +164,7 @@ class UpdateChecker:
             return latest_version
 
         except requests.exceptions.RequestException as e:
-            if force_check:
+            if force_check and not quiet:
                 if self.gui_callbacks.show_update_error_retry(str(e)):
                     return self.check_for_app_updates(current_version, force_check)
                 else:
@@ -148,7 +183,7 @@ class UpdateChecker:
         """
         # Start download UI state
         self.gui_callbacks.start_download_ui()
-        
+
         # Create a temporary file for the installer
         with tempfile.NamedTemporaryFile(suffix=".exe", delete=False) as temp_file:
             installer_path = temp_file.name
@@ -175,7 +210,7 @@ class UpdateChecker:
         # Finish download UI state
         self.gui_callbacks.finish_download_ui()
 
-        # Verify SHA256 if URL provided (stable updates)
+    # Verify SHA256 if URL provided
         if sha_url and not self._verify_sha256(installer_path, sha_url):
             # Error already shown inside _verify_sha256
             self._safe_unlink(installer_path)
@@ -193,9 +228,7 @@ class UpdateChecker:
             self.app_settings.update_setting("newest_version_available", str(latest_version))
 
     def _should_prompt_user(self, latest_version: Version, current_version: Version, force_check: bool) -> bool:
-        should_prompt = latest_version > current_version and (
-            self.app_settings.settings["ask_for_update"] == "True" or force_check
-        )
+        should_prompt = latest_version > current_version and (self.app_settings.settings["ask_for_update"] == "True" or force_check)
         if not should_prompt and force_check:
             self.gui_callbacks.show_up_to_date()
         return should_prompt
@@ -205,7 +238,8 @@ class UpdateChecker:
         if update_choice is None:
             return  # Cancel
         if update_choice:
-            verify_sha = (self.app_settings.settings["beta"] != "True")
+            # Verify SHA based on global setting (applies to any channel)
+            verify_sha = self.app_settings.settings.get("verify_sha", "True") == "True"
             if not download_url:
                 self.gui_callbacks.show_download_error("Installer asset not found in the selected release.")
                 return

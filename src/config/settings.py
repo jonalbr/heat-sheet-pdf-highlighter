@@ -21,7 +21,11 @@ class AppSettings:
             "ask_for_update": "True",
             "update_available": "False",
             "newest_version_available": "0.0.0",
-            "beta": "False",
+            "update_channel": "stable",
+            "verify_sha": "True",
+            # Cache TTLs (seconds)
+            "update_cache_ttl_seconds": 86400,  # 1 day
+            "releases_cache_ttl_seconds": 600,  # 10 minutes
             "names": "",
             "watermark_enabled": "False",
             "watermark_text": "",
@@ -49,6 +53,11 @@ class AppSettings:
         self.settings[key] = value
         self.save_settings()
 
+    def reset_to_defaults(self):
+        """Reset settings to defaults and save."""
+        self.settings = dict(self.default_settings)
+        self.save_settings()
+
     def _validate_value(self, key: str, value):
         validators = {
             "version": lambda v: VERSION_STR,
@@ -61,7 +70,10 @@ class AppSettings:
             "update_available": lambda v: v if v in ["True", "False"] else "False",
             "newest_version_available": lambda v: v if isinstance(v, str) and v >= VERSION_STR else "0.0.0",
             "names": lambda v: v if isinstance(v, str) else "",
-            "beta": lambda v: v if v in ["True", "False"] else "False",
+            "update_channel": lambda v: v if v in ["stable", "rc"] else "stable",
+            "verify_sha": lambda v: v if v in ["True", "False"] else "True",
+            "update_cache_ttl_seconds": lambda v: int(v) if str(v).isdigit() and int(v) > 0 else 86400,
+            "releases_cache_ttl_seconds": lambda v: int(v) if str(v).isdigit() and int(v) > 0 else 600,
             "watermark_enabled": lambda v: v if v in ["True", "False"] else "False",
             "watermark_text": lambda v: v if isinstance(v, str) else "",
             "watermark_color": lambda v: v if isinstance(v, str) and v.startswith("#") else "#FFA500",
@@ -73,6 +85,13 @@ class AppSettings:
     def validate_settings(self, settings: Dict | None = None):
         # Get provided settings or use saved settings
         settings_dict = settings or getattr(self, "settings", {}) or {}
+        # Migrate legacy 'beta' flag if present
+        if "update_channel" not in settings_dict and "beta" in settings_dict:
+            beta_val = settings_dict.get("beta")
+            if isinstance(beta_val, str):
+                settings_dict["update_channel"] = "rc" if beta_val == "True" else "stable"
+            elif isinstance(beta_val, bool):
+                settings_dict["update_channel"] = "rc" if beta_val else "stable"
         validated = {}
 
         # Validate known keys first
@@ -80,7 +99,7 @@ class AppSettings:
             value = settings_dict.get(key, self.default_settings[key])
             validated[key] = self._validate_value(key, value)
 
-        # Optionally keep extra keys? Currently we ignore them.
+    # Optionally keep extra keys? Currently we ignore them (drops legacy 'beta').
         if settings is not None:
             return validated
 

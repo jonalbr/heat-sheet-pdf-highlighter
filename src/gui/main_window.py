@@ -1,6 +1,7 @@
 """
 Main application window
 """
+import time
 import re
 import threading
 from pathlib import Path
@@ -21,8 +22,10 @@ from ..core.watermark import watermark_pdf_page
 from ..utils.updater import UpdateChecker
 from ..utils.localization import setup_translation
 from .widgets import Tooltip
+from .dev_tools import DevToolsWindow
 from .dialogs import FilterDialog, WatermarkDialog, UpdateDialogs
 from .preview import PreviewWindow
+from .ui_strings import build_strings, plural_strings, _xgettext_dummy
 
 
 class PDFHighlighterApp:
@@ -73,103 +76,15 @@ class PDFHighlighterApp:
         Initialize all translatable strings as instance variables.
         Call this after (re)loading gettext translations.
         """
-        self.strings = {
-            "title": self._("Heat sheet highlighter"),
-            "pdf_file": self._("PDF-File:"),
-            "search_term": self._("Search term (Club name):"),
-            "mark_only_relevant": self._("Mark only relevant lines"),
-            "status_waiting": self._("Status: Waiting"),
-            "status_importing": self._("Status: Importing PDF. Please wait..."),
-            "status_imported": self._("Status: PDF imported."),
-            "status_language_changed": self._("Status: Language changed to English."),
-            "start": self._("Start"),
-            "abort": self._("Abort"),
-            "browse": self._("Browse"),
-            "filter": self._("Filter"),
-            "watermark": self._("Watermark"),
-            "select_language": self._("Select language"),
-            "select_pdf": self._("Select the heat sheet pdf."),
-            "enter_club": self._("Enter the name of the club to highlight the results."),
-            "only_highlight_lines": self._("Only highlights the lines that contain the search term and match the expected format (Lane Name ... Time).\nYou usually want to keep that enabled."),
-            "configure_filter": self._("Configure highlighting lines with specific names."),
-            "configure_watermark": self._("Configure the watermark options."),
-            "start_cancel": self._("Start or cancel the highlighting process."),
-            "error": self._("Error"),
-            "info": self._("Info"),
-            # Version/update related
-            "version_update_failed": self._("Version: {0} (Update check failed)"),
-            "version_new_available": self._("Version: {0} (New version available)"),
-            "version_no_update": self._("Version: {0}"),
-            "check_for_updates": self._("Check for Updates"),
-            "install_update": self._("Install Update"),
-            # Additional missing strings
-            "PDF files": self._("PDF files"),
-            "All files": self._("All files"),
-            "CSV and Text files": self._("CSV and Text files"),
-            "Previous Page": self._("Previous Page"),
-            "Next Page": self._("Next Page"),
-            "Watermark Preview": self._("Watermark Preview"),
-            "Watermark Settings": self._("Watermark Settings"),
-            "Enable Watermark": self._("Enable Watermark"),
-            "Watermark Text": self._("Watermark Text"),
-            "Color (hex)": self._("Color (hex)"),
-            "Preselect Color:": self._("Preselect Color:"),
-            "Size": self._("Size"),
-            "Position": self._("Position"),
-            "Preview": self._("Preview"),
-            "Apply": self._("Apply"),
-            "Cancel": self._("Cancel"),
-            "Clear": self._("Clear"),
-            "Import": self._("Import"),
-            "Names": self._("Names"),
-            "Enable Filter": self._("Enable Filter"),
-            "Highlight Mode": self._("Highlight Mode"),
-            "Highlight lines with matched names in blue, others are not highlighted": self._("Highlight lines with matched names in blue, others are not highlighted"),
-            "Highlight lines with matched names in blue, others in yellow": self._("Highlight lines with matched names in blue, others in yellow"),
-            "Enable highlighting lines with specific names.": self._("Enable highlighting lines with specific names."),
-            "Password-protected PDFs are not supported.": self._("Password-protected PDFs are not supported."),
-            "Status: Saving PDF.. Please wait...": self._("Status: Saving PDF.. Please wait..."),
-            "{0}_marked.pdf": self._("{0}_marked.pdf"),
-            "Finished": self._("Finished"),
-            "No output file selected; processing aborted after matches were found.": self._("No output file selected; processing aborted after matches were found."),
-            "Nothing to highlight; no file saved.": self._("Nothing to highlight; no file saved."),
-            "Status: Aborted by user.": self._("Status: Aborted by user."),
-            "Status: Processing aborted.": self._("Status: Processing aborted."),
-            "All fields are required!": self._("All fields are required!"),
-            "Please select a PDF first for preview.": self._("Please select a PDF first for preview."),
-            # Update-related strings
-            "Up to Date": self._("Up to Date"),
-            "You are already using the latest version.": self._("You are already using the latest version."),
-            "Update Available": self._("Update Available"),
-            "A new version ({0}) is available. Do you want to update?": self._("A new version ({0}) is available. Do you want to update?"),
-            "Update Information": self._("Update Information"),
-            "Click 'yes' to not be asked again for this update. You can still check manually for updates. If there is a newer version available, you will be asked again.": self._("Click 'yes' to not be asked again for this update. You can still check manually for updates. If there is a newer version available, you will be asked again."),
-            "Update Error": self._("Update Error"),
-            "Failed to check for updates: {0}": self._("Failed to check for updates: {0}"),
-            "Failed to download the installer: {0}": self._("Failed to download the installer: {0}"),
-            "Downloading... {0:.1f} MB of {1:.1f} MB, {2:.0f} seconds remaining": self._("Downloading... {0:.1f} MB of {1:.1f} MB, {2:.0f} seconds remaining"),
-            "Download cancelled.": self._("Download cancelled."),
-        }
+        self.strings = build_strings(self._)
         
         # Plural strings - keep as raw strings for proper ngettext handling
-        self.plural_strings = {
-            "processing_complete": {
-                "singular": "Processing complete: {0} match found. {1} skipped.",
-                "plural": "Processing complete: {0} matches found. {1} skipped."
-            },
-            "processed_pages": {
-                "singular": "Processed: {0}/{1} pages. {2} match found. {3} skipped.",
-                "plural": "Processed: {0}/{1} pages. {2} matches found. {3} skipped."
-            }
-        }
-        
-        # These calls are for xgettext extraction only - they populate the .pot file
+        self.plural_strings = plural_strings
+
+        # This call is for xgettext extraction only - it populates the .pot file
         # The actual translations are handled by get_plural_string() method
         if False:  # Never executed, only for xgettext scanning
-            self.n_("Processing complete: {0} match found. {1} skipped.", 
-                   "Processing complete: {0} matches found. {1} skipped.", 1)
-            self.n_("Processed: {0}/{1} pages. {2} match found. {3} skipped.", 
-                   "Processed: {0}/{1} pages. {2} matches found. {3} skipped.", 1)
+            _xgettext_dummy(self.n_)
 
     def get_plural_string(self, key: str, count: int) -> str:
         """
@@ -222,9 +137,24 @@ class PDFHighlighterApp:
         title_height = 50  # Set the desired height of the title
         logo_image = logo_image.resize((title_height, title_height))
         logo_photo = ImageTk.PhotoImage(logo_image)
-        logo_label = Label(self.root, image=logo_photo)
-        setattr(logo_label, "image", logo_photo)  # Store a reference to the image
-        logo_label.grid(row=0, column=0, sticky="W", padx=10, pady=10)
+        self.logo_label = Label(self.root, image=logo_photo)
+        setattr(self.logo_label, "image", logo_photo)  # Store a reference to the image
+        self.logo_label.grid(row=0, column=0, sticky="W", padx=10, pady=10)
+
+        # Secret Dev Tools trigger: triple-click on logo
+        self._dev_clicks = []  # store timestamps of clicks
+        self.dev_tools = DevToolsWindow(self)
+
+        def _on_logo_click(_event=None):
+            now = time.time()
+            # Keep only clicks within the last 1 second
+            self._dev_clicks = [t for t in self._dev_clicks if now - t <= 1.0]
+            self._dev_clicks.append(now)
+            if len(self._dev_clicks) >= 3:
+                self._dev_clicks.clear()
+                self.dev_tools.open()
+
+        self.logo_label.bind("<Button-1>", _on_logo_click)
 
         # Application title next to the logo
         self.title = ttk.Label(self.root, text=self.strings["title"], font=title_font)
@@ -301,7 +231,8 @@ class PDFHighlighterApp:
         self.progress_bar.grid(row=4, column=0, columnspan=3, padx=10, pady=20, sticky="WE")
 
         # Status label
-        self.status_var = StringVar(value=self.strings["status_waiting"])
+        self.status_var = StringVar()
+        self.status_var.set(self.strings["status_waiting"])
         ttk.Label(self.root, textvariable=self.status_var).grid(row=5, column=0, columnspan=3, padx=10, pady=2)
 
         # Start/Abort button
