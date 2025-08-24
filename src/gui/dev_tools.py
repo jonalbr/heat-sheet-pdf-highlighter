@@ -3,6 +3,8 @@ Developer Tools window
 """
 
 import datetime
+import logging
+import sys
 import threading
 import webbrowser
 from tkinter import BooleanVar, StringVar, Toplevel, messagebox, ttk
@@ -30,8 +32,8 @@ class DevToolsWindow:
             try:
                 self.window.lift()
                 self.window.focus_force()
-            except Exception:
-                pass
+            except Exception as e:
+                logging.getLogger("dev_tools").exception("Error focusing dev tools window: %s", e)
             return
 
         self.window = Toplevel(self.app.root)
@@ -128,13 +130,12 @@ class DevToolsWindow:
                 try:
                     if self.window is not None:
                         self.window.destroy()
-                except Exception:
-                    pass
+                except Exception as e:
+                    logging.getLogger("dev_tools").exception("Error destroying dev tools window: %s", e)
                 # Re-open will recreate the window with updated strings
                 self.open()
-        except Exception:
-            # Swallow exceptions to avoid disrupting language change flow
-            return
+        except Exception as e:
+            logging.getLogger("dev_tools").exception("Error refreshing UI strings: %s", e)
 
     def _on_channel_changed(self):
         channel = self.channel_var.get()
@@ -156,7 +157,8 @@ class DevToolsWindow:
     def _is_open(self) -> bool:
         try:
             return bool(self.window and self.window.winfo_exists())
-        except Exception:
+        except Exception as e:
+            logging.getLogger("dev_tools").exception("Error checking if dev tools window is open: %s", e)
             return False
 
     # --- Extra actions ---
@@ -165,6 +167,7 @@ class DevToolsWindow:
             path = str(self.app.paths.settings_file)
             webbrowser.open(path)
         except Exception as e:
+            logging.getLogger("dev_tools").exception("Error opening settings file: %s", e)
             messagebox.showerror(get_ui_string(self.app.strings, "error"), str(e))
 
     def _apply_releases(self, releases: list[dict]):
@@ -178,6 +181,7 @@ class DevToolsWindow:
                 self.releases_combo["values"] = []
                 self.releases_combo.set("")
         except Exception as e:
+            logging.getLogger("dev_tools").exception("Error applying releases: %s", e)
             messagebox.showerror(get_ui_string(self.app.strings, "error"), str(e))
 
     def _refresh_releases_async(self):
@@ -193,26 +197,29 @@ class DevToolsWindow:
                         if self._is_open():
                             try:
                                 self._apply_releases(r)
-                            except Exception:
+                            except Exception as e:
+                                logging.getLogger("dev_tools").exception("Error applying releases: %s", e)
                                 # protect from any race if widgets were destroyed
                                 return
 
                     self.app.root.after(0, _schedule_apply)
-                except Exception:
+                except Exception as e:
+                    logging.getLogger("dev_tools").exception("Error scheduling release application: %s", e)
                     # if scheduling failed for any reason, ignore
                     return
             except Exception as _exc:
                 # Use the main app root to show errors to avoid scheduling on a possibly-destroyed Toplevel
                 try:
                     self.app.root.after(0, lambda e=_exc: messagebox.showerror(get_ui_string(self.app.strings, "error"), str(e)))
-                except Exception:
+                except Exception as e:
+                    logging.getLogger("dev_tools").exception("Error showing error message: %s", e)
                     # last resort: print to stderr (avoid crashing)
                     try:
                         import sys
 
                         print(str(_exc), file=sys.stderr)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logging.getLogger("dev_tools").exception("Error printing exception to stderr: %s", e)
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -231,15 +238,16 @@ class DevToolsWindow:
             if cached_releases and cached_channel == self.app.app_settings.settings.get("update_channel", "stable"):
                 try:
                     self.app.root.after(0, lambda r=cached_releases: self._apply_releases(r))
-                except Exception:
-                    pass
-        except Exception:
-            pass
+                except Exception as e:
+                    logging.getLogger("dev_tools").exception("Error applying cached releases: %s", e)
+        except Exception as e:
+            logging.getLogger("dev_tools").exception("Error loading releases cache: %s", e)
 
         # Decide whether to fetch from network based on TTL from settings
         try:
             ttl_seconds = int(self.app.app_settings.settings.get("releases_cache_ttl_seconds", 600))
-        except Exception:
+        except Exception as e:
+            logging.getLogger("dev_tools").exception("Error getting releases cache TTL: %s", e)
             ttl_seconds = 600
 
         need_fetch = force
@@ -252,7 +260,8 @@ class DevToolsWindow:
                     age = (datetime.datetime.now() - fetched_at).total_seconds()
                     if age > ttl_seconds:
                         need_fetch = True
-        except Exception:
+        except Exception as e:
+            logging.getLogger("dev_tools").exception("Error checking releases cache: %s", e)
             need_fetch = True
 
         if not need_fetch:
@@ -265,8 +274,8 @@ class DevToolsWindow:
                 # persist releases to cache
                 try:
                     save_releases_cache(releases=releases, channel=channel, fetched_at=datetime.datetime.now())
-                except Exception:
-                    pass
+                except Exception as e:
+                    logging.getLogger("dev_tools").exception("Error saving releases cache: %s", e)
 
                 def _schedule_apply(r=releases, rid=current_id):
                     # ignore stale results
@@ -275,20 +284,19 @@ class DevToolsWindow:
                     if self._is_open():
                         try:
                             self._apply_releases(r)
-                        except Exception:
-                            return
+                        except Exception as e:
+                            logging.getLogger("dev_tools").exception("Error applying releases: %s", e)
 
                 self.app.root.after(0, _schedule_apply)
             except Exception as _exc:
                 try:
                     self.app.root.after(0, lambda e=_exc: messagebox.showerror(get_ui_string(self.app.strings, "error"), str(e)))
-                except Exception:
+                except Exception as e:
+                    logging.getLogger("dev_tools").exception("Error showing error message: %s", e)
                     try:
-                        import sys
-
                         print(str(_exc), file=sys.stderr)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logging.getLogger("dev_tools").exception("Error printing exception: %s", e)
 
         threading.Thread(target=worker_wrapper, daemon=True).start()
 

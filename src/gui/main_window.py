@@ -3,6 +3,7 @@ Main application window
 """
 
 import re
+import logging
 import threading
 import time
 from pathlib import Path
@@ -376,28 +377,27 @@ class PDFHighlighterApp:
                 # dev_tools may be created earlier; ensure it refreshes its UI
                 try:
                     self.dev_tools.refresh_ui_strings()
-                except Exception:
-                    # ignore any errors here - language change should not fail
-                    pass
-        except Exception:
-            pass
+                except Exception as e:
+                    logging.getLogger("main_window").exception("Failed to refresh dev tools strings: %s", e)
+        except Exception as e:
+            logging.getLogger("main_window").exception("Unexpected error while refreshing dev tools: %s", e)
         # Refresh filter and watermark dialogs if they're open
         try:
             if hasattr(self, 'filter_dialog') and self.filter_dialog:
                 try:
                     self.filter_dialog.refresh_ui_strings()
-                except Exception:
-                    pass
-        except Exception:
-            pass
+                except Exception as e:
+                    logging.getLogger("main_window").exception("Failed to refresh filter dialog strings: %s", e)
+        except Exception as e:
+            logging.getLogger("main_window").exception("Unexpected error while refreshing filter dialog: %s", e)
         try:
             if hasattr(self, 'watermark_dialog') and self.watermark_dialog:
                 try:
                     self.watermark_dialog.refresh_ui_strings()
-                except Exception:
-                    pass
-        except Exception:
-            pass
+                except Exception as e:
+                    logging.getLogger("main_window").exception("Failed to refresh watermark dialog strings: %s", e)
+        except Exception as e:
+            logging.getLogger("main_window").exception("Unexpected error while refreshing watermark dialog: %s", e)
 
     def browse_file(self):
         """

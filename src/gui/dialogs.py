@@ -8,6 +8,7 @@ import time
 from tkinter import WORD, IntVar, Label, StringVar, Text, Toplevel, filedialog, messagebox, ttk
 from tkinter import Button as tkButton
 from typing import TYPE_CHECKING, Dict, Optional
+import logging
 
 if TYPE_CHECKING:
     from src.gui.main_window import PDFHighlighterApp
@@ -177,15 +178,18 @@ class FilterDialog:
                 ],
             )
             if filename:
-                with open(filename, "r", encoding="utf-8") as file:
-                    if filename.endswith(".csv"):
-                        reader = csv.reader(file)
-                        names = next(reader)
-                    else:
-                        content = file.read()
-                        names = [name.strip() for name in re.split(r"[\n,]+", content)]
-                entry_names.delete("1.0", "end")
-                entry_names.insert("1.0", ", ".join(names))
+                try:
+                    with open(filename, "r", encoding="utf-8") as file:
+                        if filename.endswith(".csv"):
+                            reader = csv.reader(file)
+                            names = next(reader)
+                        else:
+                            content = file.read()
+                            names = [name.strip() for name in re.split(r"[\n,]+", content)]
+                    entry_names.delete("1.0", "end")
+                    entry_names.insert("1.0", ", ".join(names))
+                except Exception as e:
+                    logging.getLogger("dialogs").exception("Failed to import names from %s: %s", filename, e)
 
         def insert_comma(*args):
             text = entry_names.get("1.0", "end-1c")
@@ -249,12 +253,12 @@ class FilterDialog:
             if self.window and self.window.winfo_exists():
                 try:
                     self.window.destroy()
-                except Exception:
-                    pass
+                except Exception as e:
+                    logging.getLogger("dialogs").exception("Error destroying filter dialog: %s", e)
                 # Re-open will recreate the dialog using current translations
                 self.open()
-        except Exception:
-            return
+        except Exception as e:
+            logging.getLogger("dialogs").exception("Unexpected error refreshing filter dialog: %s", e)
 
 
 class WatermarkDialog:
@@ -369,9 +373,9 @@ class WatermarkDialog:
             if self.window and self.window.winfo_exists():
                 try:
                     self.window.destroy()
-                except Exception:
-                    pass
+                except Exception as e:
+                    logging.getLogger("dialogs").exception("Error destroying watermark dialog: %s", e)
                 # Re-open will recreate the dialog using current translations
                 self.open()
-        except Exception:
-            return
+        except Exception as e:
+            logging.getLogger("dialogs").exception("Unexpected error refreshing watermark dialog: %s", e)

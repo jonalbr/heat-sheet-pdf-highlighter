@@ -18,8 +18,16 @@ def get_ui_string(strings: Dict[str, str], key: str, default: str | None = None)
         return default
     try:
         logging.getLogger("ui_strings").warning("Missing translation key: %s", key)
-    except Exception:
-        pass
+    except Exception as e:
+        # If logging fails for any reason, fall back to no-op but keep the
+        # diagnostic available for debugging by printing to stderr.
+        try:
+            import sys
+
+            print(f"ui_strings logging failed: {e}", file=sys.stderr)
+        except Exception:
+            # best-effort: nothing more to do
+            pass
     return f"Error: Key missing: {key}"
 
 

@@ -36,6 +36,6 @@ def parse_log_level(level_str: Optional[str]) -> int:
         return logging.INFO
     try:
         return int(level_str)
-    except Exception:
+    except (ValueError, TypeError):
         level_str = level_str.upper()
         return getattr(logging, level_str, logging.INFO)

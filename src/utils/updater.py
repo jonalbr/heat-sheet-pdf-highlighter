@@ -10,6 +10,7 @@ import subprocess
 import tempfile
 import time
 from typing import TYPE_CHECKING
+import logging
 
 import requests
 
@@ -56,8 +57,8 @@ class UpdateChecker:
                 releases_cache = self.paths.releases_cache_file
                 if releases_cache.exists():
                     releases_cache.unlink()
-            except Exception:
-                pass
+            except OSError as e:
+                logging.getLogger("updater").exception("Failed to remove releases cache: %s", e)
 
         # Perform the update check
         latest_version = self._get_latest_version_from_github(current_version=current_version, force_check=force_check, quiet=quiet)
@@ -164,6 +165,7 @@ class UpdateChecker:
             return latest_version
 
         except requests.exceptions.RequestException as e:
+            logging.getLogger("updater").exception("RequestException while checking updates: %s", e)
             if force_check and not quiet:
                 if self.gui_callbacks.show_update_error_retry(str(e)):
                     return self.check_for_app_updates(current_version, force_check)
@@ -194,7 +196,8 @@ class UpdateChecker:
             self.gui_callbacks.show_download_error(str(e))
             self._safe_unlink(installer_path)
             return
-        except Exception:
+        except Exception as e:
+            logging.getLogger("updater").exception("Unexpected error downloading installer: %s", e)
             self._safe_unlink(installer_path)
             raise
 
@@ -205,7 +208,7 @@ class UpdateChecker:
         if total_size_in_bytes != 0:
             current_value = self.gui_callbacks.get_progress_value()
             if current_value != total_size_in_bytes:
-                print("ERROR, something went wrong")
+                logging.getLogger("updater").warning("Downloaded size mismatch: progress %s vs expected %s", current_value, total_size_in_bytes)
 
         # Finish download UI state
         self.gui_callbacks.finish_download_ui()
@@ -294,7 +297,16 @@ class UpdateChecker:
                 self.gui_callbacks.show_download_error("Checksum mismatch. Downloaded file is corrupted.")
                 return False
             return True
+        except requests.exceptions.RequestException as e:
+            logging.getLogger("updater").exception("Failed to fetch .sha256 file: %s", e)
+            self.gui_callbacks.show_download_error(str(e))
+            return False
+        except OSError as e:
+            logging.getLogger("updater").exception("Failed to read installer file for checksum: %s", e)
+            self.gui_callbacks.show_download_error(str(e))
+            return False
         except Exception as e:
+            logging.getLogger("updater").exception("Unexpected error during SHA verification: %s", e)
             self.gui_callbacks.show_download_error(str(e))
             return False
 
