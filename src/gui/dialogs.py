@@ -154,11 +154,6 @@ class UpdateDialogs:
             text = get_ui_string(self.app.strings, "upd_progress").format(downloaded_MB, total_MB, remaining_time)
             self._ui(lambda: self.app.status_var.set(text))
 
-    def update_gui(self):
-        """Update the GUI."""
-        # Avoid forcing sync updates from worker threads; no-op here.
-        pass
-
     def close_application(self):
         """Close the application."""
         if hasattr(self.app, "root"):

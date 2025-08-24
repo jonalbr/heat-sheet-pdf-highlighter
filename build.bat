@@ -88,3 +88,4 @@ if /i "%GITHUB_ACTIONS%"=="true" (
     timeout /t 10 /nobreak >nul 2>&1
 )
 endlocal
+exit /b

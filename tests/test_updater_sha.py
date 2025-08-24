@@ -80,9 +80,6 @@ class DummyGUI:
     def update_download_status(self, start_time: float, total_size: int):
         pass
 
-    def update_gui(self):
-        pass
-
     def close_application(self):
         pass
 

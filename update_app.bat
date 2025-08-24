@@ -20,3 +20,4 @@ echo Installer has finished. Deleting installer file ...
 echo %installer_path%
 
 del /F "%installer_path%"
+exit /b
