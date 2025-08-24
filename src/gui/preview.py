@@ -1,13 +1,14 @@
 """
 Preview window functionality
 """
-from tkinter import Toplevel, Label, messagebox
-from tkinter import ttk
+from tkinter import Label, Toplevel, messagebox, ttk
 from typing import TYPE_CHECKING
+
 from PIL import Image, ImageTk
 from pymupdf import Document, utils
 
 from ..core.watermark import overlay_watermark_on_image
+from .ui_strings import get_ui_string
 
 if TYPE_CHECKING:
     from src.gui.main_window import PDFHighlighterApp
@@ -25,7 +26,7 @@ class PreviewWindow:
     def preview_watermark(self, enabled, text, color, size, position, preview_page, origin=None, force_open=True):
         """Show watermark preview."""
         if not hasattr(self.app, "input_file_full_path"):
-            messagebox.showerror(self.app.strings["error"], self.app.strings["Please select a PDF first for preview."])
+            messagebox.showerror(get_ui_string(self.app.strings, "error"), get_ui_string(self.app.strings, "Please select a PDF first for preview."))
             return
             
         try:
@@ -69,12 +70,12 @@ class PreviewWindow:
                     
             document.close()
         except Exception as e:
-            messagebox.showerror(self.app.strings["error"], str(e))
+            messagebox.showerror(get_ui_string(self.app.strings, "error"), str(e))
 
     def _create_preview_window(self, image):
         """Create the preview window."""
         self.window = Toplevel()
-        self.window.title(self.app.strings["Watermark Preview"])
+        self.window.title(get_ui_string(self.app.strings, "Watermark Preview"))
         
         # Position next to the origin window
         if self.last_origin:
@@ -95,11 +96,11 @@ class PreviewWindow:
         # Navigation buttons frame
         nav_frame = ttk.Frame(self.window)
         nav_frame.pack(pady=5)
-        
-        prev_btn = ttk.Button(nav_frame, text=self.app.strings["Previous Page"], command=lambda: self.change_page(-1))
+
+        prev_btn = ttk.Button(nav_frame, text=get_ui_string(self.app.strings, "Previous Page"), command=lambda: self.change_page(-1))
         prev_btn.pack(side="left", padx=5)
-        
-        next_btn = ttk.Button(nav_frame, text=self.app.strings["Next Page"], command=lambda: self.change_page(1))
+
+        next_btn = ttk.Button(nav_frame, text=get_ui_string(self.app.strings, "Next Page"), command=lambda: self.change_page(1))
         next_btn.pack(side="left", padx=5)
 
     def change_page(self, delta: int, reset: bool = False):

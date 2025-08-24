@@ -6,7 +6,26 @@ callable `_` and returns the translated strings dict. It also exposes the
 raw plural_strings data which should be passed to ngettext at runtime.
 """
 
+import logging
 from typing import Callable, Dict
+
+
+def get_ui_string(strings: Dict[str, str], key: str, default: str | None = None) -> str:
+    """Safe string lookup with logging and a diagnostic fallback.
+
+    - If key exists, return it.
+    - If default is provided, return default when missing.
+    - Otherwise log a warning and return "Error: Key missing: <key>".
+    """
+    if key in strings:
+        return strings[key]
+    if default is not None:
+        return default
+    try:
+        logging.getLogger("ui_strings").warning("Missing translation key: %s", key)
+    except Exception:
+        pass
+    return f"Error: Key missing: {key}"
 
 
 def build_strings(_: Callable[[str], str]) -> Dict[str, str]:
@@ -42,7 +61,7 @@ def build_strings(_: Callable[[str], str]) -> Dict[str, str]:
         "configure_watermark": _("Configure the watermark options."),
         "start_cancel": _("Start or cancel the highlighting process."),
         "error": _("Error"),
-        "info": _("Info")
+        "info": _("Info"),
     }
     update_strings = {
         # Version/update related
@@ -114,6 +133,20 @@ def build_strings(_: Callable[[str], str]) -> Dict[str, str]:
         "Debug Options": _("Debug Options"),
         "More tools coming soon…": _("More tools coming soon…"),
         "Close": _("Close"),
+        # Dev Tools specific labels/actions
+        "Verify SHA256": _("Verify SHA256"),
+        "Channel": _("Channel"),
+        "Install Specific Version": _("Install Specific Version"),
+        "Install Selected": _("Install Selected"),
+        "Reset Settings": _("Reset Settings"),
+        "Reset to Defaults": _("Reset to Defaults"),
+        "Open Settings File": _("Open Settings File"),
+        "When enabled, updates require a matching .sha256 file for verification (affects all channels)": _(
+            "When enabled, updates require a matching .sha256 file for verification (affects all channels)"
+        ),
+        "Are you sure you want to reset all settings to defaults?": _(
+            "Are you sure you want to reset all settings to defaults?"
+        ),
     }
     strings = general_strings | update_strings | additional_strings | dev_strings
 
@@ -132,11 +165,9 @@ plural_strings = {
     },
 }
 
+
 # xgettext hint - never executed, only for extraction
 def _xgettext_dummy(n_):
     # Keep the ngettext patterns in source for translation extraction tools
-    n_("Processing complete: {0} match found. {1} skipped.",
-       "Processing complete: {0} matches found. {1} skipped.", 1)
-    n_("Processed: {0}/{1} pages. {2} match found. {3} skipped.",
-       "Processed: {0}/{1} pages. {2} matches found. {3} skipped.", 1)
-    
+    n_("Processing complete: {0} match found. {1} skipped.", "Processing complete: {0} matches found. {1} skipped.", 1)
+    n_("Processed: {0}/{1} pages. {2} match found. {3} skipped.", "Processed: {0}/{1} pages. {2} matches found. {3} skipped.", 1)

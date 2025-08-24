@@ -1,31 +1,30 @@
 """
 Main application window
 """
-import time
+
 import re
 import threading
+import time
 from pathlib import Path
-from tkinter import (
-    Tk, StringVar, IntVar, Label, messagebox, filedialog
-)
-from tkinter import ttk
+from tkinter import IntVar, Label, StringVar, Tk, filedialog, messagebox, ttk
+
 from PIL import Image, ImageTk
 from pymupdf import Document
 
-from ..config.settings import AppSettings
 from ..config.paths import Paths
-from ..constants import VERSION_STR, LANGUAGE_OPTIONS
-from ..version import Version
-from ..models import HighlightMode
+from ..config.settings import AppSettings
+from ..constants import LANGUAGE_OPTIONS, VERSION_STR
 from ..core.pdf_processor import highlight_matching_data
 from ..core.watermark import watermark_pdf_page
-from ..utils.updater import UpdateChecker
+from ..models import HighlightMode
 from ..utils.localization import setup_translation
-from .widgets import Tooltip
+from ..utils.updater import UpdateChecker
+from ..version import Version
 from .dev_tools import DevToolsWindow
-from .dialogs import FilterDialog, WatermarkDialog, UpdateDialogs
+from .dialogs import FilterDialog, UpdateDialogs, WatermarkDialog
 from .preview import PreviewWindow
-from .ui_strings import build_strings, plural_strings, _xgettext_dummy
+from .ui_strings import _xgettext_dummy, build_strings, get_ui_string, plural_strings
+from .widgets import Tooltip
 
 
 class PDFHighlighterApp:
@@ -60,10 +59,10 @@ class PDFHighlighterApp:
         self.preview_window_handler = PreviewWindow(self)
         self.update_dialogs = UpdateDialogs(self)
         self.update_checker = UpdateChecker(self)
-        
+
         # Initialize the UI components
         self.setup_ui()
-        
+
         # Processing and download state
         self.processing_active = False
         self.download_active = False
@@ -77,7 +76,7 @@ class PDFHighlighterApp:
         Call this after (re)loading gettext translations.
         """
         self.strings = build_strings(self._)
-        
+
         # Plural strings - keep as raw strings for proper ngettext handling
         self.plural_strings = plural_strings
 
@@ -89,29 +88,25 @@ class PDFHighlighterApp:
     def get_plural_string(self, key: str, count: int) -> str:
         """
         Get a plural string using ngettext.
-        
+
         Args:
             key: The key in self.plural_strings
             count: The count to determine singular/plural
-            
+
         Returns:
             Translated string
         """
         if key not in self.plural_strings:
             raise KeyError(f"Plural string key '{key}' not found")
-        
+
         plural_data = self.plural_strings[key]
-        return self.n_(
-            plural_data["singular"],
-            plural_data["plural"],
-            count
-        )
+        return self.n_(plural_data["singular"], plural_data["plural"], count)
 
     def setup_ui(self):
         """
         Sets up the user interface for the PDFHighlighterApp.
         """
-        self.root.title(self.strings["title"])
+        self.root.title(get_ui_string(self.strings, "title"))
         self.root.geometry("600x350")  # Adjusted size for a better layout
         self.root.minsize(width=600, height=350)
         self.root.resizable(False, False)
@@ -157,7 +152,7 @@ class PDFHighlighterApp:
         self.logo_label.bind("<Button-1>", _on_logo_click)
 
         # Application title next to the logo
-        self.title = ttk.Label(self.root, text=self.strings["title"], font=title_font)
+        self.title = ttk.Label(self.root, text=get_ui_string(self.strings, "title"), font=title_font)
         self.title.grid(row=0, column=1, sticky="EW", padx=10, pady=10)
 
         # Language selection
@@ -166,23 +161,22 @@ class PDFHighlighterApp:
         lang_var.trace_add("write", lambda *args: self.app_settings.update_setting("language", lang_var.get()))
 
         self.language_menu = ttk.OptionMenu(
-            self.root, lang_var, self.app_settings.settings["language"], *LANGUAGE_OPTIONS, 
-            command=lambda _: self.on_language_change(lang_var.get())
+            self.root, lang_var, self.app_settings.settings["language"], *LANGUAGE_OPTIONS, command=lambda _: self.on_language_change(lang_var.get())
         )
         self.language_menu.grid(row=0, column=2, sticky="E", padx=10, pady=10)
 
         # PDF file selection
-        self.label_pdf_file = ttk.Label(self.root, text=self.strings["pdf_file"])
+        self.label_pdf_file = ttk.Label(self.root, text=get_ui_string(self.strings, "pdf_file"))
         self.label_pdf_file.grid(row=1, column=0, sticky="E", padx=10, pady=2)
         self.pdf_file_var = StringVar()
         self.entry_file = ttk.Entry(self.root, textvariable=self.pdf_file_var, state="readonly")
         self.entry_file.grid(row=1, column=1, sticky="WE", padx=10)
 
-        self.browse_button = ttk.Button(self.root, text=self.strings["browse"], command=self.browse_file, width=11)
+        self.browse_button = ttk.Button(self.root, text=get_ui_string(self.strings, "browse"), command=self.browse_file, width=11)
         self.browse_button.grid(row=1, column=2, padx=10, sticky="E")
 
         # Search string
-        self.label_search_str = ttk.Label(self.root, text=self.strings["search_term"])
+        self.label_search_str = ttk.Label(self.root, text=get_ui_string(self.strings, "search_term"))
         self.label_search_str.grid(row=2, column=0, sticky="E", padx=10, pady=2)
 
         self.search_phrase_var = StringVar()
@@ -203,7 +197,7 @@ class PDFHighlighterApp:
             "write", lambda *args: self.app_settings.update_setting("mark_only_relevant_lines", self.relevant_lines_var.get())
         )
 
-        self.checkbox_relevant_lines = ttk.Checkbutton(self.filter_frame, text=self.strings["mark_only_relevant"], variable=self.relevant_lines_var)
+        self.checkbox_relevant_lines = ttk.Checkbutton(self.filter_frame, text=get_ui_string(self.strings, "mark_only_relevant"), variable=self.relevant_lines_var)
         self.checkbox_relevant_lines.grid(row=0, column=0, sticky="W", padx=10)
 
         # Filter variables
@@ -220,10 +214,10 @@ class PDFHighlighterApp:
         self.enable_filter_var.trace_add("write", lambda *args: self.app_settings.update_setting("enable_filter", self.enable_filter_var.get()))
 
         # Filter and watermark buttons
-        self.button_filter = ttk.Button(self.filter_frame, text=self.strings["filter"], command=self.open_filter_window)
+        self.button_filter = ttk.Button(self.filter_frame, text=get_ui_string(self.strings, "filter"), command=self.open_filter_window)
         self.button_filter.grid(row=0, column=1, sticky="E", padx=10)
 
-        self.button_watermark = ttk.Button(self.filter_frame, text=self.strings["watermark"], command=self.open_watermark_window)
+        self.button_watermark = ttk.Button(self.filter_frame, text=get_ui_string(self.strings, "watermark"), command=self.open_watermark_window)
         self.button_watermark.grid(row=0, column=2, sticky="E", padx=10)
 
         # Progress bar
@@ -232,11 +226,11 @@ class PDFHighlighterApp:
 
         # Status label
         self.status_var = StringVar()
-        self.status_var.set(self.strings["status_waiting"])
+        self.status_var.set(get_ui_string(self.strings, "status_waiting"))
         ttk.Label(self.root, textvariable=self.status_var).grid(row=5, column=0, columnspan=3, padx=10, pady=2)
 
         # Start/Abort button
-        self.start_abort_button = ttk.Button(self.root, text=self.strings["start"], command=self.start_processing)
+        self.start_abort_button = ttk.Button(self.root, text=get_ui_string(self.strings, "start"), command=self.start_processing)
         self.start_abort_button.grid(row=6, column=1, pady=10)
 
         # Version frame
@@ -245,9 +239,9 @@ class PDFHighlighterApp:
 
         # Initialize version color
         self.version_color = "#808080"
-        self.version_label_text = self.strings["version_no_update"]
-        self.update_label_text = self.strings["check_for_updates"]
-        
+        self.version_label_text = get_ui_string(self.strings, "version_no_update")
+        self.update_label_text = get_ui_string(self.strings, "check_for_updates")
+
         current_version = Version.from_str(self.app_settings.settings["version"])
         latest_version = Version.from_str(self.app_settings.settings["newest_version_available"])
         self.update_version_labels_text(latest_version, current_version)
@@ -276,30 +270,30 @@ class PDFHighlighterApp:
         """
         Update all widget texts from self.strings. Call after changing language or initializing UI.
         """
-        self.root.title(self.strings["title"])
-        self.title.config(text=self.strings["title"])
-        self.label_pdf_file.config(text=self.strings["pdf_file"])
-        self.label_search_str.config(text=self.strings["search_term"])
-        self.checkbox_relevant_lines.config(text=self.strings["mark_only_relevant"])
-        self.start_abort_button.config(text=self.strings["start"])
-        self.browse_button.config(text=self.strings["browse"])
-        self.button_filter.config(text=self.strings["filter"])
-        self.button_watermark.config(text=self.strings["watermark"])
-        self.language_menu.config(text=self.strings["select_language"])
-        
+        self.root.title(get_ui_string(self.strings, "title"))
+        self.title.config(text=get_ui_string(self.strings, "title"))
+        self.label_pdf_file.config(text=get_ui_string(self.strings, "pdf_file"))
+        self.label_search_str.config(text=get_ui_string(self.strings, "search_term"))
+        self.checkbox_relevant_lines.config(text=get_ui_string(self.strings, "mark_only_relevant"))
+        self.start_abort_button.config(text=get_ui_string(self.strings, "start"))
+        self.browse_button.config(text=get_ui_string(self.strings, "browse"))
+        self.button_filter.config(text=get_ui_string(self.strings, "filter"))
+        self.button_watermark.config(text=get_ui_string(self.strings, "watermark"))
+        self.language_menu.config(text=get_ui_string(self.strings, "select_language"))
+
         # Update version-related text
         self.update_version_labels()
-        
+
         # Tooltips
-        Tooltip(self.entry_file, text=self.strings["select_pdf"])
-        Tooltip(self.label_pdf_file, text=self.strings["select_pdf"])
-        Tooltip(self.label_search_str, text=self.strings["enter_club"])
-        Tooltip(self.entry_search_str, text=self.strings["enter_club"])
-        Tooltip(self.checkbox_relevant_lines, text=self.strings["only_highlight_lines"])
-        Tooltip(self.button_filter, text=self.strings["configure_filter"])
-        Tooltip(self.button_watermark, text=self.strings["configure_watermark"])
-        Tooltip(self.start_abort_button, text=self.strings["start_cancel"])
-        Tooltip(self.language_menu, text=self.strings["select_language"])
+        Tooltip(self.entry_file, text=get_ui_string(self.strings, "select_pdf"))
+        Tooltip(self.label_pdf_file, text=get_ui_string(self.strings, "select_pdf"))
+        Tooltip(self.label_search_str, text=get_ui_string(self.strings, "enter_club"))
+        Tooltip(self.entry_search_str, text=get_ui_string(self.strings, "enter_club"))
+        Tooltip(self.checkbox_relevant_lines, text=get_ui_string(self.strings, "only_highlight_lines"))
+        Tooltip(self.button_filter, text=get_ui_string(self.strings, "configure_filter"))
+        Tooltip(self.button_watermark, text=get_ui_string(self.strings, "configure_watermark"))
+        Tooltip(self.start_abort_button, text=get_ui_string(self.strings, "start_cancel"))
+        Tooltip(self.language_menu, text=get_ui_string(self.strings, "select_language"))
 
     def open_filter_window(self):
         """Open the filter configuration dialog."""
@@ -312,12 +306,12 @@ class PDFHighlighterApp:
     def preview_watermark(self, enabled, text, color, size, position, preview_page, origin=None, force_open=True):
         """Preview watermark (delegate to preview window handler)."""
         self.preview_window_handler.preview_watermark(enabled, text, color, size, position, preview_page, origin, force_open)
-        
+
     @property
     def current_preview_page(self):
         """Get current preview page."""
         return self.preview_window_handler.current_page
-        
+
     @current_preview_page.setter
     def current_preview_page(self, value):
         """Set current preview page."""
@@ -330,17 +324,17 @@ class PDFHighlighterApp:
     def update_version_labels_text(self, latest_version: Version | None | bool, current_version: Version = Version.from_str(VERSION_STR)):
         """Update version label text and color based on update status."""
         if latest_version is None or latest_version is False:
-            self.version_label_text = self.strings["version_update_failed"]
+            self.version_label_text = get_ui_string(self.strings, "version_update_failed")
             self.version_color = "#9d6363"
-            self.update_label_text = self.strings["check_for_updates"]
+            self.update_label_text = get_ui_string(self.strings, "check_for_updates")
         elif latest_version and latest_version > current_version:
-            self.version_label_text = self.strings["version_new_available"]
+            self.version_label_text = get_ui_string(self.strings, "version_new_available")
             self.version_color = "#ff9f14"
-            self.update_label_text = self.strings["install_update"]
+            self.update_label_text = get_ui_string(self.strings, "install_update")
         else:
-            self.version_label_text = self.strings["version_no_update"]
+            self.version_label_text = get_ui_string(self.strings, "version_no_update")
             self.version_color = "#808080"
-            self.update_label_text = self.strings["check_for_updates"]
+            self.update_label_text = get_ui_string(self.strings, "check_for_updates")
 
     def update_version_labels(self):
         """Update version labels in the UI."""
@@ -352,7 +346,7 @@ class PDFHighlighterApp:
         """Callback for when version update info is received."""
         # Schedule on main thread since this is called from update check thread
         self.root.after_idle(lambda: self._update_version_info(latest_version, current_version))
-    
+
     def _update_version_info(self, latest_version, current_version):
         """Update version info on main thread."""
         self.update_version_labels_text(latest_version, current_version)
@@ -368,10 +362,9 @@ class PDFHighlighterApp:
         self._, self.n_ = setup_translation(language)
         self.init_translatable_strings()
         self.update_all_widget_texts()
-        self.status_var.set(self.strings["status_language_changed"])
+        self.status_var.set(get_ui_string(self.strings, "status_language_changed"))
         self.update_version_labels_text(
-            Version.from_str(self.app_settings.settings["newest_version_available"]), 
-            Version.from_str(self.app_settings.settings["version"])
+            Version.from_str(self.app_settings.settings["newest_version_available"]), Version.from_str(self.app_settings.settings["version"])
         )
         self.update_version_labels()
         self.root.update_idletasks()
@@ -380,23 +373,23 @@ class PDFHighlighterApp:
         """
         Opens a file dialog to browse and select a PDF file.
         """
-        self.status_var.set(self.strings["status_importing"])
+        self.status_var.set(get_ui_string(self.strings, "status_importing"))
         self.root.update_idletasks()
-        file_path = filedialog.askopenfilename(filetypes=((self.strings["PDF files"], "*.pdf"), (self.strings["All files"], "*.*")))
+        file_path = filedialog.askopenfilename(filetypes=((get_ui_string(self.strings, "PDF files"), "*.pdf"), (get_ui_string(self.strings, "All files"), "*.*")))
         if file_path:
             file_name = Path(file_path).name
             self.pdf_file_var.set(file_name)  # Display only the file name
             self.input_file_full_path = file_path  # Store full path for processing
-            self.status_var.set(self.strings["status_imported"])
+            self.status_var.set(get_ui_string(self.strings, "status_imported"))
         else:
-            self.status_var.set(self.strings["status_waiting"])
+            self.status_var.set(get_ui_string(self.strings, "status_waiting"))
             self.root.update_idletasks()
 
     def start_processing(self):
         """
         Starts the PDF processing based on the selected file and search parameters.
         """
-        self.start_abort_button.config(text=self.strings["abort"], command=self.finalize_processing)
+        self.start_abort_button.config(text=get_ui_string(self.strings, "abort"), command=self.finalize_processing)
 
         # Set processing flag to True
         self.processing_active = True
@@ -410,7 +403,7 @@ class PDFHighlighterApp:
         search_str = self.search_phrase_var.get()
 
         if not all([input_file, search_str]):
-            messagebox.showerror(self.strings["error"], self.strings["All fields are required!"])
+            messagebox.showerror(get_ui_string(self.strings, "error"), get_ui_string(self.strings, "All fields are required!"))
             self.finalize_processing()
             return
 
@@ -429,10 +422,10 @@ class PDFHighlighterApp:
             self.paths.is_valid_path(input_file)
             document = Document(input_file)
             if document.is_encrypted:
-                messagebox.showerror(self.strings["error"], self.strings["Password-protected PDFs are not supported."])
+                messagebox.showerror(get_ui_string(self.strings, "error"), get_ui_string(self.strings, "Password-protected PDFs are not supported."))
                 self.finalize_processing()
                 return
-                
+
             total_matches = 0
             total_skipped = 0
             total_pages = len(document)
@@ -441,7 +434,7 @@ class PDFHighlighterApp:
                 page = document[i]
 
                 if not self.processing_active:  # Check if the process should continue
-                    self.root.after_idle(lambda: self.status_var.set(self.strings["Status: Aborted by user."]))
+                    self.root.after_idle(lambda: self.status_var.set(get_ui_string(self.strings, "Status: Aborted by user.")))
                     self.root.after_idle(self.finalize_processing)
                     return
 
@@ -469,32 +462,32 @@ class PDFHighlighterApp:
                 # Prompt for output file location - schedule on main thread
                 self.root.after_idle(lambda: self._handle_save_dialog(document, input_file, total_matches, total_skipped))
             elif self.processing_active and total_marked == 0:
-                self.root.after_idle(lambda: messagebox.showinfo(self.strings["info"], self.strings["Nothing to highlight; no file saved."]))
+                self.root.after_idle(lambda: messagebox.showinfo(get_ui_string(self.strings, "info"), get_ui_string(self.strings, "Nothing to highlight; no file saved.")))
 
         except Exception as e:
             error_msg = str(e)
-            self.root.after_idle(lambda: messagebox.showerror("Error", error_msg))
+            self.root.after_idle(lambda: messagebox.showerror(get_ui_string(self.strings, "error"), error_msg))
         finally:
             self.root.after_idle(self.finalize_processing)
 
     def _handle_save_dialog(self, document: Document, input_file: str, total_matches: int, total_skipped: int):
         """Handle the save dialog and file operations on the main thread."""
-        self.status_var.set(self.strings["Status: Saving PDF.. Please wait..."])
+        self.status_var.set(get_ui_string(self.strings, "Status: Saving PDF.. Please wait..."))
         output_file = filedialog.asksaveasfilename(
             defaultextension=".pdf",
             filetypes=[("PDF files", "*.pdf")],
-            initialfile=self.strings["{0}_marked.pdf"].format(input_file.rsplit(".", 1)[0]),
+            initialfile=get_ui_string(self.strings, "{0}_marked.pdf").format(input_file.rsplit(".", 1)[0]),
         )
         if output_file:  # If user specifies a file
             document.save(output_file)
             document.close()
             messagebox.showinfo(
-                self.strings["Finished"],
+                get_ui_string(self.strings, "Finished"),
                 self.get_plural_string("processing_complete", total_matches).format(total_matches, total_skipped),
             )
         else:
             document.close()
-            messagebox.showinfo(self.strings["info"], self.strings["No output file selected; processing aborted after matches were found."])
+            messagebox.showinfo(get_ui_string(self.strings, "info"), get_ui_string(self.strings, "No output file selected; processing aborted after matches were found."))
 
     def finalize_processing(self):
         """
@@ -502,11 +495,11 @@ class PDFHighlighterApp:
         """
         self.progress_bar["value"] = 0  # Reset progress bar
         # Reset the button to "Start" with the original command
-        self.start_abort_button.config(text=self.strings["start"], command=self.start_processing)
+        self.start_abort_button.config(text=get_ui_string(self.strings, "start"), command=self.start_processing)
         if not self.processing_active:  # Only update the status if the processing was aborted
-            self.status_var.set(self.strings["Status: Processing aborted."])
+            self.status_var.set(get_ui_string(self.strings, "Status: Processing aborted."))
         else:
-            self.status_var.set(self.strings["status_waiting"])
+            self.status_var.set(get_ui_string(self.strings, "status_waiting"))
         self.processing_active = False  # Reset the flag
         self.root.update_idletasks()  # Ensure the UI updates are processed
 
@@ -522,13 +515,11 @@ class PDFHighlighterApp:
         """
         # Schedule GUI updates on the main thread
         self.root.after_idle(lambda: self._update_progress_gui(current, total, matches, skipped))
-    
+
     def _update_progress_gui(self, current: int, total: int, matches: int, skipped: int):
         """Internal method to update progress GUI elements on main thread."""
         self.progress_bar["value"] = (current / total) * 100
-        self.status_var.set(
-            self.get_plural_string("processed_pages", matches).format(current, total, matches, skipped)
-        )
+        self.status_var.set(self.get_plural_string("processed_pages", matches).format(current, total, matches, skipped))
 
     def check_for_app_updates(self, current_version: Version = Version.from_str(VERSION_STR), force_check: bool = False):
         """Check for application updates."""
@@ -537,16 +528,16 @@ class PDFHighlighterApp:
     def start_download(self):
         """Start download process and update UI."""
         self.download_active = True
-        self.start_abort_button.config(text=self.strings["abort"], command=self.abort_download)
+        self.start_abort_button.config(text=get_ui_string(self.strings, "abort"), command=self.abort_download)
         self.progress_bar["value"] = 0  # Reset progress bar
-        
+
     def abort_download(self):
         """Abort download process and reset UI."""
         self.download_active = False
-        self.start_abort_button.config(text=self.strings["start"], command=self.start_processing)
+        self.start_abort_button.config(text=get_ui_string(self.strings, "start"), command=self.start_processing)
         self.progress_bar["value"] = 0  # Reset progress bar
-        self.status_var.set(self.strings["Download cancelled."])
-        
+        self.status_var.set(get_ui_string(self.strings, "Download cancelled."))
+
     def finish_download(self):
         """Finish download process and reset UI."""
         self.download_active = False
