@@ -1,15 +1,17 @@
-import threading
-from http.server import HTTPServer, SimpleHTTPRequestHandler
-from functools import partial
-from pathlib import Path
-import tempfile
 import hashlib
 import subprocess
-
 import sys
+import tempfile
+import threading
+from functools import partial
+from http.server import HTTPServer, SimpleHTTPRequestHandler
+from pathlib import Path
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from src.utils.updater import UpdateChecker
 from src.version import Version
+
+
 class _PopenPatch:
     """Context manager to temporarily replace subprocess.Popen with a stub/captor."""
     def __init__(self, capture_calls: bool = False):

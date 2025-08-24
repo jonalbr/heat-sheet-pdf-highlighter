@@ -222,6 +222,43 @@ cd locales
 ./update_mo_files.bat
 ```
 
+## Logging
+
+The application provides a minimal, logging configuration by default so library and internal warnings are visible when running from source.
+
+You can customize logging via environment variables or command-line flags (CLI overrides env):
+
+- Environment variables:
+   - `LOG_LEVEL` — log level name (DEBUG, INFO, WARNING, ERROR) or numeric value.
+   - `LOG_FILE` — path to a file to append logs to. If not set, logs go to stderr.
+
+- CLI flags (pass to `python main.py`):
+   - `--log-level LEVEL` — same values as `LOG_LEVEL`.
+   - `--log-file PATH` — path to log file (overrides `LOG_FILE`).
+
+Examples (PowerShell):
+
+```powershell
+$env:LOG_LEVEL = 'DEBUG'
+$env:LOG_FILE = 'C:\temp\app.log'
+& .venv\Scripts\python.exe main.py
+```
+
+Or override via CLI:
+
+```powershell
+& .venv\Scripts\python.exe main.py --log-level INFO --log-file C:\temp\cli.log
+```
+
+For programmatic usage in code or tests, import the logging helpers:
+
+```python
+from src.utils import logging as app_logging
+
+app_logging.configure_basic_logging()
+```
+
+
 ## Building Executable
 
 To build the application for Windows deployment as an installer.

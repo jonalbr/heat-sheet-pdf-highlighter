@@ -172,7 +172,7 @@ class PDFHighlighterApp:
         self.entry_file = ttk.Entry(self.root, textvariable=self.pdf_file_var, state="readonly")
         self.entry_file.grid(row=1, column=1, sticky="WE", padx=10)
 
-        self.browse_button = ttk.Button(self.root, text=get_ui_string(self.strings, "browse"), command=self.browse_file, width=11)
+        self.browse_button = ttk.Button(self.root, text=get_ui_string(self.strings, "btn_browse"), command=self.browse_file, width=11)
         self.browse_button.grid(row=1, column=2, padx=10, sticky="E")
 
         # Search string
@@ -197,7 +197,9 @@ class PDFHighlighterApp:
             "write", lambda *args: self.app_settings.update_setting("mark_only_relevant_lines", self.relevant_lines_var.get())
         )
 
-        self.checkbox_relevant_lines = ttk.Checkbutton(self.filter_frame, text=get_ui_string(self.strings, "mark_only_relevant"), variable=self.relevant_lines_var)
+        self.checkbox_relevant_lines = ttk.Checkbutton(
+            self.filter_frame, text=get_ui_string(self.strings, "mark_only_relevant"), variable=self.relevant_lines_var
+        )
         self.checkbox_relevant_lines.grid(row=0, column=0, sticky="W", padx=10)
 
         # Filter variables
@@ -214,10 +216,10 @@ class PDFHighlighterApp:
         self.enable_filter_var.trace_add("write", lambda *args: self.app_settings.update_setting("enable_filter", self.enable_filter_var.get()))
 
         # Filter and watermark buttons
-        self.button_filter = ttk.Button(self.filter_frame, text=get_ui_string(self.strings, "filter"), command=self.open_filter_window)
+        self.button_filter = ttk.Button(self.filter_frame, text=get_ui_string(self.strings, "btn_filter"), command=self.open_filter_window)
         self.button_filter.grid(row=0, column=1, sticky="E", padx=10)
 
-        self.button_watermark = ttk.Button(self.filter_frame, text=get_ui_string(self.strings, "watermark"), command=self.open_watermark_window)
+        self.button_watermark = ttk.Button(self.filter_frame, text=get_ui_string(self.strings, "btn_watermark"), command=self.open_watermark_window)
         self.button_watermark.grid(row=0, column=2, sticky="E", padx=10)
 
         # Progress bar
@@ -230,7 +232,7 @@ class PDFHighlighterApp:
         ttk.Label(self.root, textvariable=self.status_var).grid(row=5, column=0, columnspan=3, padx=10, pady=2)
 
         # Start/Abort button
-        self.start_abort_button = ttk.Button(self.root, text=get_ui_string(self.strings, "start"), command=self.start_processing)
+        self.start_abort_button = ttk.Button(self.root, text=get_ui_string(self.strings, "btn_start"), command=self.start_processing)
         self.start_abort_button.grid(row=6, column=1, pady=10)
 
         # Version frame
@@ -239,8 +241,8 @@ class PDFHighlighterApp:
 
         # Initialize version color
         self.version_color = "#808080"
-        self.version_label_text = get_ui_string(self.strings, "version_no_update")
-        self.update_label_text = get_ui_string(self.strings, "check_for_updates")
+        self.version_label_text = get_ui_string(self.strings, "ver_no_update")
+        self.update_label_text = get_ui_string(self.strings, "upd_check")
 
         current_version = Version.from_str(self.app_settings.settings["version"])
         latest_version = Version.from_str(self.app_settings.settings["newest_version_available"])
@@ -275,10 +277,10 @@ class PDFHighlighterApp:
         self.label_pdf_file.config(text=get_ui_string(self.strings, "pdf_file"))
         self.label_search_str.config(text=get_ui_string(self.strings, "search_term"))
         self.checkbox_relevant_lines.config(text=get_ui_string(self.strings, "mark_only_relevant"))
-        self.start_abort_button.config(text=get_ui_string(self.strings, "start"))
-        self.browse_button.config(text=get_ui_string(self.strings, "browse"))
-        self.button_filter.config(text=get_ui_string(self.strings, "filter"))
-        self.button_watermark.config(text=get_ui_string(self.strings, "watermark"))
+        self.start_abort_button.config(text=get_ui_string(self.strings, "btn_start"))
+        self.browse_button.config(text=get_ui_string(self.strings, "btn_browse"))
+        self.button_filter.config(text=get_ui_string(self.strings, "btn_filter"))
+        self.button_watermark.config(text=get_ui_string(self.strings, "btn_watermark"))
         self.language_menu.config(text=get_ui_string(self.strings, "select_language"))
 
         # Update version-related text
@@ -324,17 +326,17 @@ class PDFHighlighterApp:
     def update_version_labels_text(self, latest_version: Version | None | bool, current_version: Version = Version.from_str(VERSION_STR)):
         """Update version label text and color based on update status."""
         if latest_version is None or latest_version is False:
-            self.version_label_text = get_ui_string(self.strings, "version_update_failed")
+            self.version_label_text = get_ui_string(self.strings, "ver_update_failed")
             self.version_color = "#9d6363"
-            self.update_label_text = get_ui_string(self.strings, "check_for_updates")
+            self.update_label_text = get_ui_string(self.strings, "upd_check")
         elif latest_version and latest_version > current_version:
-            self.version_label_text = get_ui_string(self.strings, "version_new_available")
+            self.version_label_text = get_ui_string(self.strings, "ver_new")
             self.version_color = "#ff9f14"
-            self.update_label_text = get_ui_string(self.strings, "install_update")
+            self.update_label_text = get_ui_string(self.strings, "upd_install")
         else:
-            self.version_label_text = get_ui_string(self.strings, "version_no_update")
+            self.version_label_text = get_ui_string(self.strings, "ver_no_update")
             self.version_color = "#808080"
-            self.update_label_text = get_ui_string(self.strings, "check_for_updates")
+            self.update_label_text = get_ui_string(self.strings, "upd_check")
 
     def update_version_labels(self):
         """Update version labels in the UI."""
@@ -375,7 +377,9 @@ class PDFHighlighterApp:
         """
         self.status_var.set(get_ui_string(self.strings, "status_importing"))
         self.root.update_idletasks()
-        file_path = filedialog.askopenfilename(filetypes=((get_ui_string(self.strings, "PDF files"), "*.pdf"), (get_ui_string(self.strings, "All files"), "*.*")))
+        file_path = filedialog.askopenfilename(
+            filetypes=((get_ui_string(self.strings, "file_filter_pdf"), "*.pdf"), (get_ui_string(self.strings, "file_filter_all"), "*.*"))
+        )
         if file_path:
             file_name = Path(file_path).name
             self.pdf_file_var.set(file_name)  # Display only the file name
@@ -389,7 +393,7 @@ class PDFHighlighterApp:
         """
         Starts the PDF processing based on the selected file and search parameters.
         """
-        self.start_abort_button.config(text=get_ui_string(self.strings, "abort"), command=self.finalize_processing)
+        self.start_abort_button.config(text=get_ui_string(self.strings, "btn_abort"), command=self.finalize_processing)
 
         # Set processing flag to True
         self.processing_active = True
@@ -403,7 +407,7 @@ class PDFHighlighterApp:
         search_str = self.search_phrase_var.get()
 
         if not all([input_file, search_str]):
-            messagebox.showerror(get_ui_string(self.strings, "error"), get_ui_string(self.strings, "All fields are required!"))
+            messagebox.showerror(get_ui_string(self.strings, "error"), get_ui_string(self.strings, "val_all_required"))
             self.finalize_processing()
             return
 
@@ -422,7 +426,7 @@ class PDFHighlighterApp:
             self.paths.is_valid_path(input_file)
             document = Document(input_file)
             if document.is_encrypted:
-                messagebox.showerror(get_ui_string(self.strings, "error"), get_ui_string(self.strings, "Password-protected PDFs are not supported."))
+                messagebox.showerror(get_ui_string(self.strings, "error"), get_ui_string(self.strings, "val_pdf_protected"))
                 self.finalize_processing()
                 return
 
@@ -434,7 +438,7 @@ class PDFHighlighterApp:
                 page = document[i]
 
                 if not self.processing_active:  # Check if the process should continue
-                    self.root.after_idle(lambda: self.status_var.set(get_ui_string(self.strings, "Status: Aborted by user.")))
+                    self.root.after_idle(lambda: self.status_var.set(get_ui_string(self.strings, "status_aborted")))
                     self.root.after_idle(self.finalize_processing)
                     return
 
@@ -462,7 +466,7 @@ class PDFHighlighterApp:
                 # Prompt for output file location - schedule on main thread
                 self.root.after_idle(lambda: self._handle_save_dialog(document, input_file, total_matches, total_skipped))
             elif self.processing_active and total_marked == 0:
-                self.root.after_idle(lambda: messagebox.showinfo(get_ui_string(self.strings, "info"), get_ui_string(self.strings, "Nothing to highlight; no file saved.")))
+                self.root.after_idle(lambda: messagebox.showinfo(get_ui_string(self.strings, "info"), get_ui_string(self.strings, "val_nothing")))
 
         except Exception as e:
             error_msg = str(e)
@@ -472,22 +476,22 @@ class PDFHighlighterApp:
 
     def _handle_save_dialog(self, document: Document, input_file: str, total_matches: int, total_skipped: int):
         """Handle the save dialog and file operations on the main thread."""
-        self.status_var.set(get_ui_string(self.strings, "Status: Saving PDF.. Please wait..."))
+        self.status_var.set(get_ui_string(self.strings, "status_saving"))
         output_file = filedialog.asksaveasfilename(
             defaultextension=".pdf",
             filetypes=[("PDF files", "*.pdf")],
-            initialfile=get_ui_string(self.strings, "{0}_marked.pdf").format(input_file.rsplit(".", 1)[0]),
+            initialfile=get_ui_string(self.strings, "file_out_pattern").format(input_file.rsplit(".", 1)[0]),
         )
         if output_file:  # If user specifies a file
             document.save(output_file)
             document.close()
             messagebox.showinfo(
-                get_ui_string(self.strings, "Finished"),
+                get_ui_string(self.strings, "status_done"),
                 self.get_plural_string("processing_complete", total_matches).format(total_matches, total_skipped),
             )
         else:
             document.close()
-            messagebox.showinfo(get_ui_string(self.strings, "info"), get_ui_string(self.strings, "No output file selected; processing aborted after matches were found."))
+            messagebox.showinfo(get_ui_string(self.strings, "info"), get_ui_string(self.strings, "val_no_output"))
 
     def finalize_processing(self):
         """
@@ -495,9 +499,9 @@ class PDFHighlighterApp:
         """
         self.progress_bar["value"] = 0  # Reset progress bar
         # Reset the button to "Start" with the original command
-        self.start_abort_button.config(text=get_ui_string(self.strings, "start"), command=self.start_processing)
+        self.start_abort_button.config(text=get_ui_string(self.strings, "btn_start"), command=self.start_processing)
         if not self.processing_active:  # Only update the status if the processing was aborted
-            self.status_var.set(get_ui_string(self.strings, "Status: Processing aborted."))
+            self.status_var.set(get_ui_string(self.strings, "status_aborted_processing"))
         else:
             self.status_var.set(get_ui_string(self.strings, "status_waiting"))
         self.processing_active = False  # Reset the flag
@@ -528,15 +532,15 @@ class PDFHighlighterApp:
     def start_download(self):
         """Start download process and update UI."""
         self.download_active = True
-        self.start_abort_button.config(text=get_ui_string(self.strings, "abort"), command=self.abort_download)
+        self.start_abort_button.config(text=get_ui_string(self.strings, "btn_abort"), command=self.abort_download)
         self.progress_bar["value"] = 0  # Reset progress bar
 
     def abort_download(self):
         """Abort download process and reset UI."""
         self.download_active = False
-        self.start_abort_button.config(text=get_ui_string(self.strings, "start"), command=self.start_processing)
+        self.start_abort_button.config(text=get_ui_string(self.strings, "btn_start"), command=self.start_processing)
         self.progress_bar["value"] = 0  # Reset progress bar
-        self.status_var.set(get_ui_string(self.strings, "Download cancelled."))
+        self.status_var.set(get_ui_string(self.strings, "upd_cancelled"))
 
     def finish_download(self):
         """Finish download process and reset UI."""

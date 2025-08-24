@@ -1,6 +1,7 @@
 """
 Preview window functionality
 """
+
 from tkinter import Label, Toplevel, messagebox, ttk
 from typing import TYPE_CHECKING
 
@@ -13,9 +14,10 @@ from .ui_strings import get_ui_string
 if TYPE_CHECKING:
     from src.gui.main_window import PDFHighlighterApp
 
+
 class PreviewWindow:
     """Handles watermark preview functionality."""
-    
+
     def __init__(self, app_instance: "PDFHighlighterApp"):
         self.app = app_instance
         self.window = None
@@ -26,9 +28,9 @@ class PreviewWindow:
     def preview_watermark(self, enabled, text, color, size, position, preview_page, origin=None, force_open=True):
         """Show watermark preview."""
         if not hasattr(self.app, "input_file_full_path"):
-            messagebox.showerror(get_ui_string(self.app.strings, "error"), get_ui_string(self.app.strings, "Please select a PDF first for preview."))
+            messagebox.showerror(get_ui_string(self.app.strings, "error"), get_ui_string(self.app.strings, "val_pdf_first"))
             return
-            
+
         try:
             document = Document(self.app.input_file_full_path)
             if preview_page == len(document) + 1:
@@ -39,7 +41,7 @@ class PreviewWindow:
                 self.change_page(0, reset=True)  # Reset to first page
                 document.close()
                 return
-                
+
             page = document[preview_page - 1]
             pix = utils.get_pixmap(page)
 
@@ -67,7 +69,7 @@ class PreviewWindow:
             else:
                 if force_open:
                     self._create_preview_window(image)
-                    
+
             document.close()
         except Exception as e:
             messagebox.showerror(get_ui_string(self.app.strings, "error"), str(e))
@@ -75,32 +77,32 @@ class PreviewWindow:
     def _create_preview_window(self, image):
         """Create the preview window."""
         self.window = Toplevel()
-        self.window.title(get_ui_string(self.app.strings, "Watermark Preview"))
-        
+        self.window.title(get_ui_string(self.app.strings, "wm_preview_window"))
+
         # Position next to the origin window
         if self.last_origin:
             ox = self.last_origin.winfo_rootx()
             oy = self.last_origin.winfo_rooty()
             ow = self.last_origin.winfo_width()
             self.window.geometry(f"+{ox + ow + 10}+{oy}")
-            
+
         self.window.transient(None)
         self.window.grab_release()
         self.window.protocol("WM_DELETE_WINDOW", self.window.destroy)
-        
+
         img_tk = ImageTk.PhotoImage(image)
         img_label = Label(self.window, image=img_tk)
         setattr(img_label, "image", img_tk)  # Store a reference to the image
         img_label.pack()
-        
+
         # Navigation buttons frame
         nav_frame = ttk.Frame(self.window)
         nav_frame.pack(pady=5)
 
-        prev_btn = ttk.Button(nav_frame, text=get_ui_string(self.app.strings, "Previous Page"), command=lambda: self.change_page(-1))
+        prev_btn = ttk.Button(nav_frame, text=get_ui_string(self.app.strings, "nav_prev"), command=lambda: self.change_page(-1))
         prev_btn.pack(side="left", padx=5)
 
-        next_btn = ttk.Button(nav_frame, text=get_ui_string(self.app.strings, "Next Page"), command=lambda: self.change_page(1))
+        next_btn = ttk.Button(nav_frame, text=get_ui_string(self.app.strings, "nav_next"), command=lambda: self.change_page(1))
         next_btn.pack(side="left", padx=5)
 
     def change_page(self, delta: int, reset: bool = False):
@@ -109,7 +111,7 @@ class PreviewWindow:
             self.current_page = 1
         else:
             self.current_page = max(1, self.current_page + delta)
-            
+
         # Re-call preview_watermark with stored settings
         if self.last_watermark_data:
             self.preview_watermark(

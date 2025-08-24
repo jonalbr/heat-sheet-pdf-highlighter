@@ -27,8 +27,8 @@ class UpdateDialogs:
     def show_up_to_date(self):
         """Show message that app is up to date."""
         messagebox.showinfo(
-            get_ui_string(self.app.strings, "Up to Date"),
-            get_ui_string(self.app.strings, "You are already using the latest version."),
+            get_ui_string(self.app.strings, "upd_ok"),
+            get_ui_string(self.app.strings, "upd_latest"),
             parent=self.app.root,
         )
 
@@ -42,8 +42,8 @@ class UpdateDialogs:
             None if user cancelled
         """
         return messagebox.askyesnocancel(
-            get_ui_string(self.app.strings, "Update Available"),
-            get_ui_string(self.app.strings, "A new version ({0}) is available. Do you want to update?").format(latest_version),
+            get_ui_string(self.app.strings, "upd_avail"),
+            get_ui_string(self.app.strings, "upd_prompt").format(latest_version),
             icon="question",
             default="yes",
             parent=self.app.root,
@@ -58,10 +58,10 @@ class UpdateDialogs:
             False if user wants to be reminded again
         """
         return messagebox.askokcancel(
-            get_ui_string(self.app.strings, "Update Information"),
+            get_ui_string(self.app.strings, "upd_info"),
             get_ui_string(
                 self.app.strings,
-                "Click 'yes' to not be asked again for this update. You can still check manually for updates. If there is a newer version available, you will be asked again.",
+                "upd_note",
             ),
             parent=self.app.root,
         )
@@ -75,8 +75,8 @@ class UpdateDialogs:
             False if user doesn't want to retry
         """
         return messagebox.askretrycancel(
-            get_ui_string(self.app.strings, "Update Error"),
-            get_ui_string(self.app.strings, "Failed to check for updates: {0}").format(error_message),
+            get_ui_string(self.app.strings, "upd_error"),
+            get_ui_string(self.app.strings, "upd_check_failed").format(error_message),
             parent=self.app.root,
         )
 
@@ -84,7 +84,7 @@ class UpdateDialogs:
         """Show download error message."""
         messagebox.showerror(
             get_ui_string(self.app.strings, "error"),
-            get_ui_string(self.app.strings, "Failed to download the installer: {0}").format(error_message),
+            get_ui_string(self.app.strings, "upd_download_failed").format(error_message),
             parent=self.app.root,
         )
 
@@ -110,11 +110,7 @@ class UpdateDialogs:
             downloaded_MB = current_value / (1024 * 1024)
             total_MB = total_size / (1024 * 1024)
 
-            self.app.status_var.set(
-                get_ui_string(self.app.strings, "Downloading... {0:.1f} MB of {1:.1f} MB, {2:.0f} seconds remaining").format(
-                    downloaded_MB, total_MB, remaining_time
-                )
-            )
+            self.app.status_var.set(get_ui_string(self.app.strings, "upd_progress").format(downloaded_MB, total_MB, remaining_time))
 
         self.app.root.update()
 
@@ -158,7 +154,7 @@ class FilterDialog:
     def open(self):
         """Open the filter dialog window."""
         self.window = Toplevel(self.parent)
-        self.window.title(get_ui_string(self.app.strings, "filter"))
+        self.window.title(get_ui_string(self.app.strings, "btn_filter"))
         self.window.grab_set()
         self.window.focus_set()
 
@@ -176,8 +172,8 @@ class FilterDialog:
             filename = filedialog.askopenfilename(
                 parent=self.window,
                 filetypes=[
-                    (get_ui_string(self.app.strings, "CSV and Text files"), "*.csv;*.txt"),
-                    (get_ui_string(self.app.strings, "All files"), "*.*"),
+                    (get_ui_string(self.app.strings, "file_filter_csv"), "*.csv;*.txt"),
+                    (get_ui_string(self.app.strings, "file_filter_all"), "*.*"),
                 ],
             )
             if filename:
@@ -197,12 +193,12 @@ class FilterDialog:
                 entry_names.insert("end", ", ")
             return "break"
 
-        checkbox_filter = ttk.Checkbutton(self.window, text=get_ui_string(self.app.strings, "Enable Filter"), variable=self.app.enable_filter_var)
+        checkbox_filter = ttk.Checkbutton(self.window, text=get_ui_string(self.app.strings, "flt_enable"), variable=self.app.enable_filter_var)
         checkbox_filter.grid(row=0, column=0, columnspan=2, sticky="W", padx=10, pady=5)
-        Tooltip(checkbox_filter, text=get_ui_string(self.app.strings, "Enable highlighting lines with specific names."))
+        Tooltip(checkbox_filter, text=get_ui_string(self.app.strings, "flt_info"))
 
         temp_highlight_mode_var = StringVar(value=self.app.highlight_mode_var.get())
-        label_names = ttk.Label(self.window, text=get_ui_string(self.app.strings, "Names"))
+        label_names = ttk.Label(self.window, text=get_ui_string(self.app.strings, "flt_names"))
         label_names.grid(row=1, column=0, sticky="W", padx=10)
 
         entry_names = Text(self.window, height=6, width=50, wrap=WORD)
@@ -213,18 +209,18 @@ class FilterDialog:
         button_frame = ttk.Frame(self.window)
         button_frame.grid(row=2, column=1, sticky="W", padx=10, pady=10)
 
-        button_clear = ttk.Button(button_frame, text=get_ui_string(self.app.strings, "Clear"), command=clear_text)
+        button_clear = ttk.Button(button_frame, text=get_ui_string(self.app.strings, "btn_clear"), command=clear_text)
         button_clear.grid(row=0, column=0, sticky="W", padx=10)
 
-        button_import = ttk.Button(button_frame, text=get_ui_string(self.app.strings, "Import"), command=import_names)
+        button_import = ttk.Button(button_frame, text=get_ui_string(self.app.strings, "btn_import"), command=import_names)
         button_import.grid(row=0, column=1, sticky="W", padx=10)
 
-        label_highlight_mode = ttk.Label(self.window, text=get_ui_string(self.app.strings, "Highlight Mode"))
+        label_highlight_mode = ttk.Label(self.window, text=get_ui_string(self.app.strings, "flt_mode"))
         label_highlight_mode.grid(row=3, column=0, sticky="W", padx=10)
 
         radio_highlight_only = ttk.Radiobutton(
             self.window,
-            text=get_ui_string(self.app.strings, "Highlight lines with matched names in blue, others are not highlighted"),
+            text=get_ui_string(self.app.strings, "flt_mode_blue"),
             variable=temp_highlight_mode_var,
             value=HighlightMode.ONLY_NAMES.name,
         )
@@ -232,7 +228,7 @@ class FilterDialog:
 
         radio_highlight_color = ttk.Radiobutton(
             self.window,
-            text=get_ui_string(self.app.strings, "Highlight lines with matched names in blue, others in yellow"),
+            text=get_ui_string(self.app.strings, "flt_mode_blue_yellow"),
             variable=temp_highlight_mode_var,
             value=HighlightMode.NAMES_DIFF_COLOR.name,
         )
@@ -241,10 +237,10 @@ class FilterDialog:
         button_frame2 = ttk.Frame(self.window)
         button_frame2.grid(row=5, column=0, columnspan=2, sticky="WE", padx=10, pady=10)
 
-        button_apply = ttk.Button(button_frame2, text=self.app.strings["Apply"], command=apply_changes)
+        button_apply = ttk.Button(button_frame2, text=self.app.strings["btn_apply"], command=apply_changes)
         button_apply.pack(side="left", padx=10, expand=True)
 
-        button_abort = ttk.Button(button_frame2, text=self.app.strings["Cancel"], command=lambda: self.window.destroy() if self.window else None)
+        button_abort = ttk.Button(button_frame2, text=self.app.strings["btn_cancel"], command=lambda: self.window.destroy() if self.window else None)
         button_abort.pack(side="right", padx=10, expand=True)
 
 
@@ -259,7 +255,7 @@ class WatermarkDialog:
     def open(self):
         """Open the watermark dialog window."""
         self.window = Toplevel(self.parent)
-        self.window.title(get_ui_string(self.app.strings, "Watermark Settings"))
+        self.window.title(get_ui_string(self.app.strings, "wm_settings"))
         self.window.focus_set()
 
         temp_enabled = IntVar(value=1 if self.app.app_settings.settings.get("watermark_enabled") == "True" else 0)
@@ -268,22 +264,22 @@ class WatermarkDialog:
         temp_size = StringVar(value=str(self.app.app_settings.settings.get("watermark_size")))
         temp_position = StringVar(value=self.app.app_settings.settings.get("watermark_position"))
 
-        Label(self.window, text=get_ui_string(self.app.strings, "Enable Watermark")).grid(row=0, column=0, sticky="W", padx=10, pady=5)
+        Label(self.window, text=get_ui_string(self.app.strings, "wm_enable")).grid(row=0, column=0, sticky="W", padx=10, pady=5)
         chk = ttk.Checkbutton(self.window, variable=temp_enabled)
         chk.grid(row=0, column=1, sticky="W", padx=10, pady=5)
 
-        Label(self.window, text=get_ui_string(self.app.strings, "Watermark Text")).grid(row=1, column=0, sticky="W", padx=10, pady=5)
+        Label(self.window, text=get_ui_string(self.app.strings, "wm_text")).grid(row=1, column=0, sticky="W", padx=10, pady=5)
         entry_text = ttk.Entry(self.window, textvariable=temp_text)
         entry_text.grid(row=1, column=1, padx=10, pady=5)
 
-        Label(self.window, text=get_ui_string(self.app.strings, "Color (hex)")).grid(row=2, column=0, sticky="W", padx=10, pady=5)
+        Label(self.window, text=get_ui_string(self.app.strings, "wm_color_hex")).grid(row=2, column=0, sticky="W", padx=10, pady=5)
         entry_color = ttk.Entry(self.window, textvariable=temp_color)
         entry_color.grid(row=2, column=1, padx=10, pady=5)
 
         # Preselect color frame
         preselect_frame = ttk.Frame(self.window)
         preselect_frame.grid(row=3, column=0, columnspan=2, padx=10, pady=5, sticky="W")
-        Label(preselect_frame, text=get_ui_string(self.app.strings, "Preselect Color:")).pack(side="left")
+        Label(preselect_frame, text=get_ui_string(self.app.strings, "wm_pre_color")).pack(side="left")
 
         preset_colors = ["#FFA500", "#FF0000", "#00FF00", "#0000FF"]
         preselect_buttons: Dict[str, tkButton] = {}
@@ -304,11 +300,11 @@ class WatermarkDialog:
 
         temp_color.trace_add("write", on_color_entry)
 
-        Label(self.window, text=get_ui_string(self.app.strings, "Size")).grid(row=4, column=0, sticky="W", padx=10, pady=5)
+        Label(self.window, text=get_ui_string(self.app.strings, "wm_size")).grid(row=4, column=0, sticky="W", padx=10, pady=5)
         entry_size = ttk.Spinbox(self.window, from_=1, to=100, textvariable=temp_size, width=5)
         entry_size.grid(row=4, column=1, padx=10, pady=5, sticky="W")
 
-        Label(self.window, text=get_ui_string(self.app.strings, "Position")).grid(row=5, column=0, sticky="W", padx=10, pady=5)
+        Label(self.window, text=get_ui_string(self.app.strings, "wm_pos")).grid(row=5, column=0, sticky="W", padx=10, pady=5)
         position_options = ["top", "bottom"]
         option_position = ttk.OptionMenu(self.window, temp_position, temp_position.get(), *position_options)
         option_position.grid(row=5, column=1, padx=10, pady=5, sticky="W")
@@ -334,7 +330,7 @@ class WatermarkDialog:
         temp_size.trace_add("write", update_preview)
         temp_position.trace_add("write", update_preview)
 
-        btn_preview = ttk.Button(self.window, text=get_ui_string(self.app.strings, "Preview"), command=lambda: preview(force_open=True))
+        btn_preview = ttk.Button(self.window, text=get_ui_string(self.app.strings, "btn_preview"), command=lambda: preview(force_open=True))
         btn_preview.grid(row=7, column=0, columnspan=2, pady=10)
 
         def apply_changes():
@@ -346,10 +342,10 @@ class WatermarkDialog:
             if self.window:
                 self.window.destroy()
 
-        btn_apply = ttk.Button(self.window, text=get_ui_string(self.app.strings, "Apply"), command=apply_changes)
+        btn_apply = ttk.Button(self.window, text=get_ui_string(self.app.strings, "btn_apply"), command=apply_changes)
         btn_apply.grid(row=8, column=0, pady=10, padx=10, sticky="E")
 
         btn_cancel = ttk.Button(
-            self.window, text=get_ui_string(self.app.strings, "Cancel"), command=lambda: self.window.destroy() if self.window else None
+            self.window, text=get_ui_string(self.app.strings, "btn_cancel"), command=lambda: self.window.destroy() if self.window else None
         )
         btn_cancel.grid(row=8, column=1, pady=10, padx=10, sticky="W")

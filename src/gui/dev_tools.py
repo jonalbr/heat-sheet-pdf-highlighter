@@ -35,26 +35,26 @@ class DevToolsWindow:
             return
 
         self.window = Toplevel(self.app.root)
-        self.window.title(self.app.strings.get("Dev Tools", "Dev Tools"))
+        self.window.title(get_ui_string(self.app.strings, "dev_tools"))
         self.window.transient(self.app.root)
         self.window.resizable(False, False)
         self.window.protocol("WM_DELETE_WINDOW", self.window.destroy)
 
         # --- Update Channel Section ---
-        frame = ttk.LabelFrame(self.window, text=get_ui_string(self.app.strings, "Update Channel"))
+        frame = ttk.LabelFrame(self.window, text=get_ui_string(self.app.strings, "dev_update_channel"))
         frame.grid(row=0, column=0, padx=12, pady=10, sticky="we")
 
         self.channel_var = StringVar()
         self.channel_var.set(self.app.app_settings.settings.get("update_channel", "stable"))
         options = [
-            ("stable", get_ui_string(self.app.strings, "Stable")),
-            ("rc", get_ui_string(self.app.strings, "Release Candidates (rc)")),
+            ("stable", get_ui_string(self.app.strings, "dev_stable")),
+            ("rc", get_ui_string(self.app.strings, "dev_rc")),
         ]
         label_by_key = {k: lbl for k, lbl in options}
         key_by_label = {lbl: k for k, lbl in options}
         initial_label = label_by_key.get(self.channel_var.get(), "Stable")
 
-        ttk.Label(frame, text=get_ui_string(self.app.strings, "Channel")).grid(row=0, column=0, padx=8, pady=6, sticky="w")
+        ttk.Label(frame, text=get_ui_string(self.app.strings, "dev_channel")).grid(row=0, column=0, padx=8, pady=6, sticky="w")
         combo = ttk.Combobox(frame, state="readonly", values=[lbl for _, lbl in options])
         combo.set(initial_label)
         combo.grid(row=0, column=1, padx=8, pady=6, sticky="we")
@@ -63,14 +63,14 @@ class DevToolsWindow:
         self.sha_required = BooleanVar(value=(self.app.app_settings.settings.get("verify_sha", "True") == "True"))
         sha_cb = ttk.Checkbutton(
             frame,
-            text=get_ui_string(self.app.strings, "Verify SHA256"),
+            text=get_ui_string(self.app.strings, "dev_verify_sha256"),
             variable=self.sha_required,
             command=lambda: self.app.app_settings.update_setting("verify_sha", "True" if self.sha_required.get() else "False"),
         )
         sha_cb.grid(row=0, column=2, padx=8, pady=6, sticky="w")
         Tooltip(
             sha_cb,
-            text=get_ui_string(self.app.strings, "When enabled, updates require a matching .sha256 file for verification (affects all channels)"),
+            text=get_ui_string(self.app.strings, "dev_sha256_info"),
         )
         frame.grid_columnconfigure(1, weight=1)
 
@@ -84,16 +84,16 @@ class DevToolsWindow:
         combo.bind("<<ComboboxSelected>>", on_select)
 
         # --- Placeholder for future debug options ---
-        debug_frame = ttk.LabelFrame(self.window, text=get_ui_string(self.app.strings, "Debug Options"))
+        debug_frame = ttk.LabelFrame(self.window, text=get_ui_string(self.app.strings, "dev_debug"))
         debug_frame.grid(row=1, column=0, padx=12, pady=(0, 10), sticky="we")
 
         # Open settings file
-        ttk.Button(debug_frame, text=get_ui_string(self.app.strings, "Open Settings File"), command=self._open_settings_file).grid(
+        ttk.Button(debug_frame, text=get_ui_string(self.app.strings, "dev_open_settings"), command=self._open_settings_file).grid(
             row=0, column=0, padx=8, pady=6, sticky="w"
         )
 
         # Releases section
-        releases_frame = ttk.LabelFrame(self.window, text=get_ui_string(self.app.strings, "Install Specific Version"))
+        releases_frame = ttk.LabelFrame(self.window, text=get_ui_string(self.app.strings, "dev_install_specific"))
         releases_frame.grid(row=2, column=0, padx=12, pady=(0, 10), sticky="we")
 
         # Refresh implicitly on open and on channel change
@@ -101,14 +101,14 @@ class DevToolsWindow:
         self.releases_combo.grid(row=0, column=0, padx=8, pady=6, sticky="we")
         releases_frame.grid_columnconfigure(0, weight=1)
 
-        ttk.Button(releases_frame, text=get_ui_string(self.app.strings, "Install Selected"), command=self._install_selected_release).grid(
+        ttk.Button(releases_frame, text=get_ui_string(self.app.strings, "dev_install_selected"), command=self._install_selected_release).grid(
             row=0, column=1, padx=8, pady=6, sticky="e"
         )
 
         # Reset settings
-        reset_frame = ttk.LabelFrame(self.window, text=get_ui_string(self.app.strings, "Reset Settings"))
+        reset_frame = ttk.LabelFrame(self.window, text=get_ui_string(self.app.strings, "dev_reset_settings"))
         reset_frame.grid(row=3, column=0, padx=12, pady=(0, 10), sticky="we")
-        ttk.Button(reset_frame, text=get_ui_string(self.app.strings, "Reset to Defaults"), command=self._reset_settings).grid(
+        ttk.Button(reset_frame, text=get_ui_string(self.app.strings, "dev_reset_defaults"), command=self._reset_settings).grid(
             row=0, column=0, padx=8, pady=6, sticky="w"
         )
 
@@ -281,7 +281,7 @@ class DevToolsWindow:
         if not rel or not rel.get("exe_url"):
             messagebox.showerror(
                 get_ui_string(self.app.strings, "error"),
-                get_ui_string(self.app.strings, "Failed to download the installer: {0}").format("No installer asset"),
+                get_ui_string(self.app.strings, "upd_download_failed").format("No installer asset"),
             )
             return
         exe_url = rel["exe_url"]
@@ -291,8 +291,8 @@ class DevToolsWindow:
 
     def _reset_settings(self):
         if not messagebox.askokcancel(
-            get_ui_string(self.app.strings, "Reset Settings"),
-            get_ui_string(self.app.strings, "Are you sure you want to reset all settings to defaults?"),
+            get_ui_string(self.app.strings, "dev_reset_settings"),
+            get_ui_string(self.app.strings, "dev_confirm_reset"),
         ):
             return
         self.app.app_settings.reset_to_defaults()
