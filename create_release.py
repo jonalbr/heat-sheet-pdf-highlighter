@@ -1,6 +1,20 @@
+"""
+Release automation script for Heat Sheet PDF Highlighter.
+
+This script updates version numbers in setup.py, setup.iss, and src/constants.py,
+creates a signed git tag, and pushes it to the remote repository.
+
+Arguments:
+    version (str): The new version string (e.g., 1.2.3 or 1.2.3-rc1).
+    --local (flag): If specified, only updates version locally, runs build.bat,
+                    and then reverts changes. Does not commit, tag, or push.
+"""
+
+import argparse
 import subprocess
 import sys
 import re
+import os
 from pathlib import Path
 import shutil
 
@@ -22,7 +36,7 @@ def update_version(version: str) -> None:
         print("Failed to parse base numeric version from input.")
         sys.exit(1)
     base_numeric = base_match.group(1)
-    file_version = base_numeric if base_numeric.count('.') == 3 else f"{base_numeric}.0"
+    file_version = base_numeric if base_numeric.count(".") == 3 else f"{base_numeric}.0"
     # setup.py
     if SETUP_PY.exists():
         text = SETUP_PY.read_text(encoding="utf-8")
@@ -45,6 +59,16 @@ def update_version(version: str) -> None:
         text = CONSTANTS_PY.read_text(encoding="utf-8")
         text = re.sub(r"(VERSION_STR\s*=\s*['\"])([^'\"]+)(['\"])", rf"\g<1>{version}\g<3>", text)
         CONSTANTS_PY.write_text(text, encoding="utf-8")
+
+
+def build_project() -> None:
+    """Invoke the repo's build script on Windows."""
+    bat = Path("build.bat")
+    if not bat.exists():
+        print("build.bat not found in repository root. Aborting local build.")
+        sys.exit(1)
+    # Use cmd /c to run .bat reliably
+    run(["cmd", "/c", str(bat.resolve())])
 
 
 def _resolve_exec(cmd: list[str]) -> list[str]:
@@ -71,6 +95,7 @@ def ensure_ssh_signing() -> None:
 
 def create_and_push_signed_tag(version: str) -> None:
     tag = f"v{version}"
+
     # Helper functions
     def tag_exists_local(t: str) -> bool:
         return run(["git", "rev-parse", "-q", "--verify", f"{t}^{{tag}}"], check=False).returncode == 0
@@ -99,12 +124,51 @@ def create_and_push_signed_tag(version: str) -> None:
 
 
 def main() -> None:
-    if len(sys.argv) < 2:
-        print("Usage: python create_release.py <version>")
-        sys.exit(1)
-    version = sys.argv[1].strip()
+    parser = argparse.ArgumentParser(
+        description="Create a release: update versions, tag, and push. Use --local to build with a temporary version change and then revert."
+    )
+    parser.add_argument("version", help="Version string, e.g. 1.2.3 or 1.2.3-rc1")
+    parser.add_argument("--local", action="store_true", help="Only change version locally, run build, then revert changes. No commit/tag/push.")
+    parser.add_argument("--no-build", action="store_true", help="Do not run the build; useful as a dry-run to test update+revert behavior")
+    args = parser.parse_args()
+
+    version = args.version.strip()
     check_version_input(version)
 
+    if args.local:
+        # Save originals to restore after build/dry-run
+        originals: dict[Path, str] = {}
+        for p in (SETUP_PY, SETUP_ISS, CONSTANTS_PY):
+            if p.exists():
+                originals[p] = p.read_text(encoding="utf-8")
+
+        try:
+            update_version(version)
+            # Simulate CI environment so build scripts that check for GITHUB_ACTIONS skip interactive pauses
+            old_env_val = None
+            env_key = "GITHUB_ACTIONS"
+            if env_key in os.environ:
+                old_env_val = os.environ[env_key]
+            os.environ[env_key] = "true"
+            try:
+                if args.no_build:
+                    print("--no-build specified: skipping actual build (dry-run).")
+                else:
+                    build_project()
+            finally:
+                # restore environment
+                if old_env_val is None:
+                    del os.environ[env_key]
+                else:
+                    os.environ[env_key] = old_env_val
+        finally:
+            # Revert files to their original state
+            for p, content in originals.items():
+                p.write_text(content, encoding="utf-8")
+        print("Local flow complete and version changes reverted.")
+        return
+
+    # Non-local: proceed with normal release flow
     update_version(version)
 
     # Optionally stage and commit version bumps if there are changes

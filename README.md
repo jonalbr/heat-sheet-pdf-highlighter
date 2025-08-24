@@ -352,6 +352,40 @@ Contributions are welcome! Here's how to get started:
 
 Feel free to open issues for bug reports, feature requests, or questions about the codebase.
 
+## Release helper script
+
+The repository includes a small release helper `create_release.py` used to update
+version strings, run the local build, and create a signed git tag for releases.
+
+Usage:
+
+```powershell
+# Update versions, build, tag and push (regular release flow)
+py .\create_release.py 1.4.0
+
+# Local-only: temporarily update versions, run build, then revert local files
+py .\create_release.py 1.4.0 --local
+
+# Dry-run local: update+revert without running the build (quick test)
+py .\create_release.py 1.4.0 --local --no-build
+```
+
+Notes:
+- `--local` updates `setup.py`, `setup.iss`, and `src/constants.py` with the
+   provided version, runs the repository `build.bat`, then restores the files to
+   their original content so your working tree is unchanged.
+- `--no-build` is a dry-run helper that skips the actual build step (useful for
+   testing the update+revert behavior or other local checks without running the
+   build).
+- The script temporarily sets `GITHUB_ACTIONS=true` during local builds so the
+   build batch script won't pause for interactive prompts. This is only set for
+   the lifetime of the local operation and restored afterward.
+
+Security / safety:
+- The local flow intentionally does not create commits, tags, or pushes. Use the
+   default (no `--local`) mode to perform the real release which will try to
+   commit staged changes and create a signed tag to push.
+
 ## License
 
 This project is licensed under the GNU General Public License v3.0 - see the [LICENSE](LICENSE) file for details.
