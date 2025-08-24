@@ -1,3 +1,5 @@
+markdown2==2.5.4
 pillow==11.3.0
 pymupdf==1.26.3
 requests==2.32.5
+tkinterweb==4.4.4

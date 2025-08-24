@@ -16,18 +16,7 @@ def get_ui_string(strings: Dict[str, str], key: str, default: str | None = None)
         return strings[key]
     if default is not None:
         return default
-    try:
-        logging.getLogger("ui_strings").warning("Missing translation key: %s", key)
-    except Exception as e:
-        # If logging fails for any reason, fall back to no-op but keep the
-        # diagnostic available for debugging by printing to stderr.
-        try:
-            import sys
-
-            print(f"ui_strings logging failed: {e}", file=sys.stderr)
-        except Exception:
-            # best-effort: nothing more to do
-            pass
+    logging.getLogger("ui_strings").warning("Missing translation key: %s", key)
     return f"Error: Key missing: {key}"
 
 
@@ -160,11 +149,13 @@ def build_strings(_: Callable[[str], str]) -> Dict[str, str]:
     dev_strings = {
         "dev_btn_install": _("Install"),
         "dev_channel": _("Channel"),
+        "dev_confirm_install": _("Are you sure you want to install version {0}?"),
         "dev_confirm_reset": _("Are you sure you want to reset all settings to defaults?"),
         "dev_debug": _("Debug Options"),
         "dev_install_specific": _("Install Specific Version"),
         "dev_open_settings": _("Open Settings File"),
         "dev_rc": _("Release Candidates (rc)"),
+        "dev_release_notes": _("Release Notes"),
         "dev_reset_defaults": _("Reset to Defaults"),
         "dev_reset_settings": _("Reset Settings"),
         "dev_sha256_info": _("When enabled, updates require a matching .sha256 file for verification (affects all channels)"),

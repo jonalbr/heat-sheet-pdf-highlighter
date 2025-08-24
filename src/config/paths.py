@@ -50,6 +50,11 @@ class Paths:
     logo_path = bundle_dir / "assets" / "logo_no_background.png"
     update_script_path = bundle_dir / "update_app.bat"
 
+    # Centralized external URLs
+    GITHUB_API_BASE = "https://api.github.com/repos/jonalbr/heat-sheet-pdf-highlighter"
+    GITHUB_RELEASES = GITHUB_API_BASE + "/releases"
+    GITHUB_LATEST_RELEASE = GITHUB_API_BASE + "/releases/latest"
+
     settings_path = get_settings_path()
     settings_file = settings_path / "settings.json"
     update_cache_file = settings_path / "update_check_cache.json"

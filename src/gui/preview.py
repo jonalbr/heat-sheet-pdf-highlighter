@@ -2,6 +2,7 @@
 Preview window functionality
 """
 
+import logging
 from tkinter import Label, Toplevel, messagebox, ttk
 from typing import TYPE_CHECKING
 
@@ -72,6 +73,7 @@ class PreviewWindow:
 
             document.close()
         except Exception as e:
+            logging.getLogger("preview").exception("Error previewing watermark: %s", e)
             messagebox.showerror(get_ui_string(self.app.strings, "error"), str(e))
 
     def _create_preview_window(self, image):

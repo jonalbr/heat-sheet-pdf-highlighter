@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 
 from ..config.paths import Paths
 from ..version import Version
-from .cache import load_update_cache, save_update_cache
+from .cache import load_update_cache, save_update_cache, invalidate_releases_cache
 
 
 class UpdateChecker:
@@ -52,13 +52,8 @@ class UpdateChecker:
                 self.update_callback(latest_version, current_version)
                 return latest_version
         else:
-            # If a forced update is requested, invalidate the releases cache so UI components refresh
-            try:
-                releases_cache = self.paths.releases_cache_file
-                if releases_cache.exists():
-                    releases_cache.unlink()
-            except OSError as e:
-                logging.getLogger("updater").exception("Failed to remove releases cache: %s", e)
+            # If a forced update is requested, invalidate the releases cache without unlinking
+            invalidate_releases_cache()
 
         # Perform the update check
         latest_version = self._get_latest_version_from_github(current_version=current_version, force_check=force_check, quiet=quiet)
@@ -77,7 +72,7 @@ class UpdateChecker:
 
     def list_releases(self, channel: str = "stable") -> list[dict]:
         """Return a list of release dicts with tag, prerelease flag, and assets filtered by channel."""
-        url = "https://api.github.com/repos/jonalbr/heat-sheet-pdf-highlighter/releases"
+        url = self.paths.GITHUB_RELEASES
         releases_info = self._fetch_release_info(url)
         items: list[dict] = []
         for rel in releases_info:
@@ -92,6 +87,7 @@ class UpdateChecker:
                     "prerelease": bool(rel.get("prerelease")),
                     "exe_url": exe_url,
                     "sha_url": sha_url,
+                    "body": rel.get("body", "_No release notes provided._"),
                 }
             )
         return items
@@ -110,8 +106,7 @@ class UpdateChecker:
         return exe_url, sha_url
 
     def _handle_beta_releases(self, latest_version: Version, download_url: str | None, sha_url: str | None):
-        beta_url = "https://api.github.com/repos/jonalbr/heat-sheet-pdf-highlighter/releases"
-        releases_info = self._fetch_release_info(beta_url)
+        releases_info = self._fetch_release_info(self.paths.GITHUB_RELEASES)
         pre_releases = [release for release in releases_info if release["prerelease"]]
         if pre_releases:
             latest_pre_release = pre_releases[0]
@@ -129,51 +124,96 @@ class UpdateChecker:
         return latest_version, download_url, sha_url
 
     def _get_latest_version_from_github(self, current_version: Version, force_check: bool = False, quiet: bool = False):
-        release_url = "https://api.github.com/repos/jonalbr/heat-sheet-pdf-highlighter/releases/latest"
+        release_url = self.paths.GITHUB_LATEST_RELEASE
         try:
             release_info = self._fetch_release_info(release_url)
             latest_version = Version.from_str(release_info["tag_name"])
             download_url, sha_url = self._select_release_assets(release_info)
 
-            # Channel selection via update_channel only
-            channel = self.app_settings.settings.get("update_channel", "stable")
-            if channel == "rc":
-                latest_version, download_url, sha_url = self._handle_beta_releases(latest_version, download_url, sha_url)
+            # Apply channel policy (stable vs rc)
+            latest_version, download_url, sha_url = self._apply_channel_policy(
+                latest_version, download_url, sha_url
+            )
 
-            # If SHA verification is required globally and missing for a newer release, treat as no update
-            verify_sha_globally = self.app_settings.settings.get("verify_sha", "True") == "True"
-            if verify_sha_globally and latest_version > current_version and not sha_url:
-                if force_check and not quiet:
-                    self.gui_callbacks.show_up_to_date()
-                return current_version
+            # Validate required assets and possibly short-circuit
+            short_circuit = self._validate_required_assets(
+                latest_version=latest_version,
+                current_version=current_version,
+                download_url=download_url,
+                sha_url=sha_url,
+                force_check=force_check,
+                quiet=quiet,
+            )
+            if short_circuit is not None:
+                return short_circuit
 
-            # If there's no installer asset at all, we cannot update
-            if latest_version > current_version and not download_url:
-                if force_check and not quiet:
-                    self.gui_callbacks.show_update_error_retry("Installer asset not found for the latest release.")
-                return latest_version
-
-            # Use a guard clause to update settings when necessary
+            # Update settings when a newer version exists
             self._update_settings_if_newer(latest_version)
 
-            # Check if an update is needed
+            # If we're quiet or shouldn't prompt, just return the version
             if quiet or not self._should_prompt_user(latest_version, current_version, force_check):
                 return latest_version
 
-            # Prompt the user to install the update if needed
+            # Prompt and possibly kick off the update
             self._handle_user_prompt(latest_version, download_url, sha_url)
             return latest_version
 
         except requests.exceptions.RequestException as e:
-            logging.getLogger("updater").exception("RequestException while checking updates: %s", e)
+            return self._handle_update_check_exception(e, current_version, force_check, quiet)
+
+    def _apply_channel_policy(
+        self,
+        latest_version: Version,
+        download_url: str | None,
+        sha_url: str | None,
+    ) -> tuple[Version, str | None, str | None]:
+        """Apply update channel policy (stable/rc) and return possibly updated values."""
+        channel = self.app_settings.settings.get("update_channel", "stable")
+        if channel == "rc":
+            return self._handle_beta_releases(latest_version, download_url, sha_url)
+        return latest_version, download_url, sha_url
+
+    def _validate_required_assets(
+        self,
+        latest_version: Version,
+        current_version: Version,
+        download_url: str | None,
+        sha_url: str | None,
+        force_check: bool,
+        quiet: bool,
+    ) -> Version | bool | None:
+        """Ensure required assets exist according to settings; return a short-circuit value or None to continue."""
+        verify_sha_globally = self.app_settings.settings.get("verify_sha", "True") == "True"
+        # If SHA verification is required and missing for a newer release, treat as no update
+        if verify_sha_globally and latest_version > current_version and not sha_url:
             if force_check and not quiet:
-                if self.gui_callbacks.show_update_error_retry(str(e)):
-                    return self.check_for_app_updates(current_version, force_check)
-                else:
-                    print(f"Failed to check for updates: {str(e)}")
-            else:
-                print(f"Failed to check for updates: {str(e)}")
-            return False
+                self.gui_callbacks.show_up_to_date()
+            return current_version
+
+        # If there's no installer asset at all, we cannot update but still return latest for display
+        if latest_version > current_version and not download_url:
+            if force_check and not quiet:
+                self.gui_callbacks.show_update_error_retry("Installer asset not found for the latest release.")
+            return latest_version
+
+        return None
+
+    def _handle_update_check_exception(
+        self,
+        e: requests.exceptions.RequestException,
+        current_version: Version,
+        force_check: bool,
+        quiet: bool,
+    ) -> Version | bool:
+        logging.getLogger("updater").exception("RequestException while checking updates: %s", e)
+        if force_check and not quiet:
+            if self.gui_callbacks.show_update_error_retry(str(e)):
+                result = self.check_for_app_updates(current_version, force_check)
+                return result if result is not None else False
+            print(f"Failed to check for updates: {str(e)}")
+        else:
+            print(f"Failed to check for updates: {str(e)}")
+        return False
 
     def download_and_run_installer(self, download_url: str, sha_url: str | None = None):
         """

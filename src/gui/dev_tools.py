@@ -4,19 +4,21 @@ Developer Tools window
 
 import datetime
 import logging
-import sys
 import threading
 import webbrowser
 from tkinter import BooleanVar, StringVar, Toplevel, messagebox, ttk
 from typing import TYPE_CHECKING
 
+import markdown2
+from tkinterweb import HtmlFrame
+
 from ..utils.cache import load_releases_cache, save_releases_cache
 from ..version import Version
 from .ui_strings import get_ui_string
+from .widgets import Tooltip
 
 if TYPE_CHECKING:
     from src.gui.main_window import PDFHighlighterApp
-from .widgets import Tooltip
 
 
 class DevToolsWindow:
@@ -101,11 +103,51 @@ class DevToolsWindow:
         # Refresh implicitly on open and on channel change
         self.releases_combo = ttk.Combobox(releases_frame, state="readonly", values=[])
         self.releases_combo.grid(row=0, column=0, padx=8, pady=6, sticky="we")
+        # Update release notes when selection changes
+        self.releases_combo.bind("<<ComboboxSelected>>", lambda _e: self._update_release_notes())
         releases_frame.grid_columnconfigure(0, weight=1)
 
         ttk.Button(releases_frame, text=get_ui_string(self.app.strings, "dev_btn_install"), command=self._install_selected_release).grid(
             row=0, column=1, padx=8, pady=6, sticky="e"
         )
+
+        # Collapsible Release Notes area (hidden by default)
+        # Inline toggle: small triangle + label (clickable) to expand/collapse notes
+        self._notes_toggle = ttk.Frame(releases_frame)
+        # triangle label and text label
+        self._notes_triangle_label = ttk.Label(self._notes_toggle, text="\u25b6")
+        self._notes_text_label = ttk.Label(self._notes_toggle, text=get_ui_string(self.app.strings, "dev_release_notes"))
+        self._notes_triangle_label.pack(side="left")
+        self._notes_text_label.pack(side="left", padx=(4, 0))
+        # Make it clickable like a button
+        for widget in (self._notes_triangle_label, self._notes_text_label):
+            widget.bind("<Button-1>", lambda _e: self._toggle_release_notes())
+            widget.configure(cursor="hand2")
+        self._notes_toggle.grid(row=0, column=2, padx=6, pady=6, sticky="e")
+
+        self.notes_frame = ttk.Frame(releases_frame)
+
+        # HTML/Markdown renderer
+        self.notes_html = HtmlFrame(
+            self.notes_frame,
+            horizontal_scrollbar=False,
+            vertical_scrollbar="auto",
+            messages_enabled=False,
+            shrink=False,
+            fontscale=1.0,
+            width=600,
+            height=250,
+        )
+        self.notes_html.load_html("")
+        self.notes_html.grid(row=0, column=0, sticky="nsew")
+        self.notes_html.grid_propagate(False)
+
+        self.notes_frame.grid_columnconfigure(0, weight=1)
+        self.notes_frame.grid_rowconfigure(0, weight=1)
+        # Hide notes by default
+        self.release_notes_shown = False
+        self.notes_frame.grid(row=1, column=0, columnspan=3, padx=8, pady=(4, 8), sticky="nsew")
+        self.notes_frame.grid_remove()
 
         # Reset settings
         reset_frame = ttk.LabelFrame(self.window, text=get_ui_string(self.app.strings, "dev_reset_settings"))
@@ -177,12 +219,77 @@ class DevToolsWindow:
             if tags:
                 self.releases_combo["values"] = tags
                 self.releases_combo.set(tags[0])
+                # Update release notes for initially selected
+                try:
+                    self._update_release_notes()
+                except Exception as e:
+                    logging.getLogger("dev_tools").exception("Error updating release notes: %s", e)
             else:
                 self.releases_combo["values"] = []
                 self.releases_combo.set("")
         except Exception as e:
             logging.getLogger("dev_tools").exception("Error applying releases: %s", e)
-            messagebox.showerror(get_ui_string(self.app.strings, "error"), str(e))
+
+    def _toggle_release_notes(self):
+        """Show or hide the release notes area."""
+        if self.release_notes_shown:
+            # hide
+            self.notes_frame.grid_remove()
+            try:
+                self._notes_triangle_label.config(text="\u25b6")
+            except Exception as e:
+                logging.getLogger("dev_tools").exception("Error updating notes triangle label: %s", e)
+            self.release_notes_shown = False
+        else:
+            # show
+            self.notes_frame.grid()
+            try:
+                self._notes_triangle_label.config(text="\u25bc")
+            except Exception as e:
+                logging.getLogger("dev_tools").exception("Error updating notes triangle label: %s", e)
+            self.release_notes_shown = True
+
+    def _update_release_notes(self):
+        """Populate the notes_text from the selected release, using cache if available."""
+        tag = self.releases_combo.get()
+        if not tag:
+            self._set_notes_text("")
+            return
+        rel = getattr(self, "_releases_cache", {}).get(tag)
+        notes = ""
+        if rel:
+            # The releases dict from GitHub may include a "body" field with release notes
+            notes = rel.get("body") or rel.get("notes") or ""
+        # Fallback: if cache file contains releases, try to load more detailed body
+        self._set_notes_text(notes)
+
+    def _set_notes_text(self, text: str):
+        try:
+            html = self.md_to_html(text)
+        except Exception as e:
+            logging.getLogger("dev_tools").exception("Error converting markdown to HTML: %s", e)
+            html = "<pre>" + (text or "") + "</pre>"
+        try:
+            # Load HTML into the HtmlFrame widget (tkinterweb handles CSS and headings)
+            self.notes_html.load_html(html or "")
+        except Exception as e:
+            logging.getLogger("dev_tools").exception("Error setting HTML: %s", e)
+
+    @staticmethod
+    def md_to_html(md_text):
+        # Enable extras that mirror GitHub-flavored Markdown features commonly used
+        extras = [
+            "fenced-code-blocks",
+            "tables",
+            "strike",
+            "task_list",
+            "toc",
+            "header-ids",
+            "break-on-newline",
+            "code-friendly",
+            "smarty-pants",
+        ]
+        return markdown2.markdown(md_text, extras=extras)
 
     def _refresh_releases_async(self):
         def worker():
@@ -213,13 +320,6 @@ class DevToolsWindow:
                     self.app.root.after(0, lambda e=_exc: messagebox.showerror(get_ui_string(self.app.strings, "error"), str(e)))
                 except Exception as e:
                     logging.getLogger("dev_tools").exception("Error showing error message: %s", e)
-                    # last resort: print to stderr (avoid crashing)
-                    try:
-                        import sys
-
-                        print(str(_exc), file=sys.stderr)
-                    except Exception as e:
-                        logging.getLogger("dev_tools").exception("Error printing exception to stderr: %s", e)
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -232,73 +332,81 @@ class DevToolsWindow:
         self._releases_refresh_id += 1
         current_id = self._releases_refresh_id
 
-        # Always try to apply cached releases immediately if present for the same channel
-        try:
-            fetched_at, cached_channel, cached_releases = load_releases_cache()
-            if cached_releases and cached_channel == self.app.app_settings.settings.get("update_channel", "stable"):
-                try:
-                    self.app.root.after(0, lambda r=cached_releases: self._apply_releases(r))
-                except Exception as e:
-                    logging.getLogger("dev_tools").exception("Error applying cached releases: %s", e)
-        except Exception as e:
-            logging.getLogger("dev_tools").exception("Error loading releases cache: %s", e)
+        channel = self._get_channel()
+        fetched_at, cached_channel, cached_releases = load_releases_cache()
 
-        # Decide whether to fetch from network based on TTL from settings
-        try:
-            ttl_seconds = int(self.app.app_settings.settings.get("releases_cache_ttl_seconds", 600))
-        except Exception as e:
-            logging.getLogger("dev_tools").exception("Error getting releases cache TTL: %s", e)
-            ttl_seconds = 600
+        # Apply cached (if matches channel) to populate UI fast
+        self._apply_cached_releases_if_channel_matches(cached_channel, cached_releases, channel)
 
-        need_fetch = force
-        try:
-            if not need_fetch:
-                fetched_at, cached_channel, cached_releases = load_releases_cache()
-                if not fetched_at or cached_channel != self.app.app_settings.settings.get("update_channel", "stable"):
-                    need_fetch = True
-                else:
-                    age = (datetime.datetime.now() - fetched_at).total_seconds()
-                    if age > ttl_seconds:
-                        need_fetch = True
-        except Exception as e:
-            logging.getLogger("dev_tools").exception("Error checking releases cache: %s", e)
-            need_fetch = True
-
-        if not need_fetch:
+        ttl_seconds = int(self.app.app_settings.settings.get("releases_cache_ttl_seconds", 600))
+        if not self._should_fetch_releases(force, fetched_at, cached_channel, channel, ttl_seconds):
             return
 
-        def worker_wrapper():
+        # Fetch and apply asynchronously with stale-guard
+        threading.Thread(target=lambda: self._fetch_and_apply_releases_async(current_id), daemon=True).start()
+
+    # --- Helpers to reduce complexity in _start_refresh_releases_async ---
+    def _get_channel(self) -> str:
+        return self.app.app_settings.settings.get("update_channel", "stable")
+
+    def _apply_cached_releases_if_channel_matches(self, cached_channel: str | None, cached_releases: list[dict] | None, current_channel: str) -> None:
+        if not cached_releases or cached_channel != current_channel:
+            return
+        try:
+            self.app.root.after(0, lambda r=cached_releases: self._apply_releases(r))
+        except Exception as e:
+            logging.getLogger("dev_tools").exception("Error applying cached releases: %s", e)
+
+    def _should_fetch_releases(
+        self,
+        force: bool,
+        fetched_at: datetime.datetime | None,
+        cached_channel: str | None,
+        current_channel: str,
+        ttl_seconds: int,
+    ) -> bool:
+        if force:
+            return True
+        if not fetched_at or cached_channel != current_channel:
+            return True
+        try:
+            age = (datetime.datetime.now() - fetched_at).total_seconds()
+            return age > ttl_seconds
+        except Exception as e:
+            logging.getLogger("dev_tools").exception("Error computing cache age: %s", e)
+            return True
+
+    def _fetch_and_apply_releases_async(self, refresh_id: int) -> None:
+        try:
+            channel = self._get_channel()
+            releases = self.app.update_checker.list_releases(channel=channel)
+            # persist releases to cache
             try:
-                channel = self.app.app_settings.settings.get("update_channel", "stable")
-                releases = self.app.update_checker.list_releases(channel=channel)
-                # persist releases to cache
-                try:
-                    save_releases_cache(releases=releases, channel=channel, fetched_at=datetime.datetime.now())
-                except Exception as e:
-                    logging.getLogger("dev_tools").exception("Error saving releases cache: %s", e)
+                save_releases_cache(releases=releases, channel=channel, fetched_at=datetime.datetime.now())
+            except Exception as e:
+                logging.getLogger("dev_tools").exception("Error saving releases cache: %s", e)
 
-                def _schedule_apply(r=releases, rid=current_id):
-                    # ignore stale results
-                    if rid != self._releases_refresh_id:
-                        return
-                    if self._is_open():
-                        try:
-                            self._apply_releases(r)
-                        except Exception as e:
-                            logging.getLogger("dev_tools").exception("Error applying releases: %s", e)
-
-                self.app.root.after(0, _schedule_apply)
-            except Exception as _exc:
-                try:
-                    self.app.root.after(0, lambda e=_exc: messagebox.showerror(get_ui_string(self.app.strings, "error"), str(e)))
-                except Exception as e:
-                    logging.getLogger("dev_tools").exception("Error showing error message: %s", e)
+            def _schedule_apply(r=releases, rid=refresh_id):
+                if rid != self._releases_refresh_id:
+                    return  # stale result, ignore
+                if self._is_open():
                     try:
-                        print(str(_exc), file=sys.stderr)
+                        self._apply_releases(r)
                     except Exception as e:
-                        logging.getLogger("dev_tools").exception("Error printing exception: %s", e)
+                        logging.getLogger("dev_tools").exception("Error applying releases: %s", e)
 
-        threading.Thread(target=worker_wrapper, daemon=True).start()
+            try:
+                self.app.root.after(0, _schedule_apply)
+            except Exception as e:
+                logging.getLogger("dev_tools").exception("Error scheduling release application: %s", e)
+        except Exception as _exc:
+            self._show_error_async(_exc)
+
+    def _show_error_async(self, exc: Exception) -> None:
+        try:
+            self.app.root.after(0, lambda e=exc: messagebox.showerror(get_ui_string(self.app.strings, "error"), str(e)))
+        except Exception as e:
+            logging.getLogger("dev_tools").exception("Error showing error message: %s", e)
 
     def _install_selected_release(self):
         tag = self.releases_combo.get()
@@ -312,7 +420,21 @@ class DevToolsWindow:
             )
             return
         exe_url = rel["exe_url"]
-        sha_url = rel.get("sha_url") if self.sha_required.get() else None
+        verify_required = self.sha_required.get()
+        sha_url = rel.get("sha_url") if verify_required else None
+        # If verification is required globally but the release has no .sha256, block install to match updater policy
+        if verify_required and not sha_url:
+            messagebox.showerror(
+                get_ui_string(self.app.strings, "error"),
+                get_ui_string(self.app.strings, "upd_download_failed").format("Missing checksum (.sha256) for this release"),
+            )
+            return
+        # Confirm install with the user
+        if not messagebox.askokcancel(
+            get_ui_string(self.app.strings, "dev_install_specific"),
+            get_ui_string(self.app.strings, "dev_confirm_install").format(tag),
+        ):
+            return
         # Use existing updater flow to download and run installer
         threading.Thread(target=lambda: self.app.update_checker.download_and_run_installer(exe_url, sha_url), daemon=True).start()
 
