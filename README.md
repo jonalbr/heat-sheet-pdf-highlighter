@@ -7,6 +7,23 @@ Heat Sheet PDF Highlighter is a Python application designed to facilitate the hi
 
 ![Screenshot of Heat Sheet PDF Highlighter](images/app_screenshot.png "Screenshot of the application")
 
+## Screenshots
+
+Filter dialog (example names populated for screenshots):
+
+![Filter dialog](images/app_screenshot_filter.png "Filter dialog with example names")
+
+Watermark dialog (preview enabled with demo text):
+
+![Watermark dialog](images/app_screenshot_watermark.png "Watermark dialog with demo text")
+
+Dev Tools window (open by triple-clicking the logo in the top-left):
+
+![Dev Tools](images/app_screenshot_devtools.png "Developer tools window")
+
+Notes:
+- To open the Dev Tools panel while running the GUI interactively, triple-click the app logo in the top-left corner of the main window.
+
 ## Features
 - **Smart PDF Highlighting:** Automatically highlight lines containing search terms with intelligent format detection
 - **Flexible Search Options:**

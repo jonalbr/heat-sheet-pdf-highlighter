@@ -18,6 +18,12 @@ import os
 from pathlib import Path
 import shutil
 
+SCREENSHOT_PATH = Path("images/app_screenshot.png")
+SCREENSHOT_FILTER = Path("images/app_screenshot_filter.png")
+SCREENSHOT_WATERMARK = Path("images/app_screenshot_watermark.png")
+SCREENSHOT_DEVTOOLS = Path("images/app_screenshot_devtools.png")
+SCREENSHOT_PREVIEW = Path("images/app_screenshot_preview.png")
+
 SETUP_PY = Path("setup.py")
 SETUP_ISS = Path("setup.iss")
 CONSTANTS_PY = Path("src/constants.py")
@@ -69,6 +75,62 @@ def build_project() -> None:
         sys.exit(1)
     # Use cmd /c to run .bat reliably
     run(["cmd", "/c", str(bat.resolve())])
+
+
+def _try_capture_screenshot(timeout_sec: int = 20) -> None:
+    """Invoke main.py in screenshot mode to produce a PNG of the main window."""
+    python_exe = shutil.which("python") or shutil.which("py")
+    if not python_exe:
+        print("Python executable not found; skipping screenshot capture.")
+        return
+    SCREENSHOT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    env = os.environ.copy()
+    # Let main.py control off-screen and default settings
+    cmd = [python_exe, "main.py", "--use-default-settings", "--screenshot", str(SCREENSHOT_PATH)]
+    try:
+        res = subprocess.run(cmd, env=env, timeout=timeout_sec)
+        if res.returncode == 0 and SCREENSHOT_PATH.exists():
+            print(f"Updated screenshot at {SCREENSHOT_PATH}")
+        else:
+            print("Screenshot capture failed or was skipped.")
+    except Exception as e:
+        print(f"Screenshot capture error: {e}")
+
+
+def _capture_target_screenshot(target: str, out_path: Path, timeout_sec: int = 25, pdf_for_preview: str | None = None, delay: float = 0.2) -> None:
+    """Capture a screenshot for a specific target window/dialog via main.py flags.
+
+    target: one of 'main', 'filter', 'watermark', 'devtools', 'preview'
+    out_path: where to save the PNG
+    pdf_for_preview: optional PDF path required when target='preview'
+    delay: seconds to wait before capture for UI settle
+    """
+    python_exe = shutil.which("python") or shutil.which("py")
+    if not python_exe:
+        print("Python executable not found; skipping screenshot capture.")
+        return
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    cmd = [
+        python_exe,
+        "main.py",
+        "--use-default-settings",
+        "--screenshot",
+        str(out_path),
+        "--screenshot-target",
+        target,
+        "--screenshot-delay",
+        str(delay),
+    ]
+    if target == "preview" and pdf_for_preview:
+        cmd.extend(["--screenshot-pdf", pdf_for_preview])
+    try:
+        res = subprocess.run(cmd, timeout=timeout_sec)
+        if res.returncode == 0 and out_path.exists():
+            print(f"Captured {target} screenshot -> {out_path}")
+        else:
+            print(f"Skipping {target} screenshot (command returned {res.returncode}).")
+    except Exception as e:
+        print(f"Screenshot capture error for {target}: {e}")
 
 
 def _resolve_exec(cmd: list[str]) -> list[str]:
@@ -130,6 +192,7 @@ def main() -> None:
     parser.add_argument("version", help="Version string, e.g. 1.2.3 or 1.2.3-rc1")
     parser.add_argument("--local", action="store_true", help="Only change version locally, run build, then revert changes. No commit/tag/push.")
     parser.add_argument("--no-build", action="store_true", help="Do not run the build; useful as a dry-run to test update+revert behavior")
+    parser.add_argument("--screenshot-pdf", dest="screenshot_pdf", default=None, help="Optional PDF used to generate preview screenshot")
     args = parser.parse_args()
 
     version = args.version.strip()
@@ -155,6 +218,14 @@ def main() -> None:
                     print("--no-build specified: skipping actual build (dry-run).")
                 else:
                     build_project()
+                # Exercise screenshot capture path locally; don't fail build if it skips
+                _try_capture_screenshot()
+                # Also capture additional dialogs for docs
+                _capture_target_screenshot("filter", SCREENSHOT_FILTER)
+                _capture_target_screenshot("watermark", SCREENSHOT_WATERMARK)
+                _capture_target_screenshot("devtools", SCREENSHOT_DEVTOOLS)
+                if args.screenshot_pdf and os.path.exists(args.screenshot_pdf):
+                    _capture_target_screenshot("preview", SCREENSHOT_PREVIEW, pdf_for_preview=args.screenshot_pdf)
             finally:
                 # restore environment
                 if old_env_val is None:
@@ -179,6 +250,13 @@ def main() -> None:
         run(["git", "commit", "-m", f"chore(release): v{version}"])
         # Pushing the commit might be blocked by branch policies; user can open PR.
         run(["git", "push"], check=False)
+
+    # Capture a fresh app screenshot for docs before tagging
+    _try_capture_screenshot()
+    # Capture additional dialogs for documentation consistency (best-effort)
+    _capture_target_screenshot("filter", SCREENSHOT_FILTER)
+    _capture_target_screenshot("watermark", SCREENSHOT_WATERMARK)
+    _capture_target_screenshot("devtools", SCREENSHOT_DEVTOOLS)
 
     ensure_ssh_signing()
     create_and_push_signed_tag(version)

@@ -3,6 +3,7 @@ Main application window
 """
 
 import re
+import os
 import logging
 import threading
 import time
@@ -365,7 +366,11 @@ class PDFHighlighterApp:
         self._, self.n_ = setup_translation(language)
         self.init_translatable_strings()
         self.update_all_widget_texts()
-        self.status_var.set(get_ui_string(self.strings, "status_language_changed"))
+        # In screenshot mode, keep a neutral waiting status for a cleaner image
+        if os.getenv("HSPH_SCREENSHOT_MODE") in ("1", "true", "True"):
+            self.status_var.set(get_ui_string(self.strings, "status_waiting"))
+        else:
+            self.status_var.set(get_ui_string(self.strings, "status_language_changed"))
         self.update_version_labels_text(
             Version.from_str(self.app_settings.settings["newest_version_available"]), Version.from_str(self.app_settings.settings["version"])
         )

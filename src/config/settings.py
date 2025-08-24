@@ -4,6 +4,7 @@ Application settings management
 import json
 from pathlib import Path
 from typing import Dict
+import os
 
 from ..constants import VERSION_STR, LANGUAGE_OPTIONS
 
@@ -11,6 +12,8 @@ from ..constants import VERSION_STR, LANGUAGE_OPTIONS
 class AppSettings:
     def __init__(self, settings_file: Path):
         self.settings_file = settings_file
+        # Ephemeral mode: don't read/write user settings, use defaults only
+        self._ephemeral = os.getenv("HSPH_USE_DEFAULT_SETTINGS") in ("1", "true", "True")
         self.default_settings = {
             "version": VERSION_STR,
             "search_str": "SGS Hamburg",
@@ -34,18 +37,26 @@ class AppSettings:
             "watermark_position": "top",
         }
         self.settings: Dict = self.load_settings()
+        # Apply optional environment override for language (e.g., forced 'en' in screenshot mode)
+        force_lang = os.getenv("HSPH_FORCE_LANGUAGE")
+        if force_lang:
+            self.settings["language"] = force_lang if force_lang in LANGUAGE_OPTIONS else "en"
         self.validate_settings()
 
     def load_settings(self) -> Dict:
         """Load settings from a JSON file. If the file doesn't exist, return default settings."""
-        if self.settings_file.exists():
+        if not self._ephemeral and self.settings_file.exists():
             settings: Dict = json.loads(self.settings_file.read_text())
             return self.validate_settings(settings)
         else:
-            return self.default_settings
+            # Return a copy so callers don't mutate the canonical defaults
+            return dict(self.default_settings)
 
     def save_settings(self):
         """Save the current settings to a JSON file."""
+        if self._ephemeral:
+            # Skip writing when using ephemeral defaults
+            return
         self.settings_file.write_text(json.dumps(self.settings, indent=4))
 
     def update_setting(self, key, value):
