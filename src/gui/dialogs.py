@@ -24,6 +24,16 @@ class UpdateDialogs:
 
     def __init__(self, app_instance: "PDFHighlighterApp"):
         self.app = app_instance
+        # Internal counters to avoid reading Tk widgets from worker threads
+        self._dl_total_size: int = 0
+        self._dl_downloaded_bytes: int = 0
+
+    # --- helper to marshal work to Tk main thread ---
+    def _ui(self, fn):
+        try:
+            self.app.root.after(0, fn)
+        except Exception as e:
+            logging.getLogger("dialogs").exception("Error scheduling UI update: %s", e)
 
     def show_up_to_date(self):
         """Show message that app is up to date."""
@@ -91,49 +101,76 @@ class UpdateDialogs:
 
     def setup_download_progress(self, total_size: int):
         """Setup progress bar for download."""
+        self._dl_total_size = int(total_size)
+        self._dl_downloaded_bytes = 0
         if hasattr(self.app, "progress_bar"):
-            self.app.progress_bar["maximum"] = total_size
+            def _init_progress_ui():
+                try:
+                    self.app.progress_bar["maximum"] = self._dl_total_size
+                    self._reset_progressbar_value()
+                except Exception as e:
+                    logging.getLogger("dialogs").exception("Error initializing progress UI: %s", e)
+            self._ui(_init_progress_ui)
+
+    def _reset_progressbar_value(self):
+        try:
+            if hasattr(self.app, "progress_bar"):
+                self.app.progress_bar["value"] = 0
+            if hasattr(self.app, "status_var"):
+                self.app.status_var.set("")
+        except Exception as e:
+            logging.getLogger("dialogs").exception("Error resetting progress bar: %s", e)
 
     def update_download_progress(self, data_size: int):
         """Update download progress bar."""
+        # Update internal counter first; UI will catch up via scheduled lambda
+        self._dl_downloaded_bytes += int(data_size)
         if hasattr(self.app, "progress_bar"):
-            self.app.progress_bar["value"] += data_size
+            self._ui(lambda: self._inc_progressbar(int(data_size)))
+
+    def _inc_progressbar(self, inc: int):
+        try:
+            if hasattr(self.app, "progress_bar"):
+                self.app.progress_bar["value"] = min(
+                    (self.app.progress_bar["value"] or 0) + inc,
+                    self._dl_total_size or 0,
+                )
+        except Exception as e:
+            logging.getLogger("dialogs").exception("Error incrementing progress bar: %s", e)
 
     def update_download_status(self, start_time: float, total_size: int):
         """Update download status text."""
-        elapsed_time = time.time() - start_time
-        current_value = self.app.progress_bar["value"] if hasattr(self.app, "progress_bar") else 0
+        # Compute using internal counters to avoid reading Tk state from worker thread
+        elapsed_time = max(0.001, time.time() - start_time)
+        current_value = self._dl_downloaded_bytes
+        total = int(total_size) if total_size else (self._dl_total_size or 0)
 
-        # Update status text only if status_var exists
-        if hasattr(self.app, "status_var") and elapsed_time > 0 and current_value > 0:
+        if hasattr(self.app, "status_var") and current_value > 0 and total > 0:
             speed = current_value / elapsed_time
-            remaining_time = (total_size - current_value) / speed if speed > 0 else 0
+            remaining_time = (total - current_value) / speed if speed > 0 else 0
             downloaded_MB = current_value / (1024 * 1024)
-            total_MB = total_size / (1024 * 1024)
+            total_MB = total / (1024 * 1024)
 
-            self.app.status_var.set(get_ui_string(self.app.strings, "upd_progress").format(downloaded_MB, total_MB, remaining_time))
-
-        self.app.root.update()
+            text = get_ui_string(self.app.strings, "upd_progress").format(downloaded_MB, total_MB, remaining_time)
+            self._ui(lambda: self.app.status_var.set(text))
 
     def update_gui(self):
         """Update the GUI."""
-        if hasattr(self.app, "root"):
-            self.app.root.update()
+        # Avoid forcing sync updates from worker threads; no-op here.
+        pass
 
     def close_application(self):
         """Close the application."""
         if hasattr(self.app, "root"):
-            self.app.root.destroy()
+            self._ui(lambda: self.app.root.destroy())
 
     def get_progress_value(self) -> float:
         """Get current progress bar value."""
-        if hasattr(self.app, "progress_bar"):
-            return self.app.progress_bar["value"]
-        return 0.0
+        return float(self._dl_downloaded_bytes)
 
     def start_download_ui(self):
         """Start download UI state."""
-        self.app.start_download()
+        self._ui(self.app.start_download)
 
     def is_download_cancelled(self) -> bool:
         """Check if download was cancelled by user."""
@@ -141,7 +178,7 @@ class UpdateDialogs:
 
     def finish_download_ui(self):
         """Finish download UI state."""
-        self.app.finish_download()
+        self._ui(self.app.finish_download)
 
 
 class FilterDialog:

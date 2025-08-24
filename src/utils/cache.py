@@ -69,8 +69,8 @@ def load_update_cache():
         # Reset to a well-formed empty state without unlinking
         try:
             _write_json_atomic(cache_file, {"fetched_at": "1970-01-01T00:00:00", "latest_version": "0.0.0"})
-        except Exception:
-            pass
+        except Exception as e:
+            logging.getLogger("cache").exception("Failed to reset update cache: %s", e)
         return None, None
     try:
         fetched_at = datetime.datetime.fromisoformat(data["fetched_at"])

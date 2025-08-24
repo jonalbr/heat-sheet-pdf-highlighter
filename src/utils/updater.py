@@ -293,12 +293,19 @@ class UpdateChecker:
             self.app_settings.update_setting("ask_for_update", "False")
 
     def _download_with_progress(self, url: str, dest_path: str) -> tuple[bool, int]:
-        """Download a file streaming to dest_path with GUI progress. Returns (cancelled, total_size)."""
-        response = requests.get(url, stream=True)
+        """Download a file streaming to dest_path with GUI progress. Returns (cancelled, total_size).
+
+        Notes on performance:
+        - Use a large chunk size to avoid excessive GUI updates from a background thread.
+        - Throttle status updates to ~4 times per second.
+        """
+        # Conservative connect/read timeouts to avoid stalls while keeping stream active
+        response = requests.get(url, stream=True, timeout=(10, 60))
         response.raise_for_status()
 
         total_size_in_bytes = int(response.headers.get("content-length", 0))
-        block_size = 1024
+        # Use 1 MiB chunks to dramatically cut the number of GUI updates
+        block_size = 1024 * 1024
 
         self.gui_callbacks.setup_download_progress(total_size_in_bytes)
         start_time = time.time()
@@ -306,7 +313,7 @@ class UpdateChecker:
 
         with open(dest_path, "wb") as file:
             last_update_time = time.time()
-            for data in response.iter_content(block_size):
+            for data in response.iter_content(chunk_size=block_size):
                 if self.gui_callbacks.is_download_cancelled():
                     cancelled = True
                     break

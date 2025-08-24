@@ -38,11 +38,12 @@ def wheel_native_files(pkg):
 
 # Dependencies are automatically detected, but it might need fine tuning.
 build_exe_options = {
-    "packages": ["tkinter", "pymupdf"],
+    "packages": ["tkinter", "pymupdf", "tkinterweb"],
     "includes": [
-        "PIL", 
-        "requests", 
-        "gettext"
+        "PIL",
+        "requests",
+        "gettext",
+        "markdown2",
     ],
     "include_files": [
         (str(base_dir / "assets"), "assets"),
@@ -54,16 +55,30 @@ build_exe_options = {
     "include_msvcr": True,  # Include MSVC runtime (essential for PyMuPDF DLLs)
     "silent_level": 1,
     # Keep PyMuPDF unzipped for proper DLL loading
-    "zip_exclude_packages": ["pymupdf"],
+    # Keep extension modules unzipped so native DLLs/.pyd can be loaded
+    "zip_exclude_packages": ["pymupdf", "PIL"],
     # Add this to exclude problematic modules that might interfere
     "excludes": ["test", "unittest"],
 }
 
-build_exe_options["include_files"].extend(
-    (str(f), f"lib/{pkg}/{f.name}")
-    for pkg in ["pymupdf"]
-    for f in wheel_native_files(pkg)
-)
+# build_exe_options["include_files"].extend(
+#     (str(f), f"lib/{pkg}/{f.name}")
+#     for pkg in ["pymupdf"]
+#     for f in wheel_native_files(pkg)
+# )
+
+# # Also include Pillow native extension files so imaging .pyds are available
+# build_exe_options["include_files"].extend(
+#     (str(f), f"lib/{pkg}/{f.name}")
+#     for pkg in ["PIL"]
+#     for f in wheel_native_files(pkg)
+# )
+
+# # Include the tkinterweb package directory so its HTML/CSS resources are bundled
+# spec = importlib.util.find_spec('tkinterweb')
+# if spec and spec.origin:
+#     tw_dir = Path(spec.origin).parent
+#     build_exe_options["include_files"].append((str(tw_dir), 'tkinterweb'))
 
 # GUI applications require a different base on Windows (the default is for a console application).
 base = None
