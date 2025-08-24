@@ -18,7 +18,7 @@ REM Run xgettext to create a .pot file from files with translatable strings
   --keyword=ngettext:1,2 --keyword=n_:1,2 --keyword=_:1 --keyword=gettext:1 ^
   --keyword=self._:1 --keyword=self.n_:1,2 ^
   -o "%POT_FILE%" ^
-  ..\src\gui\main_window.py
+  ..\src\gui\ui_strings.py
 
 REM Loop over each directory
 for /D %%G in ("*") do (
@@ -37,8 +37,8 @@ for /D %%G in ("*") do (
     cd ..\..
 )
 
-REM Run the review/update script for German and autofill for English
-echo Running po_update_and_review.py to update German and autofill English...
+REM Run the review/update script for German and autofill for English (interactive)
+echo Running po_update_and_review.py (interactive) to update German and autofill English...
 ..\.venv\Scripts\python.exe po_update_and_review.py
 
 REM Compile .po to .mo files
@@ -56,3 +56,4 @@ REM Delete all .po~ backup files in all subdirectories
 for /R %%F in (*.po~) do del "%%F"
 
 endlocal
+

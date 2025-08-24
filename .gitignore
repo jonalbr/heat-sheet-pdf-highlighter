@@ -180,3 +180,6 @@ build/
 cx_build/
 *.exe
 *.exe.sha256
+
+# Ignore local dev
+local_dev/

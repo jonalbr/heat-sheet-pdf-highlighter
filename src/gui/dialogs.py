@@ -243,6 +243,19 @@ class FilterDialog:
         button_abort = ttk.Button(button_frame2, text=self.app.strings["btn_cancel"], command=lambda: self.window.destroy() if self.window else None)
         button_abort.pack(side="right", padx=10, expand=True)
 
+    def refresh_ui_strings(self):
+        """Refresh the Filter dialog UI strings by recreating the window if open."""
+        try:
+            if self.window and self.window.winfo_exists():
+                try:
+                    self.window.destroy()
+                except Exception:
+                    pass
+                # Re-open will recreate the dialog using current translations
+                self.open()
+        except Exception:
+            return
+
 
 class WatermarkDialog:
     """Watermark configuration dialog."""
@@ -349,3 +362,16 @@ class WatermarkDialog:
             self.window, text=get_ui_string(self.app.strings, "btn_cancel"), command=lambda: self.window.destroy() if self.window else None
         )
         btn_cancel.grid(row=8, column=1, pady=10, padx=10, sticky="W")
+
+    def refresh_ui_strings(self):
+        """Refresh the Watermark dialog UI strings by recreating the window if open."""
+        try:
+            if self.window and self.window.winfo_exists():
+                try:
+                    self.window.destroy()
+                except Exception:
+                    pass
+                # Re-open will recreate the dialog using current translations
+                self.open()
+        except Exception:
+            return

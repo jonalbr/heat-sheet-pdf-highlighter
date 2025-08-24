@@ -150,10 +150,10 @@ def build_strings(_: Callable[[str], str]) -> Dict[str, str]:
 
     # ---- Developer tools ----
     dev_strings = {
+        "dev_btn_install": _("Install"),
         "dev_channel": _("Channel"),
         "dev_confirm_reset": _("Are you sure you want to reset all settings to defaults?"),
         "dev_debug": _("Debug Options"),
-        "dev_install_selected": _("Install Selected"),
         "dev_install_specific": _("Install Specific Version"),
         "dev_open_settings": _("Open Settings File"),
         "dev_rc": _("Release Candidates (rc)"),

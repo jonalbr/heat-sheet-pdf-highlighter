@@ -101,7 +101,7 @@ class DevToolsWindow:
         self.releases_combo.grid(row=0, column=0, padx=8, pady=6, sticky="we")
         releases_frame.grid_columnconfigure(0, weight=1)
 
-        ttk.Button(releases_frame, text=get_ui_string(self.app.strings, "dev_install_selected"), command=self._install_selected_release).grid(
+        ttk.Button(releases_frame, text=get_ui_string(self.app.strings, "dev_btn_install"), command=self._install_selected_release).grid(
             row=0, column=1, padx=8, pady=6, sticky="e"
         )
 
@@ -116,6 +116,25 @@ class DevToolsWindow:
         self.window.grid_rowconfigure(3, weight=0)
         # Start async refresh (non-blocking)
         self._start_refresh_releases_async()
+
+    def refresh_ui_strings(self):
+        """Refresh UI strings for the dev tools window after language change.
+
+        If the window is open, destroy and re-open it so all labels/strings are
+        created using the new translations. If it's not open, nothing to do.
+        """
+        try:
+            if self._is_open():
+                try:
+                    if self.window is not None:
+                        self.window.destroy()
+                except Exception:
+                    pass
+                # Re-open will recreate the window with updated strings
+                self.open()
+        except Exception:
+            # Swallow exceptions to avoid disrupting language change flow
+            return
 
     def _on_channel_changed(self):
         channel = self.channel_var.get()

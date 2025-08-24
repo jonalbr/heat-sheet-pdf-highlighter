@@ -370,6 +370,34 @@ class PDFHighlighterApp:
         )
         self.update_version_labels()
         self.root.update_idletasks()
+        # Refresh Dev Tools window strings if it's open
+        try:
+            if hasattr(self, 'dev_tools') and self.dev_tools:
+                # dev_tools may be created earlier; ensure it refreshes its UI
+                try:
+                    self.dev_tools.refresh_ui_strings()
+                except Exception:
+                    # ignore any errors here - language change should not fail
+                    pass
+        except Exception:
+            pass
+        # Refresh filter and watermark dialogs if they're open
+        try:
+            if hasattr(self, 'filter_dialog') and self.filter_dialog:
+                try:
+                    self.filter_dialog.refresh_ui_strings()
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        try:
+            if hasattr(self, 'watermark_dialog') and self.watermark_dialog:
+                try:
+                    self.watermark_dialog.refresh_ui_strings()
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
     def browse_file(self):
         """
