@@ -1,5 +1,5 @@
-#define MyAppVersion "1.3.4-rc3"
-#define MyAppVersionNumeric "1.3.4.0"
+#define MyAppVersion "1.3.2"
+#define MyAppVersionNumeric "1.3.2.0"
 #define MyAppPublisher "Jonas Albrecht"
 #define MyFilename="heat_sheet_pdf_highlighter_installer"
 #define MyAppURL "https://github.com/jonalbr/heat-sheet-pdf-highlighter"
