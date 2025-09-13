@@ -4,6 +4,8 @@ Developer Tools window
 
 import datetime
 import logging
+import os
+import queue
 import threading
 import webbrowser
 from tkinter import BooleanVar, StringVar, Toplevel, messagebox, ttk
@@ -28,8 +30,18 @@ class DevToolsWindow:
         self.app = app
         self.window = None  # type: Toplevel | None
         self._releases_refresh_id = 0  # incremental id used to ignore stale async refresh results
+        # Simple thread->main thread dispatcher queue; polled via root.after
+        # Use an untyped queue to avoid runtime typing issues (stores callables)
+        self._dispatch_queue = queue.Queue()
+        self._dispatcher_started = False
 
     def open(self):
+        # Allow opening during screenshot mode only if specifically capturing devtools
+        _ss_mode = os.getenv("HSPH_SCREENSHOT_MODE") in ("1", "true", "True")
+        _ss_target = os.getenv("HSPH_SCREENSHOT_TARGET") or ""
+        _capture_devtools = _ss_mode and _ss_target == "devtools"
+        if _ss_mode and not _capture_devtools:
+            return  # other targets skip opening
         if self.window and self._is_open():
             try:
                 self.window.lift()
@@ -158,8 +170,16 @@ class DevToolsWindow:
 
         # Adjust grid without explicit Close button and populate releases initially
         self.window.grid_rowconfigure(3, weight=0)
-        # Start async refresh (non-blocking)
-        self._start_refresh_releases_async()
+        # Start async refresh unless we're in a devtools screenshot capture (avoid network & threads)
+        if not _capture_devtools:
+            self._start_dispatcher()
+            self._start_refresh_releases_async()
+        else:
+            # Populate releases combo using cache or stub list for screenshot aesthetics
+            try:
+                self._populate_releases_for_screenshot()
+            except Exception as e:  # pragma: no cover - defensive
+                logging.getLogger("dev_tools").exception("Error populating screenshot releases: %s", e)
 
     def refresh_ui_strings(self):
         """Refresh UI strings for the dev tools window after language change.
@@ -189,8 +209,10 @@ class DevToolsWindow:
             self.app.update_version_labels_text(latest, current)
             self.app.update_version_labels()
 
+        # Avoid spawning network work in screenshot mode
+        if os.getenv("HSPH_SCREENSHOT_MODE") in ("1", "true", "True"):
+            return
         threading.Thread(target=_quiet_check, daemon=True).start()
-        # And refresh releases to reflect channel (do this async so UI stays responsive)
         self._start_refresh_releases_async()
 
     def app_update_current_version(self):
@@ -299,17 +321,7 @@ class DevToolsWindow:
                 # schedule UI update on main app root; the callback will re-check that
                 # the Dev Tools window still exists before touching its widgets.
                 try:
-
-                    def _schedule_apply(r=releases):
-                        if self._is_open():
-                            try:
-                                self._apply_releases(r)
-                            except Exception as e:
-                                logging.getLogger("dev_tools").exception("Error applying releases: %s", e)
-                                # protect from any race if widgets were destroyed
-                                return
-
-                    self.app.root.after(0, _schedule_apply)
+                    self._schedule_on_main(lambda r=releases: self._safe_apply_releases(r))
                 except Exception as e:
                     logging.getLogger("dev_tools").exception("Error scheduling release application: %s", e)
                     # if scheduling failed for any reason, ignore
@@ -317,7 +329,7 @@ class DevToolsWindow:
             except Exception as _exc:
                 # Use the main app root to show errors to avoid scheduling on a possibly-destroyed Toplevel
                 try:
-                    self.app.root.after(0, lambda e=_exc: messagebox.showerror(get_ui_string(self.app.strings, "error"), str(e)))
+                    self._schedule_on_main(lambda e=_exc: messagebox.showerror(get_ui_string(self.app.strings, "error"), str(e)))
                 except Exception as e:
                     logging.getLogger("dev_tools").exception("Error showing error message: %s", e)
 
@@ -353,7 +365,7 @@ class DevToolsWindow:
         if not cached_releases or cached_channel != current_channel:
             return
         try:
-            self.app.root.after(0, lambda r=cached_releases: self._apply_releases(r))
+            self._schedule_on_main(lambda r=cached_releases: self._safe_apply_releases(r))
         except Exception as e:
             logging.getLogger("dev_tools").exception("Error applying cached releases: %s", e)
 
@@ -386,25 +398,17 @@ class DevToolsWindow:
             except Exception as e:
                 logging.getLogger("dev_tools").exception("Error saving releases cache: %s", e)
 
-            def _schedule_apply(r=releases, rid=refresh_id):
+            def _apply_if_current(r=releases, rid=refresh_id):
                 if rid != self._releases_refresh_id:
-                    return  # stale result, ignore
-                if self._is_open():
-                    try:
-                        self._apply_releases(r)
-                    except Exception as e:
-                        logging.getLogger("dev_tools").exception("Error applying releases: %s", e)
-
-            try:
-                self.app.root.after(0, _schedule_apply)
-            except Exception as e:
-                logging.getLogger("dev_tools").exception("Error scheduling release application: %s", e)
+                    return
+                self._safe_apply_releases(r)
+            self._schedule_on_main(_apply_if_current)
         except Exception as _exc:
             self._show_error_async(_exc)
 
     def _show_error_async(self, exc: Exception) -> None:
         try:
-            self.app.root.after(0, lambda e=exc: messagebox.showerror(get_ui_string(self.app.strings, "error"), str(e)))
+            self._schedule_on_main(lambda e=exc: messagebox.showerror(get_ui_string(self.app.strings, "error"), str(e)))
         except Exception as e:
             logging.getLogger("dev_tools").exception("Error showing error message: %s", e)
 
@@ -450,3 +454,99 @@ class DevToolsWindow:
         # Update channel control
         self.channel_var.set(self.app.app_settings.settings.get("update_channel", "stable"))
         self._start_refresh_releases_async()
+
+    # --- Screenshot helper ---
+    def _populate_releases_for_screenshot(self):
+        """Populate releases_combo without network when capturing a devtools screenshot.
+
+        Preference order:
+          1. Use cached releases if channel matches.
+          2. Otherwise fabricate a small deterministic list of tags to make the UI illustrative.
+        """
+        channel = self._get_channel()
+        fetched_at, cached_channel, cached = load_releases_cache()
+        releases: list[dict]
+        if cached and cached_channel == channel:
+            releases = cached
+        else:
+            # Fabricate simple stub releases (ensure exe_url present so they appear selectable/valid)
+            base = self.app.app_settings.settings.get("version", "1.0.0")
+            try:
+                ver_parts = base.split("-")[0].split('.')
+                while len(ver_parts) < 3:
+                    ver_parts.append('0')
+                major, minor, patch = map(int, ver_parts[:3])
+            except Exception:
+                major = minor = patch = 0
+            # Create a couple of forward tags for realism
+            stub_versions = [f"{major}.{minor}.{patch}"]
+            releases = [
+                {
+                    "tag": v,
+                    "prerelease": ("-rc" in v or "-beta" in v),
+                    "exe_url": f"https://example.invalid/download/{v}/installer.exe",
+                    "sha_url": f"https://example.invalid/download/{v}/installer.exe.sha256",
+                    "body": f"_Placeholder release notes for {v} (screenshot mode)._",
+                }
+                for v in stub_versions
+            ]
+        # Apply releases directly
+        self._apply_releases(releases)
+
+    # --- New helpers for safer cross-thread scheduling ---
+    def _start_dispatcher(self):
+        if self._dispatcher_started:
+            return
+        self._dispatcher_started = True
+
+        def _drain_queue():
+            try:
+                while True:
+                    cb = self._dispatch_queue.get_nowait()
+                    try:
+                        cb()
+                    except Exception as e:  # pragma: no cover - defensive
+                        logging.getLogger("dev_tools").exception("Error running dispatched callback: %s", e)
+            except queue.Empty:
+                pass
+            # Reschedule if root still alive
+            try:
+                if self.app.root and getattr(self.app.root, 'tk', None):
+                    self.app.root.after(50, _drain_queue)
+            except Exception:
+                pass
+
+        try:
+            self.app.root.after(50, _drain_queue)
+        except Exception:
+            # Root may be gone; ignore
+            pass
+
+    def _schedule_on_main(self, cb):
+        """Enqueue a callback to run soon on the Tk main thread, ignoring if root destroyed.
+
+        Safe to call from any thread. If dispatcher not started (e.g., dev tools never opened),
+        fall back to a direct after call guarded by try/except.
+        """
+        if os.getenv("HSPH_SCREENSHOT_MODE") in ("1", "true", "True"):
+            return  # Skip all scheduling during automated screenshots
+        try:
+            if self._dispatcher_started:
+                self._dispatch_queue.put(cb)
+            else:
+                # Best-effort immediate scheduling
+                try:
+                    self.app.root.after(0, cb)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    def _safe_apply_releases(self, releases: list[dict]):
+        if not self._is_open():
+            return
+        try:
+            self._apply_releases(releases)
+        except RuntimeError:
+            # Root likely destroyed
+            pass

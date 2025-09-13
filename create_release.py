@@ -223,7 +223,7 @@ def main() -> None:
                 # Also capture additional dialogs for docs
                 _capture_target_screenshot("filter", SCREENSHOT_FILTER)
                 _capture_target_screenshot("watermark", SCREENSHOT_WATERMARK)
-                _capture_target_screenshot("devtools", SCREENSHOT_DEVTOOLS, delay=5.0)
+                _capture_target_screenshot("devtools", SCREENSHOT_DEVTOOLS)
                 if args.screenshot_pdf and os.path.exists(args.screenshot_pdf):
                     _capture_target_screenshot("preview", SCREENSHOT_PREVIEW, pdf_for_preview=args.screenshot_pdf)
             finally:
@@ -246,7 +246,7 @@ def main() -> None:
     _try_capture_screenshot()
     _capture_target_screenshot("filter", SCREENSHOT_FILTER)
     _capture_target_screenshot("watermark", SCREENSHOT_WATERMARK)
-    _capture_target_screenshot("devtools", SCREENSHOT_DEVTOOLS, delay=5.0)
+    _capture_target_screenshot("devtools", SCREENSHOT_DEVTOOLS)
     # Optionally produce preview screenshot if a PDF was supplied (mirrors local behavior)
     if args.screenshot_pdf and os.path.exists(args.screenshot_pdf):
         _capture_target_screenshot("preview", SCREENSHOT_PREVIEW, pdf_for_preview=args.screenshot_pdf)

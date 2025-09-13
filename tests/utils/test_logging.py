@@ -2,6 +2,7 @@ import importlib
 import logging
 import sys
 import types
+from src.utils import logging as app_logging
 
 
 def reload_module(module_name: str) -> types.ModuleType:
@@ -10,9 +11,6 @@ def reload_module(module_name: str) -> types.ModuleType:
     if module_name in sys.modules:
         del sys.modules[module_name]
     return importlib.import_module(module_name)
-
-
-from src.utils import logging as app_logging
 
 
 def test_basic_logging_configured(tmp_path, monkeypatch):
@@ -65,3 +63,33 @@ def test_cli_overrides_env(tmp_path, monkeypatch):
     assert any(isinstance(h, logging.FileHandler) and getattr(h, "baseFilename", None) == str(cli_log_file) for h in handlers), (
         "CLI log file not used when provided"
     )
+
+
+def test_configure_basic_logging_idempotent(tmp_path):
+    # First configuration
+    root = logging.getLogger()
+    for h in list(root.handlers):
+        root.removeHandler(h)
+    log_file = tmp_path / "first.log"
+    app_logging.configure_basic_logging(log_file=str(log_file))
+    initial_handlers = list(logging.getLogger().handlers)
+    # Second call should not add another handler
+    app_logging.configure_basic_logging(log_file=str(log_file))
+    assert logging.getLogger().handlers == initial_handlers, "configure_basic_logging should be idempotent if handlers exist"
+
+
+def test_parse_log_level_numeric():
+    assert app_logging.parse_log_level("10") == 10
+
+
+def test_parse_log_level_symbolic():
+    assert app_logging.parse_log_level("warning") == logging.WARNING
+
+
+def test_parse_log_level_invalid_fallback():
+    # Unknown symbolic returns INFO
+    assert app_logging.parse_log_level("NOT_A_LEVEL") == logging.INFO
+
+
+def test_parse_log_level_none_defaults_to_info():
+    assert app_logging.parse_log_level(None) == logging.INFO
