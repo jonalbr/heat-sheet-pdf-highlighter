@@ -92,7 +92,7 @@ def build_strings(_: Callable[[str], str]) -> Dict[str, str]:
         "flt_enable": _("Enable Filter"),
         "flt_info": _("Enable highlighting lines with specific names."),
         "flt_mode": _("Highlight Mode"),
-        "flt_mode_blue": _("Highlight lines with matched names in blue, others are not highlighted"),
+        "flt_mode_blue": _("Highlight lines with matched names in yellow, others are not highlighted"),
         "flt_mode_blue_yellow": _("Highlight lines with matched names in blue, others in yellow"),
         "flt_names": _("Names"),
     }

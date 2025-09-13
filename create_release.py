@@ -242,21 +242,31 @@ def main() -> None:
     # Non-local: proceed with normal release flow
     update_version(version)
 
-    # Optionally stage and commit version bumps if there are changes
-    run(["git", "add", str(SETUP_PY), str(SETUP_ISS), str(CONSTANTS_PY)], check=False)
-    # Commit only if there is any staged change
+    # Capture screenshots (with updated version visible) BEFORE staging so they are part of the same commit.
+    _try_capture_screenshot()
+    _capture_target_screenshot("filter", SCREENSHOT_FILTER)
+    _capture_target_screenshot("watermark", SCREENSHOT_WATERMARK)
+    _capture_target_screenshot("devtools", SCREENSHOT_DEVTOOLS)
+    # Optionally produce preview screenshot if a PDF was supplied (mirrors local behavior)
+    if args.screenshot_pdf and os.path.exists(args.screenshot_pdf):
+        _capture_target_screenshot("preview", SCREENSHOT_PREVIEW, pdf_for_preview=args.screenshot_pdf)
+
+    # Collect files to stage (only those that exist)
+    to_stage: list[str] = []
+    for p in (SETUP_PY, SETUP_ISS, CONSTANTS_PY,
+              SCREENSHOT_PATH, SCREENSHOT_FILTER, SCREENSHOT_WATERMARK, SCREENSHOT_DEVTOOLS, SCREENSHOT_PREVIEW):
+        if p.exists():
+            to_stage.append(str(p))
+
+    if to_stage:
+        run(["git", "add", *to_stage], check=False)
+
+    # Commit only if there is any staged change (version bumps and/or screenshots updated)
     commit = run(["git", "diff", "--cached", "--quiet"], check=False)  # returncode 0 if no diff
     if commit.returncode == 1:
         run(["git", "commit", "-m", f"chore(release): v{version}"])
         # Pushing the commit might be blocked by branch policies; user can open PR.
         run(["git", "push"], check=False)
-
-    # Capture a fresh app screenshot for docs before tagging
-    _try_capture_screenshot()
-    # Capture additional dialogs for documentation consistency (best-effort)
-    _capture_target_screenshot("filter", SCREENSHOT_FILTER)
-    _capture_target_screenshot("watermark", SCREENSHOT_WATERMARK)
-    _capture_target_screenshot("devtools", SCREENSHOT_DEVTOOLS)
 
     ensure_ssh_signing()
     create_and_push_signed_tag(version)

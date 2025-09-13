@@ -199,9 +199,10 @@ msgid "Highlight Mode"
 msgstr "Highlight Mode"
 
 #: ..\src\gui\ui_strings.py:95
-msgid "Highlight lines with matched names in blue, others are not highlighted"
+msgid ""
+"Highlight lines with matched names in yellow, others are not highlighted"
 msgstr ""
-"Highlight lines with matched names in blue, others are not highlighted"
+"Highlight lines with matched names in yellow, others are not highlighted"
 
 #: ..\src\gui\ui_strings.py:96
 msgid "Highlight lines with matched names in blue, others in yellow"
