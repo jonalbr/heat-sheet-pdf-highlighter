@@ -100,18 +100,19 @@ class UpdateDialogs:
         )
 
     def setup_download_progress(self, total_size: int):
-        """Setup progress bar for download."""
+        """Setup progress bar for download and show initial label."""
         self._dl_total_size = int(total_size)
         self._dl_downloaded_bytes = 0
         if hasattr(self.app, "progress_bar"):
-
             def _init_progress_ui():
                 try:
                     self.app.progress_bar["maximum"] = self._dl_total_size
                     self._reset_progressbar_value()
+                    # Show initial label for download
+                    if hasattr(self.app, "status_var"):
+                        self.app.status_var.set(get_ui_string(self.app.strings, "upd_progress").format(0, self._dl_total_size / (1024 * 1024), 0))
                 except Exception as e:
                     logging.getLogger("dialogs").exception("Error initializing progress UI: %s", e)
-
             self._ui(_init_progress_ui)
 
     def _reset_progressbar_value(self):

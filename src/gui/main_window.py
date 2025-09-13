@@ -256,8 +256,56 @@ class PDFHighlighterApp:
 
         self.update_label = ttk.Label(self.version_frame, text="...", foreground="#5c5c5c", cursor="hand2")
         self.update_label.pack(side="left", padx=10)
+        # Clicking the update label either forces a re-check (if no cached asset) or starts download directly
+        def _on_update_label_click(_event=None):
+            try:
+                # If updater has a cached download URL for a newer version and label shows install, skip network check
+                if (
+                    getattr(self.update_checker, "last_download_url", None)
+                    and self.update_label_text == get_ui_string(self.strings, "upd_install")
+                    and not getattr(self.update_checker, "_active_download", False)
+                ):
+                    # Optional: ensure cached tag still represents a newer version
+                    try:
+                        if self.update_checker.last_version_tag and Version.from_str(self.update_checker.last_version_tag) <= Version.from_str(self.app_settings.settings["version"]):
+                            # Version already current; fallback to check instead
+                            import threading as _th
+                            _th.Thread(
+                                target=lambda: self.check_for_app_updates(current_version, force_check=True),
+                                daemon=True,
+                            ).start()
+                            return
+                    except Exception:
+                        pass
+                    verify_sha = self.app_settings.settings.get("verify_sha", "True") == "True"
+                    dl = self.update_checker.last_download_url  # type: ignore[assignment]
+                    sha = self.update_checker.last_sha_url if verify_sha else None
+                    if not dl:
+                        # Fallback to forced check if somehow missing
+                        import threading as _th
+                        _th.Thread(
+                            target=lambda: self.check_for_app_updates(current_version, force_check=True),
+                            daemon=True,
+                        ).start()
+                        return
+                    import threading
+                    threading.Thread(
+                        target=lambda: self.update_checker.download_and_run_installer(dl, sha),
+                        daemon=True,
+                    ).start()
+                else:
+                    # Force a network re-check (background thread to keep UI responsive)
+                    if getattr(self.update_checker, "_active_check", False):
+                        return
+                    import threading
+                    threading.Thread(
+                        target=lambda: self.check_for_app_updates(current_version, force_check=True),
+                        daemon=True,
+                    ).start()
+            except Exception as e:
+                logging.getLogger("main_window").exception("Failed handling update label click: %s", e)
 
-        self.update_label.bind("<Button-1>", lambda event: self.check_for_app_updates(current_version, force_check=True))
+        self.update_label.bind("<Button-1>", _on_update_label_click)
 
         # Make version frame sticky to the bottom
         self.root.grid_rowconfigure(7, weight=1)

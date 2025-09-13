@@ -29,6 +29,13 @@ class UpdateChecker:
         self.update_callback = self.app_instance.on_version_update
         self.gui_callbacks = self.app_instance.update_dialogs
         self.paths = Paths()
+        # Cache the last located download/sha URLs so the GUI can trigger a direct install
+        self.last_download_url: str | None = None
+        self.last_sha_url: str | None = None
+        self.last_version_tag: str | None = None
+        # Concurrency guards
+        self._active_download: bool = False
+        self._active_check: bool = False
 
     def check_for_app_updates(self, current_version: Version, force_check: bool = False, quiet: bool = False):
         """
@@ -40,6 +47,10 @@ class UpdateChecker:
         Returns:
             Version: The latest version available.
         """
+        # Prevent overlapping network checks (unless forced); a force can still be ignored if one is already active
+        if self._active_check:
+            return Version.from_str(self.app_settings.settings.get("newest_version_available", str(current_version)))
+        self._active_check = True
         now = datetime.datetime.now()
 
         # Use TTL from app settings when available
@@ -56,7 +67,11 @@ class UpdateChecker:
             invalidate_releases_cache()
 
         # Perform the update check
-        latest_version = self._get_latest_version_from_github(current_version=current_version, force_check=force_check, quiet=quiet)
+        try:
+            latest_version = self._get_latest_version_from_github(current_version=current_version, force_check=force_check, quiet=quiet)
+        finally:
+            # Release guard even if request failed/raised
+            self._active_check = False
 
         # Cache the result using JSON - only cache if we got a valid version
         if isinstance(latest_version, Version):
@@ -148,6 +163,11 @@ class UpdateChecker:
             # Update settings when a newer version exists
             self._update_settings_if_newer(latest_version)
 
+            # Persist discovered asset URLs for potential direct install later
+            self.last_download_url = download_url
+            self.last_sha_url = sha_url
+            self.last_version_tag = str(latest_version)
+
             # If we're quiet or shouldn't prompt, just return the version
             if quiet or not self._should_prompt_user(latest_version, current_version, force_check):
                 return latest_version
@@ -221,8 +241,21 @@ class UpdateChecker:
             download_url (str): The URL to download the installer from.
             sha_url (str | None): Optional URL to the .sha256 file for checksum verification. If None, no verification is performed.
         """
+        # Concurrency guard: prevent multiple simultaneous downloads
+        if self._active_download:
+            logging.getLogger("updater").info("Download already in progress; ignoring duplicate request")
+            return
+        self._active_download = True
         # Start download UI state
         self.gui_callbacks.start_download_ui()
+
+        # Provide an immediate initial status (even before first bytes) if total size known later
+        try:
+            if hasattr(self.gui_callbacks, "update_download_status"):
+                # We don't know size yet; will be updated after HEAD/GET
+                pass
+        except Exception:  # pragma: no cover - defensive
+            pass
 
         # Create a temporary file for the installer
         with tempfile.NamedTemporaryFile(suffix=".exe", delete=False) as temp_file:
@@ -233,14 +266,17 @@ class UpdateChecker:
         except requests.exceptions.HTTPError as e:
             self.gui_callbacks.show_download_error(str(e))
             self._safe_unlink(installer_path)
+            self._active_download = False
             return
         except Exception as e:
             logging.getLogger("updater").exception("Unexpected error downloading installer: %s", e)
             self._safe_unlink(installer_path)
+            self._active_download = False
             raise
 
         if cancelled:
             self._safe_unlink(installer_path)
+            self._active_download = False
             return
 
         if total_size_in_bytes != 0:
@@ -258,8 +294,12 @@ class UpdateChecker:
             return
 
         # Close the application and run installer
-        self.gui_callbacks.close_application()
-        self._spawn_installer(installer_path)
+        try:
+            self.gui_callbacks.close_application()
+            self._spawn_installer(installer_path)
+        finally:
+            # Not strictly needed because app is closing, but good for tests / reuse
+            self._active_download = False
 
     # --- helper methods to reduce complexity ---
 
@@ -284,7 +324,15 @@ class UpdateChecker:
             if not download_url:
                 self.gui_callbacks.show_download_error("Installer asset not found in the selected release.")
                 return
-            self.download_and_run_installer(download_url, sha_url if verify_sha else None)
+            # Keep cached for direct re-use (e.g. if user cancels once then installs later)
+            self.last_download_url = download_url
+            self.last_sha_url = sha_url
+            # Run download in a background thread to avoid freezing Tk main loop
+            import threading
+            threading.Thread(
+                target=lambda: self.download_and_run_installer(download_url, sha_url if verify_sha else None),
+                daemon=True,
+            ).start()
             return
         # User clicked "No"
         if self.gui_callbacks.show_update_reminder_choice():
@@ -302,10 +350,18 @@ class UpdateChecker:
         response.raise_for_status()
 
         total_size_in_bytes = int(response.headers.get("content-length", 0))
-        # Use 1 MiB chunks to dramatically cut the number of GUI updates
-        block_size = 1024 * 1024
+        # Adaptive chunk size: smaller files => smaller chunks for smoother initial progress
+        if 0 < total_size_in_bytes < 4 * 1024 * 1024:
+            block_size = 256 * 1024  # 256 KiB
+        else:
+            block_size = 1024 * 1024  # 1 MiB
 
         self.gui_callbacks.setup_download_progress(total_size_in_bytes)
+        # Immediate initial status (will show 0 progress)
+        try:
+            self.gui_callbacks.update_download_status(time.time(), total_size_in_bytes)
+        except Exception:  # pragma: no cover
+            pass
         start_time = time.time()
         cancelled = False
 
@@ -318,7 +374,8 @@ class UpdateChecker:
                 file.write(data)
                 self.gui_callbacks.update_download_progress(len(data))
                 current_time = time.time()
-                if current_time - last_update_time >= 0.25:
+                # Always show first-chunk status immediately for responsiveness
+                if current_time - last_update_time >= 0.25 or (self.gui_callbacks.get_progress_value() and last_update_time == start_time):
                     self.gui_callbacks.update_download_status(start_time, total_size_in_bytes)
                     last_update_time = current_time
         return cancelled, total_size_in_bytes
