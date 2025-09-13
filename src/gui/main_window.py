@@ -69,8 +69,9 @@ class PDFHighlighterApp:
         self.processing_active = False
         self.download_active = False
 
-        # Check for updates AFTER UI is set up
-        threading.Thread(target=self.check_for_app_updates, daemon=True).start()
+        # Check for updates AFTER UI is set up (skip when in screenshot mode to prevent race with root.destroy)
+        if os.getenv("HSPH_SCREENSHOT_MODE") not in ("1", "true", "True"):
+            threading.Thread(target=self.check_for_app_updates, daemon=True).start()
 
     def init_translatable_strings(self):
         """
@@ -349,7 +350,22 @@ class PDFHighlighterApp:
     def on_version_update(self, latest_version, current_version):
         """Callback for when version update info is received."""
         # Schedule on main thread since this is called from update check thread
-        self.root.after_idle(lambda: self._update_version_info(latest_version, current_version))
+        try:
+            # If the root has been destroyed (common in screenshot mode teardown), silently ignore
+            if not getattr(self.root, 'tk', None):
+                return
+            self.root.after_idle(lambda: self._safe_update_version_info(latest_version, current_version))
+        except RuntimeError:
+            # Root is gone; ignore
+            return
+
+    def _safe_update_version_info(self, latest_version, current_version):
+        """Wrapper that swallows RuntimeError if the Tk main loop/root is already gone."""
+        try:
+            self._update_version_info(latest_version, current_version)
+        except RuntimeError:
+            # Tkinter can raise 'main thread is not in main loop' if updating after destroy
+            pass
 
     def _update_version_info(self, latest_version, current_version):
         """Update version info on main thread."""
