@@ -1,6 +1,7 @@
 """
 PDF processing and highlighting functionality
 """
+
 import json
 import re
 from typing import List

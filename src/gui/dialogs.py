@@ -104,12 +104,14 @@ class UpdateDialogs:
         self._dl_total_size = int(total_size)
         self._dl_downloaded_bytes = 0
         if hasattr(self.app, "progress_bar"):
+
             def _init_progress_ui():
                 try:
                     self.app.progress_bar["maximum"] = self._dl_total_size
                     self._reset_progressbar_value()
                 except Exception as e:
                     logging.getLogger("dialogs").exception("Error initializing progress UI: %s", e)
+
             self._ui(_init_progress_ui)
 
     def _reset_progressbar_value(self):

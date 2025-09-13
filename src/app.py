@@ -1,6 +1,7 @@
 """
 Main application entry point and coordination
 """
+
 import os
 import time
 from tkinter import Tk
@@ -104,17 +105,20 @@ def _windows_capture(root: Tk, app: PDFHighlighterApp, screenshot_path: str, tar
     import win32con
     from PIL import Image, ImageStat
 
-    def _capture_hwnd(hwnd) -> Image.Image | None:
+    def _win_capture_hwnd(hwnd) -> Image.Image | None:
+        """Capture a specific HWND and return a PIL Image or None."""
         left, top, right, bottom = win32gui.GetWindowRect(hwnd)
         width, height = right - left, bottom - top
         if width <= 0 or height <= 0:
             return None
+
         hwnd_dc = win32gui.GetWindowDC(hwnd)
         mfc_dc = win32ui.CreateDCFromHandle(hwnd_dc)
         save_dc = mfc_dc.CreateCompatibleDC()
         save_bitmap = win32ui.CreateBitmap()
         save_bitmap.CreateCompatibleBitmap(mfc_dc, width, height)
         save_dc.SelectObject(save_bitmap)
+
         try:
             PW_RENDERFULLCONTENT = 0x00000002
             pw = getattr(win32gui, "PrintWindow", None)
@@ -128,7 +132,7 @@ def _windows_capture(root: Tk, app: PDFHighlighterApp, screenshot_path: str, tar
 
             bmpinfo = save_bitmap.GetInfo()
             bmpstr = save_bitmap.GetBitmapBits(True)
-            img = Image.frombuffer(
+            return Image.frombuffer(
                 "RGB",
                 (bmpinfo["bmWidth"], bmpinfo["bmHeight"]),
                 bmpstr,
@@ -137,14 +141,14 @@ def _windows_capture(root: Tk, app: PDFHighlighterApp, screenshot_path: str, tar
                 0,
                 1,
             )
-            return img
         finally:
             win32gui.DeleteObject(save_bitmap.GetHandle())
             save_dc.DeleteDC()
             mfc_dc.DeleteDC()
             win32gui.ReleaseDC(hwnd, hwnd_dc)
 
-    def _current_target_hwnd():
+    def _win_get_target_hwnd() -> int:
+        """Resolve requested target into an HWND, falling back to root on any error."""
         target_map = {
             "filter": ("filter_dialog", "window"),
             "watermark": ("watermark_dialog", "window"),
@@ -152,40 +156,36 @@ def _windows_capture(root: Tk, app: PDFHighlighterApp, screenshot_path: str, tar
             "preview": ("preview_window_handler", "window"),
         }
 
-        try:
-            names = target_map.get(target)
-            if not names:
-                return root.winfo_id()
-
-            parent_attr, win_attr = names
-            parent = getattr(app, parent_attr, None)
-            if parent is None:
-                return root.winfo_id()
-
-            win = getattr(parent, win_attr, None)
-            if win is None:
-                return root.winfo_id()
-
-            try:
-                return win.winfo_id()
-            except Exception as e:
-                print(f"Error getting {target} window ID: {e}")
-                return root.winfo_id()
-        except Exception as e:
-            print(f"Error getting current target HWND: {e}")
+        names = target_map.get(target)
+        if not names:
             return root.winfo_id()
 
-    hwnd_target = _current_target_hwnd()
-    img = _capture_hwnd(hwnd_target)
-    needs_retry = False
-    if img is None:
-        needs_retry = True
-    else:
-        stats = ImageStat.Stat(img)
-        if all(mn == 255 and mx == 255 for (mn, mx) in [tuple(p) for p in stats.extrema]):
-            needs_retry = True
+        parent_attr, win_attr = names
+        parent = getattr(app, parent_attr, None)
+        if parent is None:
+            return root.winfo_id()
 
-    if needs_retry:
+        win = getattr(parent, win_attr, None)
+        if win is None:
+            return root.winfo_id()
+
+        try:
+            return win.winfo_id()
+        except Exception as e:
+            print(f"Error getting {target} window ID: {e}")
+            return root.winfo_id()
+
+    def _win_image_needs_retry(img) -> bool:
+        """Return True if the captured image is missing or appears blank/white."""
+        if img is None:
+            return True
+        stats = ImageStat.Stat(img)
+        return all(mn == 255 and mx == 255 for (mn, mx) in [tuple(p) for p in stats.extrema])
+
+    hwnd_target = _win_get_target_hwnd()
+    img = _win_capture_hwnd(hwnd_target)
+
+    if _win_image_needs_retry(img):
         try:
             root.attributes("-topmost", True)
         except Exception as e:
@@ -195,8 +195,8 @@ def _windows_capture(root: Tk, app: PDFHighlighterApp, screenshot_path: str, tar
         root.update_idletasks()
         time.sleep(0.2)
         root.update()
-        hwnd_target = _current_target_hwnd()
-        img = _capture_hwnd(hwnd_target) or img
+        hwnd_target = _win_get_target_hwnd()
+        img = _win_capture_hwnd(hwnd_target) or img
 
     if img is not None:
         os.makedirs(os.path.dirname(screenshot_path), exist_ok=True)

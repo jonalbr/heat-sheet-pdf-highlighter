@@ -1,6 +1,7 @@
 """
 Watermark functionality
 """
+
 from typing import Dict
 
 from pymupdf import Page, Rect, utils

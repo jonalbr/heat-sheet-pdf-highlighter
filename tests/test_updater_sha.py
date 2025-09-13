@@ -14,6 +14,7 @@ from src.version import Version
 
 class _PopenPatch:
     """Context manager to temporarily replace subprocess.Popen with a stub/captor."""
+
     def __init__(self, capture_calls: bool = False):
         self.capture_calls = capture_calls
         self.calls = []
@@ -24,27 +25,31 @@ class _PopenPatch:
 
         if self.capture_calls:
             calls_ref = self.calls
+
             def append_call(call):
                 calls_ref.append(call)
+
             class _StubProc:
                 def __init__(self, *a, **k):
                     # capture args for assertions
                     append_call((a, k))
                     self.pid = 0
+
             subprocess.Popen = _StubProc  # type: ignore[assignment]
         else:
+
             class _StubProcNoop:
                 def __init__(self, *a, **k):
                     self.args = a
                     self.kwargs = k
                     self.pid = 0
+
             subprocess.Popen = _StubProcNoop  # type: ignore[assignment]
         return self
 
     def __exit__(self, exc_type, exc, tb):
         subprocess.Popen = self._orig  # type: ignore[assignment]
         return False
-
 
 
 class DummyGUI:
@@ -140,9 +145,7 @@ def test_checksum_mismatch():
     installer = temp_dir / "heat_sheet_pdf_highlighter_installer.exe"
     installer.write_bytes(b"dummy-bytes-123")
     # Wrong sha
-    (temp_dir / "heat_sheet_pdf_highlighter_installer.exe.sha256").write_text(
-        "0" * 64 + "  heat_sheet_pdf_highlighter_installer.exe\n"
-    )
+    (temp_dir / "heat_sheet_pdf_highlighter_installer.exe.sha256").write_text("0" * 64 + "  heat_sheet_pdf_highlighter_installer.exe\n")
     server, port = run_http_server(temp_dir)
     try:
         app = DummyApp(beta=False)
@@ -185,16 +188,16 @@ def test_stable_no_sha_treated_as_up_to_date():
     # Mock _fetch_release_info to simulate a newer stable release without sha asset
     app = DummyApp(beta=False)
     uc = UpdateChecker(app)  # type: ignore[arg-type]
+
     def fake_fetch(url: str):
         if url.endswith("/latest"):
             return {
                 "tag_name": "9.9.9",
-                "assets": [
-                    {"name": "heat_sheet_pdf_highlighter_installer.exe", "browser_download_url": "https://example/installer.exe"}
-                ],
+                "assets": [{"name": "heat_sheet_pdf_highlighter_installer.exe", "browser_download_url": "https://example/installer.exe"}],
                 "prerelease": False,
             }
         return {}
+
     uc._fetch_release_info = fake_fetch  # type: ignore
     current = Version.from_str("1.0.0")
     latest = uc._get_latest_version_from_github(current_version=current, force_check=True)
@@ -209,9 +212,7 @@ def test_checksum_ok_runs():
     installer = temp_dir / "heat_sheet_pdf_highlighter_installer.exe"
     installer.write_bytes(b"installer-bytes-ok")
     digest = hashlib.sha256(installer.read_bytes()).hexdigest()
-    (temp_dir / "heat_sheet_pdf_highlighter_installer.exe.sha256").write_text(
-        f"{digest}  heat_sheet_pdf_highlighter_installer.exe\n"
-    )
+    (temp_dir / "heat_sheet_pdf_highlighter_installer.exe.sha256").write_text(f"{digest}  heat_sheet_pdf_highlighter_installer.exe\n")
 
     server, port = run_http_server(temp_dir)
     try:

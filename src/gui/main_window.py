@@ -378,7 +378,7 @@ class PDFHighlighterApp:
         self.root.update_idletasks()
         # Refresh Dev Tools window strings if it's open
         try:
-            if hasattr(self, 'dev_tools') and self.dev_tools:
+            if hasattr(self, "dev_tools") and self.dev_tools:
                 # dev_tools may be created earlier; ensure it refreshes its UI
                 try:
                     self.dev_tools.refresh_ui_strings()
@@ -388,7 +388,7 @@ class PDFHighlighterApp:
             logging.getLogger("main_window").exception("Unexpected error while refreshing dev tools: %s", e)
         # Refresh filter and watermark dialogs if they're open
         try:
-            if hasattr(self, 'filter_dialog') and self.filter_dialog:
+            if hasattr(self, "filter_dialog") and self.filter_dialog:
                 try:
                     self.filter_dialog.refresh_ui_strings()
                 except Exception as e:
@@ -396,7 +396,7 @@ class PDFHighlighterApp:
         except Exception as e:
             logging.getLogger("main_window").exception("Unexpected error while refreshing filter dialog: %s", e)
         try:
-            if hasattr(self, 'watermark_dialog') and self.watermark_dialog:
+            if hasattr(self, "watermark_dialog") and self.watermark_dialog:
                 try:
                     self.watermark_dialog.refresh_ui_strings()
                 except Exception as e:
@@ -453,7 +453,7 @@ class PDFHighlighterApp:
         only_relevant = bool(self.relevant_lines_var.get())
         filter_enabled = bool(self.enable_filter_var.get())
         highlight_mode = HighlightMode[self.highlight_mode_var.get()]
-        names = [name.strip() for name in re.split(r",\\s*", self.names_var.get()) if name.strip()]
+        names = [name.strip() for name in re.split(r",\s*", self.names_var.get()) if name.strip()]
 
         try:
             self.paths.is_valid_path(input_file)

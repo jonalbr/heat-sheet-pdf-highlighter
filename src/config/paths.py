@@ -1,16 +1,19 @@
 """
 Path configuration and management
 """
+
 import os
 import sys
 from pathlib import Path
 
 from ..constants import APP_NAME
 
+
 class Paths:
     """
     Encapsulates all path logic and constants for the application.
     """
+
     @staticmethod
     def get_settings_path():
         """Determine the correct path for storing application settings based on the operating system."""
@@ -33,10 +36,10 @@ class Paths:
         return settings_dir
 
     # Handle both single file and multi-file builds
-    if getattr(sys, 'frozen', False):
-        if hasattr(sys, '_MEIPASS'):
+    if getattr(sys, "frozen", False):
+        if hasattr(sys, "_MEIPASS"):
             # PyInstaller
-            bundle_dir = Path(getattr(sys, '_MEIPASS'))
+            bundle_dir = Path(getattr(sys, "_MEIPASS"))
         else:
             # cx_Freeze
             bundle_dir = Path(sys.executable).parent

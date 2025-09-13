@@ -1,6 +1,7 @@
 """
 Custom widgets
 """
+
 from tkinter import Toplevel, Label, Widget
 
 
@@ -25,9 +26,7 @@ class Tooltip:
         self.tooltip_window = tw = Toplevel(self.widget)
         tw.wm_overrideredirect(True)
         tw.wm_geometry(f"+{x}+{y}")
-        label = Label(tw, text=self.text, justify="left",
-                     background="#ffffe0", relief="solid", borderwidth=1,
-                     font=("tahoma", 8, "normal"))
+        label = Label(tw, text=self.text, justify="left", background="#ffffe0", relief="solid", borderwidth=1, font=("tahoma", 8, "normal"))
         label.pack(ipadx=1)
 
     def hide_tip(self, event=None):

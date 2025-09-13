@@ -2,6 +2,7 @@
 
 Module to configure logging. Other modules can import the helpers for testing.
 """
+
 from __future__ import annotations
 
 import logging

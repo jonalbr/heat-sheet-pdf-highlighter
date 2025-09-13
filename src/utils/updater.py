@@ -66,7 +66,7 @@ class UpdateChecker:
         return latest_version
 
     def _fetch_release_info(self, url: str):
-        response = requests.get(url)
+        response = requests.get(url=url, timeout=30)
         response.raise_for_status()
         return response.json()
 
@@ -131,9 +131,7 @@ class UpdateChecker:
             download_url, sha_url = self._select_release_assets(release_info)
 
             # Apply channel policy (stable vs rc)
-            latest_version, download_url, sha_url = self._apply_channel_policy(
-                latest_version, download_url, sha_url
-            )
+            latest_version, download_url, sha_url = self._apply_channel_policy(latest_version, download_url, sha_url)
 
             # Validate required assets and possibly short-circuit
             short_circuit = self._validate_required_assets(
@@ -253,7 +251,7 @@ class UpdateChecker:
         # Finish download UI state
         self.gui_callbacks.finish_download_ui()
 
-    # Verify SHA256 if URL provided
+        # Verify SHA256 if URL provided
         if sha_url and not self._verify_sha256(installer_path, sha_url):
             # Error already shown inside _verify_sha256
             self._safe_unlink(installer_path)

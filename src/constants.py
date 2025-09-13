@@ -2,7 +2,6 @@
 Application constants
 """
 
-
 # Application metadata
 APP_NAME = "Heat Sheet PDF Highlighter"
 VERSION_STR = "1.4.0"

@@ -1,6 +1,7 @@
 """
 Enums and data models
 """
+
 from enum import IntEnum
 
 

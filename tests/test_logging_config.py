@@ -62,4 +62,6 @@ def test_cli_overrides_env(tmp_path, monkeypatch):
     app_logging.configure_basic_logging(log_file=str(cli_log_file))
 
     handlers = logging.getLogger().handlers
-    assert any(isinstance(h, logging.FileHandler) and getattr(h, "baseFilename", None) == str(cli_log_file) for h in handlers), "CLI log file not used when provided"
+    assert any(isinstance(h, logging.FileHandler) and getattr(h, "baseFilename", None) == str(cli_log_file) for h in handlers), (
+        "CLI log file not used when provided"
+    )

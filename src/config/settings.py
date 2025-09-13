@@ -1,6 +1,7 @@
 """
 Application settings management
 """
+
 import json
 from pathlib import Path
 from typing import Dict
@@ -110,7 +111,7 @@ class AppSettings:
             value = settings_dict.get(key, self.default_settings[key])
             validated[key] = self._validate_value(key, value)
 
-    # Optionally keep extra keys? Currently we ignore them (drops legacy 'beta').
+        # Optionally keep extra keys? Currently we ignore them (drops legacy 'beta').
         if settings is not None:
             return validated
 

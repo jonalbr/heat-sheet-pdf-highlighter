@@ -1,6 +1,7 @@
 """
 Version handling
 """
+
 import re
 from dataclasses import dataclass
 
@@ -51,13 +52,13 @@ class Version:
         self_rc = self.rc if self.rc is not None else -1
         other_rc = other.rc if other.rc is not None else -1
         return (self.major, self.minor, self.patch, self_rc) > (other.major, other.minor, other.patch, other_rc)
-    
+
     def __le__(self, other):
         return self < other or self == other
-    
+
     def __ge__(self, other):
         return self > other or self == other
-    
+
     def __eq__(self, other):
         if not isinstance(other, Version):
             return False

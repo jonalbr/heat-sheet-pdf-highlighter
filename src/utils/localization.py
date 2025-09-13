@@ -1,6 +1,7 @@
 """
 Localization utilities
 """
+
 import gettext
 from ..config.paths import Paths
 from ..constants import LANGUAGE_OPTIONS
