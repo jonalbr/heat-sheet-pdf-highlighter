@@ -26,21 +26,15 @@ def _setup_screenshot_state(app: PDFHighlighterApp) -> None:
     avoid impacting screenshot generation.
     """
     try:
-        try:
-            app.enable_filter_var.set(1)
-            app.names_var.set("Klara Sophie Meier, Jonas Becker-Schmidt, Leon Wagner")
-        except Exception as e:
-            print(f"Error enabling filter: {e}")
-
-        try:
-            app.app_settings.settings["watermark_enabled"] = "True"
-            app.app_settings.settings["watermark_text"] = "SGS Hamburg"
-            app.app_settings.settings["watermark_color"] = "#FF9F14"
-            app.app_settings.settings["watermark_size"] = 20
-        except Exception as e:
-            print(f"Error setting up screenshot mode: {e}")
+        app.enable_filter_var.set(1)
+        app.names_var.set("Klara Sophie Meier, Jonas Becker-Schmidt, Leon Wagner")
+        app.app_settings.settings["watermark_enabled"] = "True"
+        app.app_settings.settings["watermark_text"] = "SGS Hamburg"
+        app.app_settings.settings["watermark_color"] = "#FF9F14"
+        app.app_settings.settings["watermark_size"] = 20
+        app.app_settings.settings["theme_mode"] = "light"
     except Exception as e:
-        print(f"Error enabling screenshot mode: {e}")
+        print(f"Error setting up screenshot mode: {e}")
 
 
 def _preview_target(app: PDFHighlighterApp, root: Tk, target: str, pdf_for_preview: str | None) -> None:
@@ -54,7 +48,7 @@ def _preview_target(app: PDFHighlighterApp, root: Tk, target: str, pdf_for_previ
         elif target == "preview":
             if pdf_for_preview and os.path.exists(pdf_for_preview):
                 setattr(app, "input_file_full_path", pdf_for_preview)
-                _wm_text = app.app_settings.settings.get("watermark_text") or "SGS Hamburg"
+                _wm_text = app.app_settings.settings.get("watermark_text") or "Error"
                 _wm_color = app.app_settings.settings.get("watermark_color") or "#FF9F14"
                 try:
                     _wm_size = int(app.app_settings.settings.get("watermark_size") or 20)

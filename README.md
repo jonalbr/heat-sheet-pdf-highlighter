@@ -84,8 +84,8 @@ To verify the integrity of the downloaded installer, compare its SHA-256 hash wi
 
 #### Prerequisites
 
-- Python 3.14 only (`>=3.14,<3.15`)
-- uv is required; there is no pip/venv fallback workflow
+- Python 3.14 (`>=3.14,<3.15`)
+- uv is required
 - Windows, macOS (untested), or Linux (untested)
 
 Install uv and Python 3.14 before syncing the project. On Windows PowerShell:
@@ -94,16 +94,6 @@ Install uv and Python 3.14 before syncing the project. On Windows PowerShell:
 winget install --id Astral-sh.uv -e
 uv python install 3.14
 ```
-
-If `winget` is not available, install uv with the official PowerShell installer:
-
-```powershell
-powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
-uv python install 3.14
-```
-
-The repository contains `.python-version`, so uv will use Python 3.14 when it
-creates the project environment.
 
 #### Setup Instructions
 
@@ -130,13 +120,6 @@ To run Heat Sheet PDF Highlighter directly from source code:
    ```
 
 #### Dependencies
-
-The application requires these core libraries:
-
-- **PyMuPDF (pymupdf)** - PDF processing and manipulation
-- **Pillow (PIL)** - Image processing for GUI and watermarks  
-- **Requests** - HTTP requests for update checking
-- **Tkinter** - GUI framework (included with Python)
 
 All dependencies are managed in `pyproject.toml` and locked in `uv.lock`.
 
@@ -219,11 +202,7 @@ All your preferences are automatically saved:
    uv run python main.py
    ```
 
-**Note:** uv creates and manages the project `.venv`. Use `pyproject.toml` and
-`uv.lock` as the dependency source of truth.
-
-Python is intentionally constrained to `>=3.14,<3.15` because the Windows build
-stack, especially cx_Freeze, is only supported/verified up to Python 3.14.
+**Note:** uv creates and manages the project `.venv`.
 
 ### Management
 
