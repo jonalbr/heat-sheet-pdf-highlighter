@@ -8,7 +8,7 @@ import logging
 import threading
 import time
 from pathlib import Path
-from tkinter import IntVar, Label, StringVar, Tk, filedialog, messagebox, ttk
+from tkinter import Button, IntVar, Menu, StringVar, Tk, filedialog, ttk
 
 from PIL import Image, ImageTk
 from pymupdf import Document
@@ -20,13 +20,18 @@ from ..core.pdf_processor import highlight_matching_data
 from ..core.watermark import watermark_pdf_page
 from ..models import HighlightMode
 from ..utils.localization import setup_translation
+from ..utils.theme import ThemeColors, get_effective_theme, get_theme_colors
 from ..utils.updater import UpdateChecker
 from ..version import Version
 from .dev_tools import DevToolsWindow
 from .dialogs import FilterDialog, UpdateDialogs, WatermarkDialog
+from .message_dialog import show_error, show_info
 from .preview import PreviewWindow
 from .ui_strings import _xgettext_dummy, build_strings, get_ui_string, plural_strings
 from .widgets import Tooltip
+
+THEME_ICON_SIZE = (16, 16)
+UNIFORM_ACTION_BUTTON_WIDTH = 14
 
 
 class PDFHighlighterApp:
@@ -115,19 +120,21 @@ class PDFHighlighterApp:
         self.root.resizable(False, False)
 
         # Improved styling
-        style = ttk.Style()
-        style.theme_use("breeze")  # A more modern theme than the default
-        style.configure("TButton", font=("Arial", 10), borderwidth="4")  # Button styling
-        style.configure("TLabel", font=("Arial", 10), background="#f0f0f0")  # Label styling
-        style.configure("TEntry", font=("Arial", 10), borderwidth="2")  # Entry widget styling
-        style.configure("TCheckbutton", font=("Arial", 10))  # Checkbutton styling
-        style.configure("Horizontal.TProgressbar", thickness=20)  # Progressbar styling
-
-        # Background color
-        self.root.configure(background="#f0f0f0")
+        self.style = ttk.Style()
+        self.style.configure("TButton", font=("Arial", 10), borderwidth="4")  # Button styling
+        self.style.configure("TMenubutton", font=("Arial", 10), borderwidth="4")  # Theme selector styling
+        self.style.configure("TEntry", font=("Arial", 10), borderwidth="2")  # Entry widget styling
+        self.style.configure("TCheckbutton", font=("Arial", 10))  # Checkbutton styling
+        self.style.configure("Horizontal.TProgressbar", thickness=20)  # Progressbar styling
+        self._apply_theme()
+        self.theme_icon_images = self._load_theme_icon_images()
 
         # Add icon
         self.root.iconbitmap(self.paths.icon_path)
+
+        self.header_frame = ttk.Frame(self.root)
+        self.header_frame.grid(row=0, column=0, columnspan=3, sticky="EW")
+        self.header_frame.grid_columnconfigure(1, weight=1)
 
         # Load and display the logo
         logo_image = Image.open(self.paths.logo_path)
@@ -135,9 +142,9 @@ class PDFHighlighterApp:
         title_height = 50  # Set the desired height of the title
         logo_image = logo_image.resize((title_height, title_height))
         logo_photo = ImageTk.PhotoImage(logo_image)
-        self.logo_label = Label(self.root, image=logo_photo)
+        self.logo_label = ttk.Label(self.header_frame, image=logo_photo, style="Logo.TLabel")
         setattr(self.logo_label, "image", logo_photo)  # Store a reference to the image
-        self.logo_label.grid(row=0, column=0, sticky="W", padx=10, pady=10)
+        self.logo_label.grid(row=0, column=0, sticky="W", padx=(10, 0), pady=10)
 
         # Secret Dev Tools trigger: triple-click on logo
         self._dev_clicks = []  # store timestamps of clicks
@@ -155,8 +162,53 @@ class PDFHighlighterApp:
         self.logo_label.bind("<Button-1>", _on_logo_click)
 
         # Application title next to the logo
-        self.title = ttk.Label(self.root, text=get_ui_string(self.strings, "title"), font=title_font)
-        self.title.grid(row=0, column=1, sticky="EW", padx=10, pady=10)
+        self.title = ttk.Label(
+            self.header_frame,
+            text=get_ui_string(self.strings, "title"),
+            font=title_font,
+            style="Title.TLabel",
+            anchor="w",
+        )
+        self.title.grid(row=0, column=1, sticky="W", padx=(14, 10), pady=10)
+
+        # Theme selector (system/light/dark)
+        self.theme_mode_var = StringVar()
+        self.theme_mode_var.set(self.app_settings.settings.get("theme_mode", "system"))
+        self.theme_mode_var.trace_add("write", lambda *args: self._on_theme_mode_change(self.theme_mode_var.get()))
+
+        self.header_controls_frame = ttk.Frame(self.header_frame)
+        self.header_controls_frame.grid(row=0, column=2, sticky="E", padx=10, pady=10)
+
+        self.theme_button = Button(
+            self.header_controls_frame,
+            command=self._open_theme_menu,
+            width=32,
+            height=30,
+            relief="flat",
+            borderwidth=0,
+            highlightthickness=0,
+            cursor="hand2",
+            takefocus=True,
+        )
+        self.theme_menu = Menu(self.theme_button, tearoff=False)
+        self.theme_menu.add_radiobutton(
+            label=get_ui_string(self.strings, "theme_system"),
+            variable=self.theme_mode_var,
+            value="system",
+        )
+        self.theme_menu.add_radiobutton(
+            label=get_ui_string(self.strings, "theme_light"),
+            variable=self.theme_mode_var,
+            value="light",
+        )
+        self.theme_menu.add_radiobutton(
+            label=get_ui_string(self.strings, "theme_dark"),
+            variable=self.theme_mode_var,
+            value="dark",
+        )
+        self._set_theme_button_icon()
+        self.theme_button.grid(row=0, column=0, sticky="E", padx=(0, 4))
+        Tooltip(self.theme_button, text=get_ui_string(self.strings, "theme_menu_tooltip"))
 
         # Language selection
         lang_var = StringVar()
@@ -164,34 +216,40 @@ class PDFHighlighterApp:
         lang_var.trace_add("write", lambda *args: self.app_settings.update_setting("language", lang_var.get()))
 
         self.language_menu = ttk.OptionMenu(
-            self.root, lang_var, self.app_settings.settings["language"], *LANGUAGE_OPTIONS, command=lambda _: self.on_language_change(lang_var.get())
+            self.header_controls_frame,
+            lang_var,
+            self.app_settings.settings["language"],
+            *LANGUAGE_OPTIONS,
+            command=lambda _: self.on_language_change(lang_var.get()),
         )
-        self.language_menu.grid(row=0, column=2, sticky="E", padx=10, pady=10)
+        self.language_menu.config(width=4)
+        self.language_menu.grid(row=0, column=1, sticky="E")
 
         # PDF file selection
         self.label_pdf_file = ttk.Label(self.root, text=get_ui_string(self.strings, "pdf_file"))
-        self.label_pdf_file.grid(row=1, column=0, sticky="E", padx=10, pady=2)
+        self.label_pdf_file.grid(row=1, column=0, sticky="E", padx=(10, 4), pady=2)
         self.pdf_file_var = StringVar()
-        self.entry_file = ttk.Entry(self.root, textvariable=self.pdf_file_var, state="readonly")
-        self.entry_file.grid(row=1, column=1, sticky="WE", padx=10)
 
-        self.browse_button = ttk.Button(self.root, text=get_ui_string(self.strings, "btn_browse"), command=self.browse_file, width=11)
-        self.browse_button.grid(row=1, column=2, padx=10, sticky="E")
+        self.entry_file = ttk.Entry(self.root, textvariable=self.pdf_file_var, state="readonly")
+        self.entry_file.grid(row=1, column=1, sticky="WE", padx=(2, 0))
+
+        self.browse_button = ttk.Button(
+            self.root,
+            text=get_ui_string(self.strings, "btn_browse"),
+            command=self.browse_file,
+            width=UNIFORM_ACTION_BUTTON_WIDTH,
+        )
+        self.browse_button.grid(row=1, column=2, sticky="E", padx=(3, 10))
 
         # Search string
         self.label_search_str = ttk.Label(self.root, text=get_ui_string(self.strings, "search_term"))
-        self.label_search_str.grid(row=2, column=0, sticky="E", padx=10, pady=2)
+        self.label_search_str.grid(row=2, column=0, sticky="E", padx=(10, 4), pady=2)
 
         self.search_phrase_var = StringVar()
         self.search_phrase_var.set(self.app_settings.settings["search_str"])
 
         self.entry_search_str = ttk.Entry(self.root, textvariable=self.search_phrase_var)
-        self.entry_search_str.grid(row=2, column=1, sticky="WE", columnspan=2, padx=10)
-
-        # Filter frame
-        self.filter_frame = ttk.Frame(self.root)
-        self.filter_frame.grid(row=3, column=0, columnspan=3, sticky="WE", pady=2)
-        self.filter_frame.grid_columnconfigure(1, weight=1)
+        self.entry_search_str.grid(row=2, column=1, sticky="WE", padx=(2, 0))
 
         # Options for highlighting
         self.relevant_lines_var = IntVar()
@@ -201,9 +259,9 @@ class PDFHighlighterApp:
         )
 
         self.checkbox_relevant_lines = ttk.Checkbutton(
-            self.filter_frame, text=get_ui_string(self.strings, "mark_only_relevant"), variable=self.relevant_lines_var
+            self.root, text=get_ui_string(self.strings, "mark_only_relevant"), variable=self.relevant_lines_var
         )
-        self.checkbox_relevant_lines.grid(row=0, column=0, sticky="W", padx=10)
+        self.checkbox_relevant_lines.grid(row=3, column=0, columnspan=2, sticky="W", padx=10, pady=2)
 
         # Filter variables
         self.names_var = StringVar()
@@ -219,11 +277,21 @@ class PDFHighlighterApp:
         self.enable_filter_var.trace_add("write", lambda *args: self.app_settings.update_setting("enable_filter", self.enable_filter_var.get()))
 
         # Filter and watermark buttons
-        self.button_filter = ttk.Button(self.filter_frame, text=get_ui_string(self.strings, "btn_filter"), command=self.open_filter_window)
-        self.button_filter.grid(row=0, column=1, sticky="E", padx=10)
+        self.button_filter = ttk.Button(
+            self.root,
+            text=get_ui_string(self.strings, "btn_filter"),
+            command=self.open_filter_window,
+            width=UNIFORM_ACTION_BUTTON_WIDTH,
+        )
+        self.button_filter.grid(row=3, column=1, sticky="E", padx=(2, 1), pady=2)
 
-        self.button_watermark = ttk.Button(self.filter_frame, text=get_ui_string(self.strings, "btn_watermark"), command=self.open_watermark_window)
-        self.button_watermark.grid(row=0, column=2, sticky="E", padx=10)
+        self.button_watermark = ttk.Button(
+            self.root,
+            text=get_ui_string(self.strings, "btn_watermark"),
+            command=self.open_watermark_window,
+            width=UNIFORM_ACTION_BUTTON_WIDTH,
+        )
+        self.button_watermark.grid(row=3, column=2, sticky="E", padx=(3, 10), pady=2)
 
         # Progress bar
         self.progress_bar = ttk.Progressbar(self.root, orient="horizontal", length=400, mode="determinate")
@@ -232,7 +300,8 @@ class PDFHighlighterApp:
         # Status label
         self.status_var = StringVar()
         self.status_var.set(get_ui_string(self.strings, "status_waiting"))
-        ttk.Label(self.root, textvariable=self.status_var).grid(row=5, column=0, columnspan=3, padx=10, pady=2)
+        self.status_label = ttk.Label(self.root, textvariable=self.status_var)
+        self.status_label.grid(row=5, column=0, columnspan=3, padx=10, pady=2)
 
         # Start/Abort button
         self.start_abort_button = ttk.Button(self.root, text=get_ui_string(self.strings, "btn_start"), command=self.start_processing)
@@ -254,8 +323,9 @@ class PDFHighlighterApp:
         self.version_label = ttk.Label(self.version_frame, text="...", foreground=self.version_color)
         self.version_label.pack(side="left")
 
-        self.update_label = ttk.Label(self.version_frame, text="...", foreground="#5c5c5c", cursor="hand2")
+        self.update_label = ttk.Label(self.version_frame, text="...", style="Link.TLabel", cursor="hand2")
         self.update_label.pack(side="left", padx=10)
+
         # Clicking the update label either forces a re-check (if no cached asset) or starts download directly
         def _on_update_label_click(_event=None):
             try:
@@ -267,9 +337,12 @@ class PDFHighlighterApp:
                 ):
                     # Optional: ensure cached tag still represents a newer version
                     try:
-                        if self.update_checker.last_version_tag and Version.from_str(self.update_checker.last_version_tag) <= Version.from_str(self.app_settings.settings["version"]):
+                        if self.update_checker.last_version_tag and Version.from_str(self.update_checker.last_version_tag) <= Version.from_str(
+                            self.app_settings.settings["version"]
+                        ):
                             # Version already current; fallback to check instead
                             import threading as _th
+
                             _th.Thread(
                                 target=lambda: self.check_for_app_updates(current_version, force_check=True),
                                 daemon=True,
@@ -283,12 +356,14 @@ class PDFHighlighterApp:
                     if not dl:
                         # Fallback to forced check if somehow missing
                         import threading as _th
+
                         _th.Thread(
                             target=lambda: self.check_for_app_updates(current_version, force_check=True),
                             daemon=True,
                         ).start()
                         return
                     import threading
+
                     threading.Thread(
                         target=lambda: self.update_checker.download_and_run_installer(dl, sha),
                         daemon=True,
@@ -298,6 +373,7 @@ class PDFHighlighterApp:
                     if getattr(self.update_checker, "_active_check", False):
                         return
                     import threading
+
                     threading.Thread(
                         target=lambda: self.check_for_app_updates(current_version, force_check=True),
                         daemon=True,
@@ -313,9 +389,11 @@ class PDFHighlighterApp:
         # Set up the grid layout
         self.root.grid_columnconfigure(0, minsize=178)  # Set a fixed minimum width for column 0
         self.root.grid_columnconfigure(1, weight=1)  # Allow column 1 to expand and fill space
-        self.root.grid_columnconfigure(2, weight=0, minsize=120)  # Set a fixed minimum width for column 2
+        self.root.grid_columnconfigure(2, weight=0)  # Header controls and action buttons
 
+        self._apply_theme()
         self.update_all_widget_texts()
+        self._poll_system_theme()
         # Set the initial state of the UI based on the settings
         self.on_language_change(self.app_settings.settings["language"])
 
@@ -333,6 +411,10 @@ class PDFHighlighterApp:
         self.button_filter.config(text=get_ui_string(self.strings, "btn_filter"))
         self.button_watermark.config(text=get_ui_string(self.strings, "btn_watermark"))
         self.language_menu.config(text=get_ui_string(self.strings, "select_language"))
+        self.theme_menu.entryconfigure(0, label=get_ui_string(self.strings, "theme_system"))
+        self.theme_menu.entryconfigure(1, label=get_ui_string(self.strings, "theme_light"))
+        self.theme_menu.entryconfigure(2, label=get_ui_string(self.strings, "theme_dark"))
+        self._set_theme_button_icon()
 
         # Update version-related text
         self.update_version_labels()
@@ -347,6 +429,266 @@ class PDFHighlighterApp:
         Tooltip(self.button_watermark, text=get_ui_string(self.strings, "configure_watermark"))
         Tooltip(self.start_abort_button, text=get_ui_string(self.strings, "start_cancel"))
         Tooltip(self.language_menu, text=get_ui_string(self.strings, "select_language"))
+        Tooltip(self.theme_button, text=get_ui_string(self.strings, "theme_menu_tooltip"))
+
+    def _load_theme_icon_images(self) -> dict[str, ImageTk.PhotoImage]:
+        icons = {}
+        icon_dir = self.paths.bundle_dir / "assets" / "light_dark"
+        for theme_name in ("light", "dark"):
+            icon_path = icon_dir / f"{theme_name}_cut.png"
+            try:
+                with Image.open(icon_path) as icon:
+                    image = icon.resize(THEME_ICON_SIZE, Image.Resampling.LANCZOS)
+                    icons[theme_name] = ImageTk.PhotoImage(image)
+            except Exception as e:
+                logging.getLogger("main_window").debug("Could not load theme icon %s: %s", icon_path, e)
+        return icons
+
+    def _open_theme_menu(self) -> None:
+        self._configure_menu(self.theme_menu, getattr(self, "_current_theme_colors", get_theme_colors("light")))
+        x = self.theme_button.winfo_rootx()
+        y = self.theme_button.winfo_rooty() + self.theme_button.winfo_height()
+        try:
+            self.theme_menu.tk_popup(x, y)
+        finally:
+            self.theme_menu.grab_release()
+
+    def _set_theme_button_icon(self, theme_mode: str | None = None) -> None:
+        effective_theme = get_effective_theme(theme_mode or self.app_settings.settings.get("theme_mode", "system"))
+        image = getattr(self, "theme_icon_images", {}).get(effective_theme)
+        if image is None:
+            self.theme_button.configure(image="", text="")
+            return
+
+        self.theme_button.configure(image=image, text="", compound="left")
+        setattr(self.theme_button, "image", image)
+
+    def _apply_theme(self, theme_mode: str | None = None) -> None:
+        theme_mode = theme_mode or self.app_settings.settings.get("theme_mode", "system")
+        effective_theme = get_effective_theme(theme_mode)
+        theme_name = "breeze-dark" if effective_theme == "dark" else "breeze"
+        try:
+            self.root.tk.call("package", "require", f"ttk::theme::{theme_name}")
+        except Exception as e:
+            logging.getLogger("main_window").debug("Could not explicitly load %s theme: %s", theme_name, e)
+        self.style.theme_use(theme_name)
+
+        colors = get_theme_colors(effective_theme)
+        self._current_theme_colors = colors
+        self._current_effective_theme = effective_theme
+        setattr(self.root, "_hsph_effective_theme", effective_theme)
+        self._set_tk_palette(colors)
+        self._configure_ttk_styles(colors)
+        self.apply_theme_to_window(self.root)
+
+        if hasattr(self, "theme_menu"):
+            self._configure_menu(self.theme_menu, colors)
+        if hasattr(self, "language_menu"):
+            self._configure_widget_menu(self.language_menu, colors)
+
+        self._current_effective_theme = effective_theme
+        if hasattr(self, "theme_button"):
+            self._set_theme_button_icon(theme_mode)
+        if hasattr(self, "update_label"):
+            self.update_label.configure(style="Link.TLabel")
+        if hasattr(self, "version_label"):
+            self.update_version_labels()
+        self._apply_theme_to_open_windows()
+
+    def _set_tk_palette(self, colors: ThemeColors) -> None:
+        try:
+            self.root.tk_setPalette(
+                background=colors.background,
+                foreground=colors.foreground,
+                activeBackground=colors.active_background,
+                activeForeground=colors.select_foreground,
+                highlightColor=colors.select_background,
+                selectBackground=colors.select_background,
+                selectForeground=colors.select_foreground,
+            )
+        except Exception as e:
+            logging.getLogger("main_window").debug("Could not update Tk palette: %s", e)
+
+    def _configure_ttk_styles(self, colors: ThemeColors) -> None:
+        label_font = ("Arial", 10)
+        title_font = ("Arial", 16, "bold")
+
+        self.style.configure(".", background=colors.background, foreground=colors.foreground)
+        self.style.configure("TFrame", background=colors.background)
+        self.style.configure("TLabelframe", background=colors.background, foreground=colors.foreground)
+        self.style.configure("TLabelframe.Label", background=colors.background, foreground=colors.foreground)
+        self.style.configure("TLabel", font=label_font, background=colors.background, foreground=colors.foreground)
+        self.style.configure("Title.TLabel", font=title_font, background=colors.background, foreground=colors.foreground)
+        self.style.configure("Logo.TLabel", background=colors.background, foreground=colors.foreground)
+        self.style.configure("Link.TLabel", font=label_font, background=colors.background, foreground=colors.muted_foreground)
+        self.style.configure("TButton", font=label_font, borderwidth="4", foreground=colors.foreground)
+        self.style.configure("TMenubutton", font=label_font, borderwidth="4", foreground=colors.foreground)
+        self.style.configure("TCheckbutton", font=label_font, background=colors.background, foreground=colors.foreground)
+        self.style.configure("TRadiobutton", font=label_font, background=colors.background, foreground=colors.foreground)
+        self.style.configure(
+            "TEntry",
+            font=label_font,
+            borderwidth="2",
+            fieldbackground=colors.field_background,
+            foreground=colors.foreground,
+            insertcolor=colors.foreground,
+        )
+        self.style.configure(
+            "TCombobox",
+            fieldbackground=colors.field_background,
+            foreground=colors.foreground,
+            selectbackground=colors.select_background,
+            selectforeground=colors.select_foreground,
+        )
+        self.style.configure(
+            "TSpinbox",
+            fieldbackground=colors.field_background,
+            foreground=colors.foreground,
+            insertcolor=colors.foreground,
+        )
+        self.style.configure("Horizontal.TProgressbar", thickness=20)
+        self.style.map(
+            "TEntry",
+            foreground=[("disabled", colors.muted_foreground), ("readonly", colors.foreground)],
+            fieldbackground=[("disabled", colors.field_background), ("readonly", colors.field_background)],
+        )
+        self.style.map(
+            "TCombobox",
+            foreground=[("readonly", colors.foreground), ("disabled", colors.muted_foreground)],
+            fieldbackground=[("readonly", colors.field_background), ("disabled", colors.field_background)],
+        )
+        self.style.map(
+            "TSpinbox",
+            foreground=[("disabled", colors.muted_foreground)],
+            fieldbackground=[("disabled", colors.field_background)],
+        )
+
+    def apply_theme_to_window(self, window) -> None:
+        """Apply the active theme to a Tk/Toplevel and classic Tk descendants."""
+        colors = getattr(self, "_current_theme_colors", get_theme_colors(getattr(self, "_current_effective_theme", "light")))
+        setattr(window, "_hsph_effective_theme", getattr(self, "_current_effective_theme", "light"))
+        self._configure_classic_widget(window, colors)
+        for child in window.winfo_children():
+            self._apply_theme_to_widget_tree(child, colors)
+
+    def _apply_theme_to_widget_tree(self, widget, colors: ThemeColors) -> None:
+        if widget.__class__.__module__.startswith("tkinterweb"):
+            return
+        self._configure_classic_widget(widget, colors)
+        self._configure_widget_menu(widget, colors)
+        for child in widget.winfo_children():
+            self._apply_theme_to_widget_tree(child, colors)
+
+    def _configure_classic_widget(self, widget, colors: ThemeColors) -> None:
+        try:
+            widget_class = widget.winfo_class()
+        except Exception:
+            return
+
+        if widget_class in {"Tk", "Toplevel", "Frame", "Labelframe"}:
+            self._safe_configure(widget, background=colors.background, highlightbackground=colors.background)
+        elif widget_class == "Button":
+            self._safe_configure(
+                widget,
+                background=colors.background,
+                foreground=colors.foreground,
+                activebackground=colors.background,
+                activeforeground=colors.foreground,
+                highlightbackground=colors.background,
+                highlightcolor=colors.select_background,
+                borderwidth=0,
+                relief="flat",
+                overrelief="flat",
+                padx=0,
+                pady=0,
+            )
+        elif widget_class == "Label":
+            self._safe_configure(
+                widget,
+                background=colors.background,
+                foreground=colors.foreground,
+                highlightthickness=0,
+                borderwidth=0,
+            )
+        elif widget_class == "Text":
+            self._safe_configure(
+                widget,
+                background=colors.field_background,
+                foreground=colors.foreground,
+                insertbackground=colors.foreground,
+                selectbackground=colors.select_background,
+                selectforeground=colors.select_foreground,
+                highlightbackground=colors.border,
+                highlightcolor=colors.select_background,
+            )
+        elif widget_class == "Menu":
+            self._configure_menu(widget, colors)
+
+    def _configure_widget_menu(self, widget, colors: ThemeColors) -> None:
+        try:
+            menu_name = widget.cget("menu")
+        except Exception:
+            return
+        if not menu_name:
+            return
+        try:
+            self._configure_menu(widget.nametowidget(menu_name), colors)
+        except Exception:
+            return
+
+    def _configure_menu(self, menu, colors: ThemeColors) -> None:
+        self._safe_configure(
+            menu,
+            background=colors.field_background,
+            foreground=colors.foreground,
+            activebackground=colors.active_background,
+            activeforeground=colors.select_foreground,
+            disabledforeground=colors.muted_foreground,
+            selectcolor=colors.select_background,
+            borderwidth=1,
+            relief="solid",
+        )
+
+    @staticmethod
+    def _safe_configure(widget, **kwargs) -> None:
+        try:
+            widget.configure(**kwargs)
+        except Exception:
+            for key, value in kwargs.items():
+                try:
+                    widget.configure(**{key: value})
+                except Exception:
+                    pass
+
+    def _apply_theme_to_open_windows(self) -> None:
+        for owner_name in ("filter_dialog", "watermark_dialog", "preview_window_handler", "dev_tools"):
+            owner = getattr(self, owner_name, None)
+            window = getattr(owner, "window", None)
+            if window is None:
+                continue
+            try:
+                if window.winfo_exists():
+                    self.apply_theme_to_window(window)
+            except Exception as e:
+                logging.getLogger("main_window").debug("Could not theme %s window: %s", owner_name, e)
+
+    def _on_theme_mode_change(self, mode: str) -> None:
+        self.app_settings.update_setting("theme_mode", mode)
+        self._apply_theme(mode)
+
+    def _poll_system_theme(self) -> None:
+        if not getattr(self.root, "tk", None):
+            return
+
+        if self.app_settings.settings.get("theme_mode", "system") == "system":
+            new_effective_theme = get_effective_theme("system")
+            if new_effective_theme != getattr(self, "_current_effective_theme", None):
+                self._apply_theme("system")
+
+        try:
+            self.root.after(2000, self._poll_system_theme)
+        except RuntimeError:
+            return
 
     def open_filter_window(self):
         """Open the filter configuration dialog."""
@@ -400,7 +742,7 @@ class PDFHighlighterApp:
         # Schedule on main thread since this is called from update check thread
         try:
             # If the root has been destroyed (common in screenshot mode teardown), silently ignore
-            if not getattr(self.root, 'tk', None):
+            if not getattr(self.root, "tk", None):
                 return
             self.root.after_idle(lambda: self._safe_update_version_info(latest_version, current_version))
         except RuntimeError:
@@ -504,7 +846,7 @@ class PDFHighlighterApp:
         search_str = self.search_phrase_var.get()
 
         if not all([input_file, search_str]):
-            messagebox.showerror(get_ui_string(self.strings, "error"), get_ui_string(self.strings, "val_all_required"))
+            show_error(self, get_ui_string(self.strings, "error"), get_ui_string(self.strings, "val_all_required"))
             self.finalize_processing()
             return
 
@@ -523,7 +865,7 @@ class PDFHighlighterApp:
             self.paths.is_valid_path(input_file)
             document = Document(input_file)
             if document.is_encrypted:
-                messagebox.showerror(get_ui_string(self.strings, "error"), get_ui_string(self.strings, "val_pdf_protected"))
+                self.root.after_idle(lambda: show_error(self, get_ui_string(self.strings, "error"), get_ui_string(self.strings, "val_pdf_protected")))
                 self.finalize_processing()
                 return
 
@@ -563,11 +905,11 @@ class PDFHighlighterApp:
                 # Prompt for output file location - schedule on main thread
                 self.root.after_idle(lambda: self._handle_save_dialog(document, input_file, total_matches, total_skipped))
             elif self.processing_active and total_marked == 0:
-                self.root.after_idle(lambda: messagebox.showinfo(get_ui_string(self.strings, "info"), get_ui_string(self.strings, "val_nothing")))
+                self.root.after_idle(lambda: show_info(self, get_ui_string(self.strings, "info"), get_ui_string(self.strings, "val_nothing")))
 
         except Exception as e:
             error_msg = str(e)
-            self.root.after_idle(lambda: messagebox.showerror(get_ui_string(self.strings, "error"), error_msg))
+            self.root.after_idle(lambda: show_error(self, get_ui_string(self.strings, "error"), error_msg))
         finally:
             self.root.after_idle(self.finalize_processing)
 
@@ -582,13 +924,14 @@ class PDFHighlighterApp:
         if output_file:  # If user specifies a file
             document.save(output_file)
             document.close()
-            messagebox.showinfo(
+            show_info(
+                self,
                 get_ui_string(self.strings, "status_done"),
                 self.get_plural_string("processing_complete", total_matches).format(total_matches, total_skipped),
             )
         else:
             document.close()
-            messagebox.showinfo(get_ui_string(self.strings, "info"), get_ui_string(self.strings, "val_no_output"))
+            show_info(self, get_ui_string(self.strings, "info"), get_ui_string(self.strings, "val_no_output"))
 
     def finalize_processing(self):
         """

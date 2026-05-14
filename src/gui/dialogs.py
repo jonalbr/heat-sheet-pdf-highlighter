@@ -5,7 +5,7 @@ Dialog windows (Filter and Watermark dialogs)
 import csv
 import re
 import time
-from tkinter import WORD, IntVar, Label, StringVar, Text, Toplevel, filedialog, messagebox, ttk
+from tkinter import WORD, IntVar, StringVar, Text, Toplevel, filedialog, ttk
 from tkinter import Button as tkButton
 from typing import TYPE_CHECKING, Dict, Optional
 import logging
@@ -15,6 +15,7 @@ if TYPE_CHECKING:
 
 from ..models import HighlightMode
 from ..version import Version
+from .message_dialog import ask_ok_cancel, ask_retry_cancel, ask_yes_no_cancel, show_error, show_info
 from .ui_strings import get_ui_string
 from .widgets import Tooltip
 
@@ -37,10 +38,10 @@ class UpdateDialogs:
 
     def show_up_to_date(self):
         """Show message that app is up to date."""
-        messagebox.showinfo(
+        show_info(
+            self.app,
             get_ui_string(self.app.strings, "upd_ok"),
             get_ui_string(self.app.strings, "upd_latest"),
-            parent=self.app.root,
         )
 
     def show_update_available(self, latest_version: Version) -> Optional[bool]:
@@ -52,12 +53,10 @@ class UpdateDialogs:
             False if user doesn't want to update
             None if user cancelled
         """
-        return messagebox.askyesnocancel(
+        return ask_yes_no_cancel(
+            self.app,
             get_ui_string(self.app.strings, "upd_avail"),
             get_ui_string(self.app.strings, "upd_prompt").format(latest_version),
-            icon="question",
-            default="yes",
-            parent=self.app.root,
         )
 
     def show_update_reminder_choice(self) -> bool:
@@ -68,13 +67,13 @@ class UpdateDialogs:
             True if user doesn't want to be reminded again
             False if user wants to be reminded again
         """
-        return messagebox.askokcancel(
+        return ask_ok_cancel(
+            self.app,
             get_ui_string(self.app.strings, "upd_info"),
             get_ui_string(
                 self.app.strings,
                 "upd_note",
             ),
-            parent=self.app.root,
         )
 
     def show_update_error_retry(self, error_message: str) -> bool:
@@ -85,18 +84,18 @@ class UpdateDialogs:
             True if user wants to retry
             False if user doesn't want to retry
         """
-        return messagebox.askretrycancel(
+        return ask_retry_cancel(
+            self.app,
             get_ui_string(self.app.strings, "upd_error"),
             get_ui_string(self.app.strings, "upd_check_failed").format(error_message),
-            parent=self.app.root,
         )
 
     def show_download_error(self, error_message: str):
         """Show download error message."""
-        messagebox.showerror(
+        show_error(
+            self.app,
             get_ui_string(self.app.strings, "error"),
             get_ui_string(self.app.strings, "upd_download_failed").format(error_message),
-            parent=self.app.root,
         )
 
     def setup_download_progress(self, total_size: int):
@@ -191,6 +190,7 @@ class FilterDialog:
         """Open the filter dialog window."""
         self.window = Toplevel(self.parent)
         self.window.title(get_ui_string(self.app.strings, "btn_filter"))
+        self.app.apply_theme_to_window(self.window)
         self.window.grab_set()
         self.window.focus_set()
 
@@ -281,6 +281,7 @@ class FilterDialog:
 
         button_abort = ttk.Button(button_frame2, text=self.app.strings["btn_cancel"], command=lambda: self.window.destroy() if self.window else None)
         button_abort.pack(side="right", padx=10, expand=True)
+        self.app.apply_theme_to_window(self.window)
 
     def refresh_ui_strings(self):
         """Refresh the Filter dialog UI strings by recreating the window if open."""
@@ -308,6 +309,7 @@ class WatermarkDialog:
         """Open the watermark dialog window."""
         self.window = Toplevel(self.parent)
         self.window.title(get_ui_string(self.app.strings, "wm_settings"))
+        self.app.apply_theme_to_window(self.window)
         self.window.focus_set()
 
         temp_enabled = IntVar(value=1 if self.app.app_settings.settings.get("watermark_enabled") == "True" else 0)
@@ -316,22 +318,22 @@ class WatermarkDialog:
         temp_size = StringVar(value=str(self.app.app_settings.settings.get("watermark_size")))
         temp_position = StringVar(value=self.app.app_settings.settings.get("watermark_position"))
 
-        Label(self.window, text=get_ui_string(self.app.strings, "wm_enable")).grid(row=0, column=0, sticky="W", padx=10, pady=5)
+        ttk.Label(self.window, text=get_ui_string(self.app.strings, "wm_enable")).grid(row=0, column=0, sticky="W", padx=10, pady=5)
         chk = ttk.Checkbutton(self.window, variable=temp_enabled)
         chk.grid(row=0, column=1, sticky="W", padx=10, pady=5)
 
-        Label(self.window, text=get_ui_string(self.app.strings, "wm_text")).grid(row=1, column=0, sticky="W", padx=10, pady=5)
+        ttk.Label(self.window, text=get_ui_string(self.app.strings, "wm_text")).grid(row=1, column=0, sticky="W", padx=10, pady=5)
         entry_text = ttk.Entry(self.window, textvariable=temp_text)
         entry_text.grid(row=1, column=1, padx=10, pady=5)
 
-        Label(self.window, text=get_ui_string(self.app.strings, "wm_color_hex")).grid(row=2, column=0, sticky="W", padx=10, pady=5)
+        ttk.Label(self.window, text=get_ui_string(self.app.strings, "wm_color_hex")).grid(row=2, column=0, sticky="W", padx=10, pady=5)
         entry_color = ttk.Entry(self.window, textvariable=temp_color)
         entry_color.grid(row=2, column=1, padx=10, pady=5)
 
         # Preselect color frame
         preselect_frame = ttk.Frame(self.window)
         preselect_frame.grid(row=3, column=0, columnspan=2, padx=10, pady=5, sticky="W")
-        Label(preselect_frame, text=get_ui_string(self.app.strings, "wm_pre_color")).pack(side="left")
+        ttk.Label(preselect_frame, text=get_ui_string(self.app.strings, "wm_pre_color")).pack(side="left")
 
         preset_colors = ["#FFA500", "#FF0000", "#00FF00", "#0000FF"]
         preselect_buttons: Dict[str, tkButton] = {}
@@ -352,11 +354,11 @@ class WatermarkDialog:
 
         temp_color.trace_add("write", on_color_entry)
 
-        Label(self.window, text=get_ui_string(self.app.strings, "wm_size")).grid(row=4, column=0, sticky="W", padx=10, pady=5)
+        ttk.Label(self.window, text=get_ui_string(self.app.strings, "wm_size")).grid(row=4, column=0, sticky="W", padx=10, pady=5)
         entry_size = ttk.Spinbox(self.window, from_=1, to=100, textvariable=temp_size, width=5)
         entry_size.grid(row=4, column=1, padx=10, pady=5, sticky="W")
 
-        Label(self.window, text=get_ui_string(self.app.strings, "wm_pos")).grid(row=5, column=0, sticky="W", padx=10, pady=5)
+        ttk.Label(self.window, text=get_ui_string(self.app.strings, "wm_pos")).grid(row=5, column=0, sticky="W", padx=10, pady=5)
         position_options = ["top", "bottom"]
         option_position = ttk.OptionMenu(self.window, temp_position, temp_position.get(), *position_options)
         option_position.grid(row=5, column=1, padx=10, pady=5, sticky="W")
@@ -401,6 +403,7 @@ class WatermarkDialog:
             self.window, text=get_ui_string(self.app.strings, "btn_cancel"), command=lambda: self.window.destroy() if self.window else None
         )
         btn_cancel.grid(row=8, column=1, pady=10, padx=10, sticky="W")
+        self.app.apply_theme_to_window(self.window)
 
     def refresh_ui_strings(self):
         """Refresh the Watermark dialog UI strings by recreating the window if open."""

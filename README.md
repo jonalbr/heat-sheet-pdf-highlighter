@@ -40,6 +40,9 @@ Notes:
     - **Differential Colors:** Highlight matched names in blue, others in yellow
   - **Bulk name import:** Import names from CSV or text files
   - **Smart name parsing:** Supports comma-separated and newline-separated formats
+- **Theme support:**
+  - **System / Light / Dark mode** available via the top toolbar
+  - **System** mode automatically follows Windows appearance changes
 - **Watermark System:**
   - **Live preview:** See watermark changes in real-time and on different pages
   - **Customizable text, color, size, and position**

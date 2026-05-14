@@ -49,8 +49,8 @@ class Paths:
 
     locales_dir = bundle_dir / "locales"
     tcl_lib_path = bundle_dir / "assets" / "tkBreeze"
-    icon_path = bundle_dir / "assets" / "icon_no_background.ico"
-    logo_path = bundle_dir / "assets" / "logo_no_background.png"
+    icon_path = bundle_dir / "assets" / "icon" / "app_icon.ico"
+    logo_path = bundle_dir / "assets" / "icon" / "app_icon_transparent_cut.png"
     update_script_path = bundle_dir / "update_app.bat"
 
     # Centralized external URLs

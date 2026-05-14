@@ -17,7 +17,13 @@ def test_defaults_loaded_when_file_missing(settings_file):
     # Ensure defaults applied
     assert app.settings["version"] == VERSION_STR
     assert set(app.settings.keys()) >= {
-        "version","search_str","mark_only_relevant_lines","enable_filter","highlight_mode","language"
+        "version",
+        "search_str",
+        "mark_only_relevant_lines",
+        "enable_filter",
+        "highlight_mode",
+        "theme_mode",
+        "language",
     }
 
 
@@ -27,6 +33,13 @@ def test_save_and_reload_persists_changes(settings_file):
     # Recreate instance to force disk load
     app2 = AppSettings(settings_file)
     assert app2.settings["search_str"] == "NewTerm"
+
+
+def test_theme_mode_persists(settings_file):
+    app = AppSettings(settings_file)
+    app.update_setting("theme_mode", "dark")
+    app2 = AppSettings(settings_file)
+    assert app2.settings["theme_mode"] == "dark"
 
 
 def test_update_setting_writes_file(settings_file):
@@ -67,33 +80,37 @@ def test_language_force_env_invalid_fallback_en(settings_file, monkeypatch):
 def test_validator_coercions(settings_file):
     app = AppSettings(settings_file)
     # Directly tamper and revalidate
-    app.settings.update({
-        "mark_only_relevant_lines": 5,
-        "enable_filter": 5,
-        "highlight_mode": "BAD",
-        "language": "zz",
-        "ask_for_update": "MAYBE",
-        "update_available": "MAYBE",
-        "newest_version_available": "-1.0.0",
-        "update_channel": "beta",
-        "verify_sha": "maybe",
-        "update_cache_ttl_seconds": -10,
-        "releases_cache_ttl_seconds": 0,
-        "watermark_enabled": "maybe",
-        "watermark_color": "notcolor",
-        "watermark_size": -5,
-        "watermark_position": "left",
-    })
+    app.settings.update(
+        {
+            "mark_only_relevant_lines": 5,
+            "enable_filter": 5,
+            "highlight_mode": "BAD",
+            "language": "zz",
+            "ask_for_update": "MAYBE",
+            "update_available": "MAYBE",
+            "newest_version_available": "-1.0.0",
+            "update_channel": "beta",
+            "theme_mode": "bad",
+            "verify_sha": "maybe",
+            "update_cache_ttl_seconds": -10,
+            "releases_cache_ttl_seconds": 0,
+            "watermark_enabled": "maybe",
+            "watermark_color": "notcolor",
+            "watermark_size": -5,
+            "watermark_position": "left",
+        }
+    )
     app.validate_settings()
     s = app.settings
-    assert s["mark_only_relevant_lines"] in (0,1)
-    assert s["enable_filter"] in (0,1)
+    assert s["mark_only_relevant_lines"] in (0, 1)
+    assert s["enable_filter"] in (0, 1)
     assert s["highlight_mode"] == "NAMES_DIFF_COLOR"
     assert s["language"] == "en"
     assert s["ask_for_update"] == "True"
     assert s["update_available"] == "False"
     assert s["newest_version_available"] == "0.0.0"
     assert s["update_channel"] == "stable"
+    assert s["theme_mode"] == "system"
     assert s["verify_sha"] == "True"
     assert s["update_cache_ttl_seconds"] == 86400
     assert s["releases_cache_ttl_seconds"] == 600

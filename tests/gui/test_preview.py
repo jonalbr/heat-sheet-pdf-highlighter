@@ -1,0 +1,39 @@
+from src.gui.preview import _page_to_image
+
+
+class FakePixmap:
+    def __init__(self, samples, alpha=False):
+        self.width = 1
+        self.height = 1
+        self.samples = samples
+        self.alpha = alpha
+
+
+class FakePage:
+    def __init__(self, pixmap):
+        self.pixmap = pixmap
+        self.called = False
+
+    def get_pixmap(self):
+        self.called = True
+        return self.pixmap
+
+
+def test_page_to_image_uses_current_pymupdf_page_api():
+    page = FakePage(FakePixmap(bytes([10, 20, 30])))
+
+    image = _page_to_image(page)
+
+    assert page.called
+    assert image.mode == "RGB"
+    assert image.size == (1, 1)
+    assert image.getpixel((0, 0)) == (10, 20, 30)
+
+
+def test_page_to_image_handles_alpha_pixmaps():
+    page = FakePage(FakePixmap(bytes([10, 20, 30, 40]), alpha=True))
+
+    image = _page_to_image(page)
+
+    assert image.mode == "RGBA"
+    assert image.getpixel((0, 0)) == (10, 20, 30, 40)

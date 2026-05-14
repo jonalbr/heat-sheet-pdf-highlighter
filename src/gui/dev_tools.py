@@ -8,7 +8,7 @@ import os
 import queue
 import threading
 import webbrowser
-from tkinter import BooleanVar, StringVar, Toplevel, messagebox, ttk
+from tkinter import BooleanVar, StringVar, Toplevel, ttk
 from typing import TYPE_CHECKING
 
 import markdown2
@@ -16,6 +16,7 @@ from tkinterweb import HtmlFrame
 
 from ..utils.cache import load_releases_cache, save_releases_cache
 from ..version import Version
+from .message_dialog import ask_ok_cancel, show_error
 from .ui_strings import get_ui_string
 from .widgets import Tooltip
 
@@ -52,6 +53,7 @@ class DevToolsWindow:
 
         self.window = Toplevel(self.app.root)
         self.window.title(get_ui_string(self.app.strings, "dev_tools"))
+        self.app.apply_theme_to_window(self.window)
         self.window.transient(self.app.root)
         self.window.resizable(False, False)
         self.window.protocol("WM_DELETE_WINDOW", self.window.destroy)
@@ -151,6 +153,7 @@ class DevToolsWindow:
             height=250,
         )
         self.notes_html.load_html("")
+        self._configure_notes_html()
         self.notes_html.grid(row=0, column=0, sticky="nsew")
 
         self.notes_frame.grid_columnconfigure(0, weight=1)
@@ -179,6 +182,7 @@ class DevToolsWindow:
                 self._populate_releases_for_screenshot()
             except Exception as e:  # pragma: no cover - defensive
                 logging.getLogger("dev_tools").exception("Error populating screenshot releases: %s", e)
+        self.app.apply_theme_to_window(self.window)
 
     def refresh_ui_strings(self):
         """Refresh UI strings for the dev tools window after language change.
@@ -231,7 +235,7 @@ class DevToolsWindow:
             webbrowser.open(path)
         except Exception as e:
             logging.getLogger("dev_tools").exception("Error opening settings file: %s", e)
-            messagebox.showerror(get_ui_string(self.app.strings, "error"), str(e))
+            show_error(self.app, get_ui_string(self.app.strings, "error"), str(e))
 
     def _apply_releases(self, releases: list[dict]):
         try:
@@ -292,9 +296,45 @@ class DevToolsWindow:
             html = "<pre>" + (text or "") + "</pre>"
         try:
             # Load HTML into the HtmlFrame widget (tkinterweb handles CSS and headings)
-            self.notes_html.load_html(html or "")
+            self.notes_html.load_html(self._themed_html(html or ""))
         except Exception as e:
             logging.getLogger("dev_tools").exception("Error setting HTML: %s", e)
+
+    def _configure_notes_html(self) -> None:
+        colors = getattr(self.app, "_current_theme_colors", None)
+        if colors is None:
+            return
+        try:
+            self.notes_html.configure(background=colors.field_background)
+        except Exception:
+            pass
+
+    def _themed_html(self, body_html: str) -> str:
+        colors = getattr(self.app, "_current_theme_colors", None)
+        if colors is None:
+            return body_html
+        return f"""
+        <html>
+          <head>
+            <style>
+              body {{
+                background: {colors.field_background};
+                color: {colors.foreground};
+                font-family: "Segoe UI", Arial, sans-serif;
+                font-size: 10pt;
+                margin: 10px;
+              }}
+              a {{ color: {colors.select_background}; }}
+              code, pre {{
+                background: {colors.background};
+                color: {colors.foreground};
+                border: 1px solid {colors.border};
+              }}
+            </style>
+          </head>
+          <body>{body_html}</body>
+        </html>
+        """
 
     @staticmethod
     def md_to_html(md_text):
@@ -328,7 +368,7 @@ class DevToolsWindow:
             except Exception as _exc:
                 # Use the main app root to show errors to avoid scheduling on a possibly-destroyed Toplevel
                 try:
-                    self._schedule_on_main(lambda e=_exc: messagebox.showerror(get_ui_string(self.app.strings, "error"), str(e)))
+                    self._schedule_on_main(lambda e=_exc: show_error(self.app, get_ui_string(self.app.strings, "error"), str(e)))
                 except Exception as e:
                     logging.getLogger("dev_tools").exception("Error showing error message: %s", e)
 
@@ -407,7 +447,7 @@ class DevToolsWindow:
 
     def _show_error_async(self, exc: Exception) -> None:
         try:
-            self._schedule_on_main(lambda e=exc: messagebox.showerror(get_ui_string(self.app.strings, "error"), str(e)))
+            self._schedule_on_main(lambda e=exc: show_error(self.app, get_ui_string(self.app.strings, "error"), str(e)))
         except Exception as e:
             logging.getLogger("dev_tools").exception("Error showing error message: %s", e)
 
@@ -417,7 +457,8 @@ class DevToolsWindow:
             return
         rel = getattr(self, "_releases_cache", {}).get(tag)
         if not rel or not rel.get("exe_url"):
-            messagebox.showerror(
+            show_error(
+                self.app,
                 get_ui_string(self.app.strings, "error"),
                 get_ui_string(self.app.strings, "upd_download_failed").format("No installer asset"),
             )
@@ -427,13 +468,15 @@ class DevToolsWindow:
         sha_url = rel.get("sha_url") if verify_required else None
         # If verification is required globally but the release has no .sha256, block install to match updater policy
         if verify_required and not sha_url:
-            messagebox.showerror(
+            show_error(
+                self.app,
                 get_ui_string(self.app.strings, "error"),
                 get_ui_string(self.app.strings, "upd_download_failed").format("Missing checksum (.sha256) for this release"),
             )
             return
         # Confirm install with the user
-        if not messagebox.askokcancel(
+        if not ask_ok_cancel(
+            self.app,
             get_ui_string(self.app.strings, "dev_install_specific"),
             get_ui_string(self.app.strings, "dev_confirm_install").format(tag),
         ):
@@ -442,7 +485,8 @@ class DevToolsWindow:
         threading.Thread(target=lambda: self.app.update_checker.download_and_run_installer(exe_url, sha_url), daemon=True).start()
 
     def _reset_settings(self):
-        if not messagebox.askokcancel(
+        if not ask_ok_cancel(
+            self.app,
             get_ui_string(self.app.strings, "dev_reset_settings"),
             get_ui_string(self.app.strings, "dev_confirm_reset"),
         ):

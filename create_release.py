@@ -104,7 +104,7 @@ def _try_capture_screenshot(timeout_sec: int = 20) -> None:
         print(f"Screenshot capture error: {e}")
 
 
-def _capture_target_screenshot(target: str, out_path: Path, timeout_sec: int = 25, pdf_for_preview: str | None = None, delay: float = 0.2) -> None:
+def _capture_target_screenshot(target: str, out_path: Path, timeout_sec: int = 25, pdf_for_preview: str | None = None, delay: float = 0.6) -> None:
     """Capture a screenshot for a specific target window/dialog via main.py flags.
 
     target: one of 'main', 'filter', 'watermark', 'devtools', 'preview'
@@ -260,8 +260,17 @@ def main() -> None:
 
     # Collect files to stage (only those that exist)
     to_stage: list[str] = []
-    for p in (PYPROJECT_TOML, SETUP_PY, SETUP_ISS, CONSTANTS_PY,
-              SCREENSHOT_PATH, SCREENSHOT_FILTER, SCREENSHOT_WATERMARK, SCREENSHOT_DEVTOOLS, SCREENSHOT_PREVIEW):
+    for p in (
+        PYPROJECT_TOML,
+        SETUP_PY,
+        SETUP_ISS,
+        CONSTANTS_PY,
+        SCREENSHOT_PATH,
+        SCREENSHOT_FILTER,
+        SCREENSHOT_WATERMARK,
+        SCREENSHOT_DEVTOOLS,
+        SCREENSHOT_PREVIEW,
+    ):
         if p.exists():
             to_stage.append(str(p))
 

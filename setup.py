@@ -29,12 +29,14 @@ sys.stderr = StreamToLogger(logger, logging.ERROR)
 # Define the base directory for your project
 base_dir = Path(__file__).parent
 
+
 def wheel_native_files(pkg):
     spec = importlib.util.find_spec(pkg)
     if spec is None or spec.origin is None:
         raise ImportError(f"Cannot find package '{pkg}' or its origin.")
     here = Path(spec.origin).parent
     return list(here.glob("*.pyd")) + list(here.glob("*.dll"))
+
 
 # Dependencies are automatically detected, but it might need fine tuning.
 build_exe_options = {
@@ -98,7 +100,7 @@ setup(
     options={"build_exe": build_exe_options},
     executables=[
         Executable(
-            str(base_dir / "main.py"), base=base, icon=str(base_dir / "assets/icon_no_background.ico"), target_name="heat_sheet_pdf_highlighter.exe"
+            str(base_dir / "main.py"), base=base, icon=str(base_dir / "assets/icon/app_icon.ico"), target_name="heat_sheet_pdf_highlighter.exe"
         )
     ],
 )

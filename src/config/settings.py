@@ -21,6 +21,7 @@ class AppSettings:
             "mark_only_relevant_lines": 1,  # 0 or 1
             "enable_filter": 0,  # 0 or 1
             "highlight_mode": "NAMES_DIFF_COLOR",  # "ONLY_NAMES" or "NAMES_DIFF_COLOR"
+            "theme_mode": "system",  # "system", "light", or "dark"
             "language": "de",
             "ask_for_update": "True",
             "update_available": "False",
@@ -77,6 +78,7 @@ class AppSettings:
             "mark_only_relevant_lines": lambda v: v if v in [0, 1] else 1,
             "enable_filter": lambda v: v if v in [0, 1] else 0,
             "highlight_mode": lambda v: v if v in ["ONLY_NAMES", "NAMES_DIFF_COLOR"] else "NAMES_DIFF_COLOR",
+            "theme_mode": lambda v: v if v in ["system", "light", "dark"] else "system",
             "language": lambda v: v if v in LANGUAGE_OPTIONS else "en",
             "ask_for_update": lambda v: v if v in ["True", "False"] else "True",
             "update_available": lambda v: v if v in ["True", "False"] else "False",

@@ -193,7 +193,7 @@ def _windows_capture(root: Tk, app: PDFHighlighterApp, screenshot_path: str, tar
         root.geometry("+10+10")
         root.deiconify()
         root.update_idletasks()
-        time.sleep(0.2)
+        time.sleep(0.6)
         root.update()
         hwnd_target = _win_get_target_hwnd()
         img = _win_capture_hwnd(hwnd_target) or img
@@ -219,7 +219,7 @@ def main():
     if screenshot_path:
         try:
             target = os.getenv("HSPH_SCREENSHOT_TARGET") or "main"
-            delay = float(os.getenv("HSPH_SCREENSHOT_DELAY") or 0)
+            delay = float(os.getenv("HSPH_SCREENSHOT_DELAY") or 0.6)
             _capture_and_save(root, app, screenshot_path, target, delay)
         finally:
             try:

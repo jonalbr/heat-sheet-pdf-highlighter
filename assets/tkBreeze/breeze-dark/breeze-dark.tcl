@@ -45,7 +45,7 @@ namespace eval ttk::theme::breeze-dark {
             -selectbackground $colors(-selectbg) \
             -selectforeground $colors(-selectfg) \
             -fieldbackground $colors(-window) \
-            -font TkDefaultFont \
+            -font "Helvetica 10" \
             -borderwidth 1 \
             -focuscolor $colors(-focuscolor) \
             -highlightcolor $colors(-checklight)
