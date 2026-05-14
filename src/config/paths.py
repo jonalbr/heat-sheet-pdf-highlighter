@@ -48,7 +48,7 @@ class Paths:
         bundle_dir = Path(__file__).resolve().parent.parent.parent
 
     locales_dir = bundle_dir / "locales"
-    tcl_lib_path = bundle_dir / "assets" / "ttk-Breeze-0.6"
+    tcl_lib_path = bundle_dir / "assets" / "tkBreeze"
     icon_path = bundle_dir / "assets" / "icon_no_background.ico"
     logo_path = bundle_dir / "assets" / "logo_no_background.png"
     update_script_path = bundle_dir / "update_app.bat"

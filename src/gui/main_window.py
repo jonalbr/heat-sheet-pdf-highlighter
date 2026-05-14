@@ -116,7 +116,7 @@ class PDFHighlighterApp:
 
         # Improved styling
         style = ttk.Style()
-        style.theme_use("Breeze")  # A more modern theme than the default
+        style.theme_use("breeze")  # A more modern theme than the default
         style.configure("TButton", font=("Arial", 10), borderwidth="4")  # Button styling
         style.configure("TLabel", font=("Arial", 10), background="#f0f0f0")  # Label styling
         style.configure("TEntry", font=("Arial", 10), borderwidth="2")  # Entry widget styling
