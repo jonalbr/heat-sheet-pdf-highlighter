@@ -4,6 +4,7 @@ We reuse ideas from test_updater_sha.py but broaden coverage.
 
 Each section has TODO markers that will be filled in progressively.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -21,6 +22,7 @@ from src.version import Version  # type: ignore  # noqa: E402
 
 # --- Shared dummy objects (kept minimal; specialized versions may be defined per test) ---
 
+
 class DummyGUIExtended:
     def __init__(self):
         self.progress_events: list[int] = []
@@ -29,7 +31,7 @@ class DummyGUIExtended:
         self.up_to_date_calls = 0
         self.update_available_prompts: list[Version] = []
         self.reminder_choices: list[bool] = []
-        self.errors: list[tuple[str,str]] = []
+        self.errors: list[tuple[str, str]] = []
         self.download_errors: list[str] = []
         self.closed = False
         self.started = False
@@ -88,8 +90,9 @@ class DummyGUIExtended:
     def finish_download_ui(self):
         self.finished = True
 
+
 class DummySettingsExtended:
-    def __init__(self, overrides: dict[str,str] | None = None):
+    def __init__(self, overrides: dict[str, str] | None = None):
         base = {
             "beta": "False",
             "newest_version_available": "0.0.0",
@@ -106,21 +109,26 @@ class DummySettingsExtended:
     def update_setting(self, k: str, v: str):
         self.settings[k] = v
 
+
 class DummyAppExtended:
-    def __init__(self, overrides: dict[str,str] | None = None):
+    def __init__(self, overrides: dict[str, str] | None = None):
         self.update_dialogs = DummyGUIExtended()
         self.app_settings = DummySettingsExtended(overrides)
         self.on_version_update = lambda latest, current: None
 
+
 # --- Helpers / Monkeypatch utilities ---
+
 
 class PatchRequestsGet:
     """Patch requests.get with scripted responses.
     script: list of call handlers -> each handler receives (url, kwargs) and returns an object with .status_code, .headers, .iter_content(), .text, .json().
     If handler raises, that simulates network errors.
     """
+
     def __init__(self, script):
         import requests  # local import
+
         self._requests = requests
         self._orig = requests.get
         self._script = script
@@ -135,6 +143,7 @@ class PatchRequestsGet:
             handler = self._script[self.index]
             self.index += 1
             return handler(url, *a, **kw)
+
         self._requests.get = _fake_get  # type: ignore
         return self
 
@@ -142,8 +151,18 @@ class PatchRequestsGet:
         self._requests.get = self._orig  # type: ignore
         return False
 
+
 class DummyResponse:
-    def __init__(self, *, status: int = 200, headers: dict[str,str] | None = None, json_data=None, text: str = "", body: bytes | None = None, chunk: int = 1024):
+    def __init__(
+        self,
+        *,
+        status: int = 200,
+        headers: dict[str, str] | None = None,
+        json_data=None,
+        text: str = "",
+        body: bytes | None = None,
+        chunk: int = 1024,
+    ):
         self.status_code = status
         self._headers = headers or {}
         self._json_data = json_data
@@ -159,6 +178,7 @@ class DummyResponse:
     def raise_for_status(self):
         if not (200 <= self.status_code < 300):
             import requests
+
             raise requests.HTTPError(f"HTTP {self.status_code}")
 
     def json(self):
@@ -169,9 +189,11 @@ class DummyResponse:
     def iter_content(self, chunk_size: int):
         data = self._body
         for i in range(0, len(data), chunk_size):
-            yield data[i:i+chunk_size]
+            yield data[i : i + chunk_size]
+
 
 # Placeholder tests (implemented progressively)
+
 
 def test_placeholder_sanity():
     app = DummyAppExtended()
@@ -179,7 +201,9 @@ def test_placeholder_sanity():
     # Sanity: initial guards false
     assert not uc._active_check and not uc._active_download
 
+
 # Cache tests
+
 
 def _fake_cache_functions(monkey: dict, load_result, expect_saved: bool = False):
     calls = {"load": 0, "save": 0, "invalidate": 0}
@@ -199,6 +223,7 @@ def _fake_cache_functions(monkey: dict, load_result, expect_saved: bool = False)
     monkey["invalidate_releases_cache"] = fake_invalidate
     return calls
 
+
 def test_cache_hit_uses_cached_version():
     """When cache TTL not expired and not force_check, should use cached version and not call network."""
     app = DummyAppExtended({"update_cache_ttl_seconds": "3600"})
@@ -206,18 +231,23 @@ def test_cache_hit_uses_cached_version():
 
     # Monkeypatch cache functions in module namespace
     import src.utils.updater as updater_mod  # type: ignore
+
     original_load = updater_mod.load_update_cache
     original_save = updater_mod.save_update_cache
     original_inval = updater_mod.invalidate_releases_cache
     try:
         now = datetime.datetime.now()
         cached_version = Version.from_str("2.3.4")
+
         def fake_load():
             return now - datetime.timedelta(seconds=10), cached_version
+
         def fake_save(*a, **k):
             raise AssertionError("save_update_cache should not be called on cache hit")
+
         def fake_invalidate(*a, **k):
             raise AssertionError("invalidate_releases_cache should not be called without force_check")
+
         updater_mod.load_update_cache = fake_load  # type: ignore
         updater_mod.save_update_cache = fake_save  # type: ignore
         updater_mod.invalidate_releases_cache = fake_invalidate  # type: ignore
@@ -227,6 +257,7 @@ def test_cache_hit_uses_cached_version():
         assert latest == cached_version, "Expected cached version returned"
         # Because we returned early, last_download_url should remain None
         assert uc.last_download_url is None
+        assert not uc._active_check, "Expected active check guard to be released after cache hit"
     finally:
         updater_mod.load_update_cache = original_load  # type: ignore
         updater_mod.save_update_cache = original_save  # type: ignore
@@ -239,6 +270,7 @@ def test_force_check_invalidates_cache():
     uc = UpdateChecker(app)  # type: ignore[arg-type]
 
     import src.utils.updater as updater_mod  # type: ignore
+
     original_load = updater_mod.load_update_cache
     original_save = updater_mod.save_update_cache
     original_inval = updater_mod.invalidate_releases_cache
@@ -247,15 +279,25 @@ def test_force_check_invalidates_cache():
         # load should be called but ignored due to force
         def fake_load():
             return datetime.datetime.now() - datetime.timedelta(seconds=10), Version.from_str("9.9.9")
+
         invalidated = {"done": False}
+
         def fake_invalidate():
             invalidated["done"] = True
+
         # Provide a minimal latest release response
         def fake_fetch(url: str):
-            return {"tag_name": "3.0.0", "assets": [{"name": "heat_sheet_pdf_highlighter_installer.exe", "browser_download_url": "https://example/installer.exe"}], "prerelease": False}
+            return {
+                "tag_name": "3.0.0",
+                "assets": [{"name": "heat_sheet_pdf_highlighter_installer.exe", "browser_download_url": "https://example/installer.exe"}],
+                "prerelease": False,
+            }
+
         saved = {"count": 0}
+
         def fake_save(*a, **k):
             saved["count"] += 1
+
         updater_mod.load_update_cache = fake_load  # type: ignore
         updater_mod.invalidate_releases_cache = fake_invalidate  # type: ignore
         updater_mod.save_update_cache = fake_save  # type: ignore
@@ -284,7 +326,9 @@ def test_active_check_guard_returns_existing_version():
     # Should not flip the guard off because we never set it (but function returns early)
     assert uc._active_check is True
 
+
 # Prompt logic tests
+
 
 def test_prompt_cancel_path_no_download_thread():
     app = DummyAppExtended()
@@ -294,10 +338,15 @@ def test_prompt_cancel_path_no_download_thread():
 
     def fake_fetch(url: str):
         # Provide both exe and sha so validation passes and prompt is shown
-        return {"tag_name": "1.2.0", "assets": [
-            {"name": "heat_sheet_pdf_highlighter_installer.exe", "browser_download_url": "https://example/installer.exe"},
-            {"name": "heat_sheet_pdf_highlighter_installer.exe.sha256", "browser_download_url": "https://example/installer.exe.sha256"},
-        ], "prerelease": False}
+        return {
+            "tag_name": "1.2.0",
+            "assets": [
+                {"name": "heat_sheet_pdf_highlighter_installer.exe", "browser_download_url": "https://example/installer.exe"},
+                {"name": "heat_sheet_pdf_highlighter_installer.exe.sha256", "browser_download_url": "https://example/installer.exe.sha256"},
+            ],
+            "prerelease": False,
+        }
+
     uc._fetch_release_info = fake_fetch  # type: ignore
 
     current = Version.from_str("1.0.0")
@@ -316,16 +365,23 @@ def test_prompt_yes_starts_download_thread_without_sha_when_verify_false():
 
     # Provide release with exe & sha
     def fake_fetch(url: str):
-        return {"tag_name": "2.0.0", "assets": [
-            {"name": "heat_sheet_pdf_highlighter_installer.exe", "browser_download_url": "https://example/installer.exe"},
-            {"name": "heat_sheet_pdf_highlighter_installer.exe.sha256", "browser_download_url": "https://example/installer.exe.sha256"},
-        ], "prerelease": False}
+        return {
+            "tag_name": "2.0.0",
+            "assets": [
+                {"name": "heat_sheet_pdf_highlighter_installer.exe", "browser_download_url": "https://example/installer.exe"},
+                {"name": "heat_sheet_pdf_highlighter_installer.exe.sha256", "browser_download_url": "https://example/installer.exe.sha256"},
+            ],
+            "prerelease": False,
+        }
+
     uc._fetch_release_info = fake_fetch  # type: ignore
 
     # Patch download_and_run_installer to avoid network and assert args
     called: dict[str, Optional[tuple[str, str | None]]] = {"args": None}
+
     def fake_download(url, sha):
         called["args"] = (url, sha)
+
     uc.download_and_run_installer = fake_download  # type: ignore
 
     current = Version.from_str("1.0.0")
@@ -343,10 +399,15 @@ def test_prompt_no_sets_reminder_flag_when_user_chooses_remind_later():
     uc = UpdateChecker(app)  # type: ignore[arg-type]
 
     def fake_fetch(url: str):
-        return {"tag_name": "3.1.0", "assets": [
-            {"name": "heat_sheet_pdf_highlighter_installer.exe", "browser_download_url": "https://example/installer.exe"},
-            {"name": "heat_sheet_pdf_highlighter_installer.exe.sha256", "browser_download_url": "https://example/installer.exe.sha256"},
-        ], "prerelease": False}
+        return {
+            "tag_name": "3.1.0",
+            "assets": [
+                {"name": "heat_sheet_pdf_highlighter_installer.exe", "browser_download_url": "https://example/installer.exe"},
+                {"name": "heat_sheet_pdf_highlighter_installer.exe.sha256", "browser_download_url": "https://example/installer.exe.sha256"},
+            ],
+            "prerelease": False,
+        }
+
     uc._fetch_release_info = fake_fetch  # type: ignore
 
     current = Version.from_str("3.0.0")
@@ -361,10 +422,15 @@ def test_prompt_yes_caches_metadata():
     uc = UpdateChecker(app)  # type: ignore[arg-type]
 
     def fake_fetch(url: str):
-        return {"tag_name": "4.0.0", "assets": [
-            {"name": "heat_sheet_pdf_highlighter_installer.exe", "browser_download_url": "https://example/installer.exe"},
-            {"name": "heat_sheet_pdf_highlighter_installer.exe.sha256", "browser_download_url": "https://example/installer.exe.sha256"},
-        ], "prerelease": False}
+        return {
+            "tag_name": "4.0.0",
+            "assets": [
+                {"name": "heat_sheet_pdf_highlighter_installer.exe", "browser_download_url": "https://example/installer.exe"},
+                {"name": "heat_sheet_pdf_highlighter_installer.exe.sha256", "browser_download_url": "https://example/installer.exe.sha256"},
+            ],
+            "prerelease": False,
+        }
+
     uc._fetch_release_info = fake_fetch  # type: ignore
 
     # Avoid spawning thread network path
@@ -376,7 +442,9 @@ def test_prompt_yes_caches_metadata():
     assert uc.last_sha_url == "https://example/installer.exe.sha256"
     assert uc.last_version_tag == "4.0.0"
 
+
 # Download tests
+
 
 def test_download_success_without_sha():
     app = DummyAppExtended({"verify_sha": "False"})
@@ -385,10 +453,13 @@ def test_download_success_without_sha():
     body = b"A" * (512 * 1024)  # 512 KiB (< 4MB triggers small chunk mode)
     # Patch requests.get for the download
     import src.utils.updater as updater_mod  # type: ignore
+
     original_get = updater_mod.requests.get
-    def fake_get(url, stream=False, timeout=(10,60)):
+
+    def fake_get(url, stream=False, timeout=(10, 60)):
         assert stream
         return DummyResponse(headers={"content-length": str(len(body))}, body=body)
+
     updater_mod.requests.get = fake_get  # type: ignore
     try:
         uc.download_and_run_installer("https://example/installer.exe", None)
@@ -405,16 +476,21 @@ def test_download_cancel_midstream():
     uc = UpdateChecker(app)  # type: ignore[arg-type]
 
     chunks = [b"X" * 200000] * 10  # produce multiple chunks
+
     class CancelResponse(DummyResponse):
         def iter_content(self, chunk_size: int):
             for i, c in enumerate(chunks):
                 if i == 2:  # cancel after a couple chunks
                     app.update_dialogs.cancel = True
                 yield c
+
     import src.utils.updater as updater_mod  # type: ignore
+
     original_get = updater_mod.requests.get
-    def fake_get(url, stream=False, timeout=(10,60)):
-        return CancelResponse(headers={"content-length": str(len(b''.join(chunks)))}, body=b"".join(chunks))
+
+    def fake_get(url, stream=False, timeout=(10, 60)):
+        return CancelResponse(headers={"content-length": str(len(b"".join(chunks)))}, body=b"".join(chunks))
+
     updater_mod.requests.get = fake_get  # type: ignore
     try:
         uc.download_and_run_installer("https://example/installer.exe", None)
@@ -431,21 +507,28 @@ def test_download_size_mismatch_warning():
     uc = UpdateChecker(app)  # type: ignore[arg-type]
 
     body = b"B" * (300 * 1024)
+
     class MismatchResponse(DummyResponse):
         def iter_content(self, chunk_size: int):
             # Only yield half intentionally
-            yield body[: len(body)//2]
+            yield body[: len(body) // 2]
+
     import src.utils.updater as updater_mod  # type: ignore
+
     original_get = updater_mod.requests.get
     logged = {"warn": False}
     orig_logger = logging.getLogger("updater").warning
+
     def fake_warn(*a, **k):
         logged["warn"] = True
         orig_logger(*a, **k)
+
     logging.getLogger("updater").warning = fake_warn  # type: ignore
-    def fake_get(url, stream=False, timeout=(10,60)):
+
+    def fake_get(url, stream=False, timeout=(10, 60)):
         # Claim full length but send only half
         return MismatchResponse(headers={"content-length": str(len(body))}, body=body)
+
     updater_mod.requests.get = fake_get  # type: ignore
     try:
         uc.download_and_run_installer("https://example/installer.exe", None)
@@ -453,6 +536,7 @@ def test_download_size_mismatch_warning():
     finally:
         updater_mod.requests.get = original_get  # type: ignore
         logging.getLogger("updater").warning = orig_logger  # type: ignore
+
 
 def test_sha_verification_success():
     app = DummyAppExtended({"verify_sha": "True"})
@@ -463,16 +547,19 @@ def test_sha_verification_success():
 
     # Patch requests.get for download then sha
     import src.utils.updater as updater_mod  # type: ignore
+
     original_get = updater_mod.requests.get
 
     def get_sequence():
         states = {"step": 0}
-        def _get(url, stream=False, timeout=(10,60)):
+
+        def _get(url, stream=False, timeout=(10, 60)):
             if states["step"] == 0:
                 states["step"] += 1
                 return DummyResponse(headers={"content-length": str(len(installer_bytes))}, body=installer_bytes)
             else:
                 return DummyResponse(text=f"{sha_hex}  installer.exe\n")
+
         return _get
 
     updater_mod.requests.get = get_sequence()  # type: ignore
@@ -493,22 +580,26 @@ def test_sha_invalid_format_error():
 
     body = b"X" * 1024
     import src.utils.updater as updater_mod  # type: ignore
+
     original_get = updater_mod.requests.get
 
     def get_sequence():
         states = {"step": 0}
-        def _get(url, stream=False, timeout=(10,60)):
+
+        def _get(url, stream=False, timeout=(10, 60)):
             if states["step"] == 0:
                 states["step"] += 1
                 return DummyResponse(headers={"content-length": str(len(body))}, body=body)
             else:
                 return DummyResponse(text="NOT_A_SHA_VALUE")
+
         return _get
+
     updater_mod.requests.get = get_sequence()  # type: ignore
     uc._spawn_installer = lambda p: None  # type: ignore
     try:
         uc.download_and_run_installer("https://example/installer.exe", "https://example/installer.exe.sha256")
-        assert any("download" in e and "Invalid" in m for e,m in app.update_dialogs.errors), "Expected invalid sha format error"
+        assert any("download" in e and "Invalid" in m for e, m in app.update_dialogs.errors), "Expected invalid sha format error"
     finally:
         updater_mod.requests.get = original_get  # type: ignore
 
@@ -519,22 +610,26 @@ def test_sha_network_error():
 
     body = b"DATA" * 256
     import src.utils.updater as updater_mod  # type: ignore
+
     original_get = updater_mod.requests.get
     import requests
 
     def get_sequence():
         states = {"step": 0}
-        def _get(url, stream=False, timeout=(10,60)):
+
+        def _get(url, stream=False, timeout=(10, 60)):
             if states["step"] == 0:
                 states["step"] += 1
                 return DummyResponse(headers={"content-length": str(len(body))}, body=body)
             raise requests.ConnectionError("network down")
+
         return _get
+
     updater_mod.requests.get = get_sequence()  # type: ignore
     uc._spawn_installer = lambda p: None  # type: ignore
     try:
         uc.download_and_run_installer("https://example/installer.exe", "https://example/installer.exe.sha256")
-        assert any("download" == e and "network down" in m for e,m in app.update_dialogs.errors), "Expected network error surfaced"
+        assert any("download" == e and "network down" in m for e, m in app.update_dialogs.errors), "Expected network error surfaced"
     finally:
         updater_mod.requests.get = original_get  # type: ignore
 
@@ -546,6 +641,7 @@ def test_sha_io_error_reading_installer(tmp_path: Path | None = None):
 
     body = b"DATA" * 256
     import src.utils.updater as updater_mod  # type: ignore
+
     original_get = updater_mod.requests.get
 
     # We'll delete the file right after download by monkeypatching _verify_sha256 to call original but after deletion
@@ -562,13 +658,15 @@ def test_sha_io_error_reading_installer(tmp_path: Path | None = None):
 
     def get_sequence():
         states = {"step": 0}
-        def _get(url, stream=False, timeout=(10,60)):
+
+        def _get(url, stream=False, timeout=(10, 60)):
             if states["step"] == 0:
                 states["step"] += 1
                 return DummyResponse(headers={"content-length": str(len(body))}, body=body)
             # Provide valid sha so failure is due to IO
             digest = hashlib.sha256(body).hexdigest()
             return DummyResponse(text=f"{digest}  installer.exe\n")
+
         return _get
 
     updater_mod.requests.get = get_sequence()  # type: ignore
@@ -576,12 +674,14 @@ def test_sha_io_error_reading_installer(tmp_path: Path | None = None):
     try:
         uc.download_and_run_installer("https://example/installer.exe", "https://example/installer.exe.sha256")
         # Expect an error referencing file or similar
-        assert any(e == "download" for e,_ in app.update_dialogs.errors), "Expected download error from IO issue"
+        assert any(e == "download" for e, _ in app.update_dialogs.errors), "Expected download error from IO issue"
     finally:
         updater_mod.requests.get = original_get  # type: ignore
         uc._verify_sha256 = real_verify  # type: ignore
 
+
 # Channel tests
+
 
 def test_channel_stable_skips_prerelease():
     app = DummyAppExtended({"update_channel": "stable"})
@@ -628,6 +728,7 @@ def test_channel_rc_adopts_newer_prerelease():
     latest = uc._get_latest_version_from_github(current_version=current, force_check=True, quiet=True)
     assert latest == Version.from_str("2.1.0-rc1"), "RC channel should adopt newer prerelease"
 
+
 def test_concurrency_download_guard():
     app = DummyAppExtended({"verify_sha": "False"})
     uc = UpdateChecker(app)  # type: ignore[arg-type]
@@ -645,10 +746,15 @@ def test_concurrency_check_guard_and_release():
 
     # Patch fetch to simulate slight delay so we can assert guard flips back
     def fake_fetch(url: str):
-        return {"tag_name": "1.0.1", "assets": [
-            {"name": "heat_sheet_pdf_highlighter_installer.exe", "browser_download_url": "https://example/installer.exe"},
-            {"name": "heat_sheet_pdf_highlighter_installer.exe.sha256", "browser_download_url": "https://example/installer.exe.sha256"},
-        ], "prerelease": False}
+        return {
+            "tag_name": "1.0.1",
+            "assets": [
+                {"name": "heat_sheet_pdf_highlighter_installer.exe", "browser_download_url": "https://example/installer.exe"},
+                {"name": "heat_sheet_pdf_highlighter_installer.exe.sha256", "browser_download_url": "https://example/installer.exe.sha256"},
+            ],
+            "prerelease": False,
+        }
+
     uc._fetch_release_info = fake_fetch  # type: ignore
 
     current = Version.from_str("1.0.0")
@@ -662,10 +768,15 @@ def test_metadata_set_on_successful_check():
     uc = UpdateChecker(app)  # type: ignore[arg-type]
 
     def fake_fetch(url: str):
-        return {"tag_name": "7.8.9", "assets": [
-            {"name": "heat_sheet_pdf_highlighter_installer.exe", "browser_download_url": "https://example/installer.exe"},
-            {"name": "heat_sheet_pdf_highlighter_installer.exe.sha256", "browser_download_url": "https://example/installer.exe.sha256"},
-        ], "prerelease": False}
+        return {
+            "tag_name": "7.8.9",
+            "assets": [
+                {"name": "heat_sheet_pdf_highlighter_installer.exe", "browser_download_url": "https://example/installer.exe"},
+                {"name": "heat_sheet_pdf_highlighter_installer.exe.sha256", "browser_download_url": "https://example/installer.exe.sha256"},
+            ],
+            "prerelease": False,
+        }
+
     uc._fetch_release_info = fake_fetch  # type: ignore
 
     current = Version.from_str("7.0.0")

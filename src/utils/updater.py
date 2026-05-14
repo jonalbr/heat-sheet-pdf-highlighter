@@ -53,24 +53,24 @@ class UpdateChecker:
         self._active_check = True
         now = datetime.datetime.now()
 
-        # Use TTL from app settings when available
-        ttl_seconds = int(self.app_settings.settings.get("update_cache_ttl_seconds", 86400))
-        cache_expiry = datetime.timedelta(seconds=ttl_seconds)
-
-        if not force_check:
-            cache_time, latest_version = load_update_cache()
-            if cache_time and now - cache_time < cache_expiry:
-                self.update_callback(latest_version, current_version)
-                return latest_version
-        else:
-            # If a forced update is requested, invalidate the releases cache without unlinking
-            invalidate_releases_cache()
-
-        # Perform the update check
         try:
+            # Use TTL from app settings when available
+            ttl_seconds = int(self.app_settings.settings.get("update_cache_ttl_seconds", 86400))
+            cache_expiry = datetime.timedelta(seconds=ttl_seconds)
+
+            if not force_check:
+                cache_time, latest_version = load_update_cache()
+                if cache_time and now - cache_time < cache_expiry:
+                    self.update_callback(latest_version, current_version)
+                    return latest_version
+            else:
+                # If a forced update is requested, invalidate the releases cache without unlinking
+                invalidate_releases_cache()
+
+            # Perform the update check
             latest_version = self._get_latest_version_from_github(current_version=current_version, force_check=force_check, quiet=quiet)
         finally:
-            # Release guard even if request failed/raised
+            # Release guard even if request failed/raised or cache hit occurred
             self._active_check = False
 
         # Cache the result using JSON - only cache if we got a valid version
@@ -329,6 +329,7 @@ class UpdateChecker:
             self.last_sha_url = sha_url
             # Run download in a background thread to avoid freezing Tk main loop
             import threading
+
             threading.Thread(
                 target=lambda: self.download_and_run_installer(download_url, sha_url if verify_sha else None),
                 daemon=True,
