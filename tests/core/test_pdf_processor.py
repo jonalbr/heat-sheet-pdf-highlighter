@@ -166,6 +166,23 @@ def test_line_text_normalization_list_and_dict(monkeypatch):
     class FakePage:
         def __init__(self):
             self.highlights = []
+        def search_for(self, needle):
+            return [pp.Rect(0, 0, 10, 10)]
+        def get_text(self, mode, clip=None):
+            if mode == "words":
+                # Minimal word entries: [x0,y0,x1,y1, word, block_no, line_no, word_no]
+                return [
+                    [0, 0, 5, 10, "Bahn", 0, 0, 0],
+                    [6, 0, 15, 10, "5", 0, 0, 1],
+                    [16, 0, 40, 10, "Alice", 0, 0, 2],
+                    [41, 0, 60, 10, "CLUB", 0, 0, 3],
+                    [61, 0, 90, 10, "01:10.00", 0, 0, 4],
+                ]
+            # For 'text' mode exercise list then dict normalization
+            if calls["phase"] == 0:
+                calls["phase"] = 1
+                return ["Bahn 5", "Alice", "CLUB", "01:10.00"]
+            return {"line": "Bahn 5 Alice CLUB 01:10.00"}
         def add_highlight_annot(self, rect):
             h = FakeHighlight()
             self.highlights.append(h)
@@ -174,30 +191,6 @@ def test_line_text_normalization_list_and_dict(monkeypatch):
     fake_page = FakePage()
 
     calls = {"phase": 0}
-
-    def fake_search_for(page, needle):
-        # Return one match rect
-        return [pp.Rect(0, 0, 10, 10)]
-
-    def fake_get_text(page, mode, clip=None):
-        if mode == "words":
-            # Minimal word entries: [x0,y0,x1,y1, word, block_no, line_no, word_no]
-            return [
-                [0, 0, 5, 10, "Bahn", 0, 0, 0],
-                [6, 0, 15, 10, "5", 0, 0, 1],
-                [16, 0, 40, 10, "Alice", 0, 0, 2],
-                [41, 0, 60, 10, "CLUB", 0, 0, 3],
-                [61, 0, 90, 10, "01:10.00", 0, 0, 4],
-            ]
-        # For 'text' mode exercise list then dict normalization
-        if calls["phase"] == 0:
-            calls["phase"] = 1
-            return ["Bahn 5", "Alice", "CLUB", "01:10.00"]
-        else:
-            return {"line": "Bahn 5 Alice CLUB 01:10.00"}
-
-    monkeypatch.setattr(pp.utils, "search_for", fake_search_for)
-    monkeypatch.setattr(pp.utils, "get_text", fake_get_text)
 
     matches, skipped = pp.highlight_matching_data(
         fake_page,

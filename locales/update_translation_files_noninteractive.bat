@@ -39,7 +39,7 @@ for /D %%G in ("*") do (
 
 REM Run the review/update script for German and autofill for English (non-interactive)
 echo Running po_update_and_review.py (non-interactive) to update German and autofill English...
-..\.venv\Scripts\python.exe po_update_and_review.py --non-interactive
+uv run python po_update_and_review.py --non-interactive
 
 REM Compile .po to .mo files
 echo Compiling .po files to .mo files...

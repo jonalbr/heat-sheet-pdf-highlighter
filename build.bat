@@ -1,5 +1,5 @@
 @echo off
-setlocal
+setlocal EnableExtensions EnableDelayedExpansion
 
 REM --- Load environment variables from .env file (if present) ---
 if exist .env (
@@ -8,14 +8,33 @@ if exist .env (
      echo .env not found, continuing without loading extra environment vars.
  )
 
-REM --- Select Python interpreter ---
-if defined VIRTUAL_ENV (
-    echo Using virtual environment: %VIRTUAL_ENV%
-    set PY_LAUNCHER=%VIRTUAL_ENV%\Scripts\python.exe
-) else (
-    echo No virtual environment detected, using system Python on PATH.
-    set PY_LAUNCHER=python
+REM --- Use uv as the required Python workflow ---
+where uv >nul 2>nul
+if %ERRORLEVEL% neq 0 (
+    echo uv is required for this build. Install uv and run this script again.
+    exit /b 1
 )
+if defined VIRTUAL_ENV (
+    for %%I in ("%CD%\.venv") do set "PROJECT_VENV=%%~fI"
+    for %%I in ("%VIRTUAL_ENV%") do set "ACTIVE_VENV=%%~fI"
+    if /I not "!ACTIVE_VENV!"=="!PROJECT_VENV!" (
+        echo Another virtual environment is active: %VIRTUAL_ENV%
+        echo Deactivate it and use the uv-managed project .venv for this repository.
+        exit /b 1
+    )
+)
+echo Using uv-managed project environment.
+echo Syncing dependencies with uv...
+if /i "%GITHUB_ACTIONS%"=="true" (
+    uv sync --locked --all-groups
+) else (
+    uv sync --all-groups
+)
+if %ERRORLEVEL% neq 0 (
+    echo Failed to sync dependencies with uv!
+    exit /b 1
+)
+set "PYTHON_CMD=uv run python"
 
 set CX_FREEZE_SETUP=setup.py
 REM --- Resolve Inno Setup compiler path (prefer ProgramFiles(x86), fallback to ProgramFiles) ---
@@ -27,9 +46,14 @@ if defined ProgramFiles(x86) (
 
 set "INNO_SCRIPT=setup.iss"
 
-REM --- Ensure Python 3.13 is used ---
+REM --- Ensure Python 3.14 is used ---
 echo Using Python version:
-%PY_LAUNCHER% --version
+%PYTHON_CMD% --version
+%PYTHON_CMD% -c "import sys; raise SystemExit(0 if sys.version_info[:2] == (3, 14) else 1)"
+if %ERRORLEVEL% neq 0 (
+    echo Python 3.14 is required for this build.
+    exit /b 1
+)
 
 REM --- Check current directory ---
 echo Current directory:
@@ -37,7 +61,7 @@ cd
 
 REM --- Building the application with cx_Freeze ---
 echo Building application with cx_Freeze...
-"%PY_LAUNCHER%" "%CX_FREEZE_SETUP%" build
+%PYTHON_CMD% "%CX_FREEZE_SETUP%" build
 if %ERRORLEVEL% neq 0 (
     echo Failed to build with cx_Freeze!
     exit /b 1

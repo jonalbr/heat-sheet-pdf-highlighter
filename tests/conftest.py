@@ -1,7 +1,7 @@
-"""Pytest session configuration enforcing use of the local .venv.
+"""Pytest session configuration enforcing use of the uv-managed local .venv.
 
 By default tests will abort early if they are not executed using the
-project's virtual environment interpreter. This helps avoid subtle
+project's uv-managed virtual environment interpreter. This helps avoid subtle
 mismatches in installed packages (e.g. missing pytest-cov) and ensures
 reproducible results.
 
@@ -31,15 +31,17 @@ def _is_expected_venv() -> bool:
     """Heuristic check that current interpreter resides in project .venv.
 
     We look for a `.venv` directory at project root and ensure sys.executable
-    path contains that directory. This is lightweight and avoids importing
-    packaging internals.
+    path contains that uv-managed directory. This is lightweight and avoids
+    importing packaging internals.
     """
     project_root = Path(__file__).resolve().parents[1]
     venv_dir = project_root / ".venv"
     if not venv_dir.exists():  # No local venv => nothing to enforce
         return True
-    exe_path = Path(sys.executable).resolve()
-    return str(venv_dir.resolve()) in str(exe_path)
+    exe_path = Path(sys.executable).absolute()
+    venv_text = str(venv_dir.absolute()).replace("\\", "/").casefold()
+    exe_text = str(exe_path).replace("\\", "/").casefold()
+    return venv_text in exe_text
 
 
 def pytest_sessionstart(session: pytest.Session):  # type: ignore[override]
@@ -47,8 +49,9 @@ def pytest_sessionstart(session: pytest.Session):  # type: ignore[override]
         return
     if not _is_expected_venv():
         warnings.warn(
-            "Tests must be run inside the project .venv (or set HSPDFH_ALLOW_GLOBAL=1 to override). "
+            "Tests must be run inside the uv-managed project .venv "
+            "(or set HSPDFH_ALLOW_GLOBAL=1 to override). "
             f"Current interpreter: {sys.executable}",
             stacklevel=0,
         )
-        raise SystemExit("Aborting: not using project .venv and no override set")
+        raise SystemExit("Aborting: not using uv-managed project .venv and no override set")

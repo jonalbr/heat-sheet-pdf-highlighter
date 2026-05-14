@@ -6,7 +6,7 @@ import json
 import re
 from typing import List
 
-from pymupdf import Page, Rect, utils
+from pymupdf import Page, Rect
 
 from ..models import HighlightMode
 
@@ -22,7 +22,7 @@ def get_line_bbox(page: Page, match_rect: Rect):
     Returns:
         Rect: The bounding box of the line containing the match rectangle.
     """
-    words = utils.get_text(page, "words")
+    words = page.get_text("words")
     line_rect = Rect(match_rect)
     match_height = match_rect.y1 - match_rect.y0
     threshold = match_height * 0.5
@@ -64,7 +64,7 @@ def highlight_matching_data(
     """
     matches_found = 0
     skipped_matches = 0
-    text_instances = utils.search_for(page, search_str)
+    text_instances = page.search_for(search_str)
 
     # Adjusted regex to consider new lines between elements of the pattern
     relevant_line_pattern = re.compile(
@@ -79,7 +79,7 @@ def highlight_matching_data(
         line_rect = get_line_bbox(page, inst)  # Get the bounding box for the entire line
         if only_relevant:
             # Find the line of text that contains the instance
-            line_text = utils.get_text(page, "text", clip=line_rect)  # Extract text within this rectangle
+            line_text = page.get_text("text", clip=line_rect)  # Extract text within this rectangle
 
             # Ensure line_text is a string for regex search
             if isinstance(line_text, list):

@@ -26,10 +26,10 @@ class DummyFont:
 def test_add_watermark_top_position(blank_page, monkeypatch):
     calls = {}
 
-    def fake_insert_text(page, point, text, fontsize, color):  # capture args
+    def fake_insert_text(point, text, fontsize, color):  # capture args
         calls['args'] = dict(point=point, text=text, fontsize=fontsize, color=color)
 
-    monkeypatch.setattr(wm.utils, 'insert_text', fake_insert_text)
+    monkeypatch.setattr(blank_page, 'insert_text', fake_insert_text)
     wm.add_watermark(blank_page, text="HELLO", font_size=24, color_hex="#112233", position="top")
     args = calls['args']
     # Color hex -> normalized rgb
@@ -42,10 +42,10 @@ def test_add_watermark_top_position(blank_page, monkeypatch):
 def test_add_watermark_bottom_position(blank_page, monkeypatch):
     calls = {}
 
-    def fake_insert_text(page, point, text, fontsize, color):
+    def fake_insert_text(point, text, fontsize, color):
         calls['args'] = dict(point=point, text=text, fontsize=fontsize, color=color)
 
-    monkeypatch.setattr(wm.utils, 'insert_text', fake_insert_text)
+    monkeypatch.setattr(blank_page, 'insert_text', fake_insert_text)
     wm.add_watermark(blank_page, text="BYE", font_size=18, color_hex="#AABBCC", position="bottom")
     args = calls['args']
     # y coordinate should be well below half the page (bottom area)
@@ -55,10 +55,10 @@ def test_add_watermark_bottom_position(blank_page, monkeypatch):
 def test_add_watermark_invalid_position_defaults_to_top(blank_page, monkeypatch):
     calls = {}
 
-    def fake_insert_text(page, point, text, fontsize, color):
+    def fake_insert_text(point, text, fontsize, color):
         calls['args'] = dict(point=point, text=text, fontsize=fontsize, color=color)
 
-    monkeypatch.setattr(wm.utils, 'insert_text', fake_insert_text)
+    monkeypatch.setattr(blank_page, 'insert_text', fake_insert_text)
     wm.add_watermark(blank_page, text="TEXT", font_size=12, color_hex="#000000", position="weird")
     args = calls['args']
     assert args['point'][1] < blank_page.rect.height / 2  # top
@@ -73,10 +73,10 @@ def test_add_watermark_font_fallback(blank_page, monkeypatch):
     monkeypatch.setattr(wm.ImageFont, 'load_default', lambda: DummyFont())
     calls = {}
 
-    def fake_insert_text(page, point, text, fontsize, color):
+    def fake_insert_text(point, text, fontsize, color):
         calls['fontsize'] = fontsize
 
-    monkeypatch.setattr(wm.utils, 'insert_text', fake_insert_text)
+    monkeypatch.setattr(blank_page, 'insert_text', fake_insert_text)
     wm.add_watermark(blank_page, text="FALLBACK", font_size=14, color_hex="#010101", position="top")
     # If we reached insert_text, fallback worked. Font size passed through.
     assert calls['fontsize'] == 14

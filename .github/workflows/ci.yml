@@ -6,21 +6,47 @@ on:
       - 'v*'
 
 jobs:
-  build_installer:
+  test:
     permissions:
       contents: read
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.13.7'
+          python-version-file: '.python-version'
+      - name: Validate lockfile
+        shell: pwsh
+        run: uv lock --locked
       - name: Install dependencies
         shell: pwsh
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements_build.txt
+        run: uv sync --locked --all-groups
+      - name: Run tests
+        shell: pwsh
+        run: uv run pytest
+
+  build_installer:
+    needs: test
+    permissions:
+      contents: read
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version-file: '.python-version'
+      - name: Validate lockfile
+        shell: pwsh
+        run: uv lock --locked
+      - name: Install dependencies
+        shell: pwsh
+        run: uv sync --locked --all-groups
       - name: Install Inno Setup (winget → direct download → choco)
         shell: pwsh
         run: |
@@ -89,7 +115,7 @@ jobs:
         env:
           AppId: ${{ secrets.INNO_APP_ID }}
         run: |
-          call build.bat
+          uv run cmd /c build.bat
       - name: Ensure SHA256 exists
         shell: pwsh
         run: |

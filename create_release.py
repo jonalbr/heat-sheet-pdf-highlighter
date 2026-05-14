@@ -1,8 +1,9 @@
 """
 Release automation script for Heat Sheet PDF Highlighter.
 
-This script updates version numbers in setup.py, setup.iss, and src/constants.py,
-creates a signed git tag, and pushes it to the remote repository.
+This script updates version numbers in pyproject.toml, setup.py, setup.iss,
+and src/constants.py, creates a signed git tag, and pushes it to the remote
+repository.
 
 Arguments:
     version (str): The new version string (e.g., 1.2.3 or 1.2.3-rc1).
@@ -26,6 +27,7 @@ SCREENSHOT_PREVIEW = Path("images/app_screenshot_preview.png")
 
 SETUP_PY = Path("setup.py")
 SETUP_ISS = Path("setup.iss")
+PYPROJECT_TOML = Path("pyproject.toml")
 CONSTANTS_PY = Path("src/constants.py")
 
 
@@ -48,6 +50,11 @@ def update_version(version: str) -> None:
         text = SETUP_PY.read_text(encoding="utf-8")
         text = re.sub(r"(version\s*=\s*['\"])([^'\"]+)(['\"])", rf"\g<1>{version}\g<3>", text)
         SETUP_PY.write_text(text, encoding="utf-8")
+    # pyproject.toml
+    if PYPROJECT_TOML.exists():
+        text = PYPROJECT_TOML.read_text(encoding="utf-8")
+        text = re.sub(r'(^version\s*=\s*")([^"]+)(")', rf"\g<1>{version}\g<3>", text, count=1, flags=re.MULTILINE)
+        PYPROJECT_TOML.write_text(text, encoding="utf-8")
     # setup.iss
     if SETUP_ISS.exists():
         text = SETUP_ISS.read_text(encoding="utf-8")
@@ -201,7 +208,7 @@ def main() -> None:
     if args.local:
         # Save originals to restore after build/dry-run
         originals: dict[Path, str] = {}
-        for p in (SETUP_PY, SETUP_ISS, CONSTANTS_PY):
+        for p in (PYPROJECT_TOML, SETUP_PY, SETUP_ISS, CONSTANTS_PY):
             if p.exists():
                 originals[p] = p.read_text(encoding="utf-8")
 
@@ -253,7 +260,7 @@ def main() -> None:
 
     # Collect files to stage (only those that exist)
     to_stage: list[str] = []
-    for p in (SETUP_PY, SETUP_ISS, CONSTANTS_PY,
+    for p in (PYPROJECT_TOML, SETUP_PY, SETUP_ISS, CONSTANTS_PY,
               SCREENSHOT_PATH, SCREENSHOT_FILTER, SCREENSHOT_WATERMARK, SCREENSHOT_DEVTOOLS, SCREENSHOT_PREVIEW):
         if p.exists():
             to_stage.append(str(p))

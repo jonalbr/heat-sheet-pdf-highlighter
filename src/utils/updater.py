@@ -415,14 +415,14 @@ class UpdateChecker:
     def _spawn_installer(self, installer_path: str) -> None:
         pid = os.getpid()
 
-        # Create a STARTUPINFO object
-        startupinfo = subprocess.STARTUPINFO()
-
-        # Set the STARTF_USESHOWWINDOW flag
-        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        startupinfo = None
+        if hasattr(subprocess, "STARTUPINFO"):
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
 
         # Run the update script without showing a window
-        subprocess.Popen([str(self.paths.update_script_path), str(pid), installer_path], startupinfo=startupinfo)
+        kwargs = {"startupinfo": startupinfo} if startupinfo is not None else {}
+        subprocess.Popen([str(self.paths.update_script_path), str(pid), installer_path], **kwargs)
 
     @staticmethod
     def _safe_unlink(path: str) -> None:

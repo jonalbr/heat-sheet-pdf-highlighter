@@ -4,7 +4,7 @@ Watermark functionality
 
 from typing import Dict
 
-from pymupdf import Page, Rect, utils
+from pymupdf import Page, Rect
 from PIL import ImageFont, ImageDraw
 
 
@@ -34,7 +34,7 @@ def add_watermark(page: Page, text: str, font_size: int, color_hex: str, positio
         # Default to top if position is invalid
         text_x = rect.x0 + (rect.width - text_width) / 2
         text_y = rect.y0 + 20
-    utils.insert_text(page, (text_x, text_y), text, fontsize=font_size, color=(r, g, b))
+    page.insert_text((text_x, text_y), text, fontsize=font_size, color=(r, g, b))
 
 
 def watermark_pdf_page(page: Page, settings: Dict):
