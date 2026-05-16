@@ -53,6 +53,11 @@ class AppSettings:
         force_lang = os.getenv("HSPH_FORCE_LANGUAGE")
         if force_lang:
             self.settings["language"] = force_lang if force_lang in LANGUAGE_OPTIONS else "en"
+        # Apply optional environment override for theme before UI construction
+        # (used by screenshot mode to avoid inheriting a dark system theme).
+        force_theme = os.getenv("HSPH_FORCE_THEME")
+        if force_theme:
+            self.settings["theme_mode"] = force_theme if force_theme in {"system", "light", "dark"} else "light"
         self.validate_settings()
 
     def load_settings(self) -> Dict:

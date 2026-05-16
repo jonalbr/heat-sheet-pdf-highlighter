@@ -30,6 +30,7 @@ SETUP_PY = Path("setup.py")
 SETUP_ISS = Path("setup.iss")
 PYPROJECT_TOML = Path("pyproject.toml")
 CONSTANTS_PY = Path("src/constants.py")
+UV_LOCK = Path("uv.lock")
 
 
 def check_version_input(version: str) -> None:
@@ -73,6 +74,12 @@ def update_version(version: str) -> None:
         text = CONSTANTS_PY.read_text(encoding="utf-8")
         text = re.sub(r"(VERSION_STR\s*=\s*['\"])([^'\"]+)(['\"])", rf"\g<1>{version}\g<3>", text)
         CONSTANTS_PY.write_text(text, encoding="utf-8")
+
+
+def refresh_lockfile() -> None:
+    """Refresh uv.lock after version-bearing project metadata changes."""
+    if UV_LOCK.exists():
+        run(["uv", "lock"])
 
 
 def build_project() -> None:
@@ -214,7 +221,7 @@ def _capture_release_screenshots(screenshot_pdf: str | None) -> None:
 
 
 def _load_version_file_snapshots() -> dict[Path, str]:
-    return {path: path.read_text(encoding="utf-8") for path in (PYPROJECT_TOML, SETUP_PY, SETUP_ISS, CONSTANTS_PY) if path.exists()}
+    return {path: path.read_text(encoding="utf-8") for path in (PYPROJECT_TOML, SETUP_PY, SETUP_ISS, CONSTANTS_PY, UV_LOCK) if path.exists()}
 
 
 @contextmanager
@@ -235,7 +242,7 @@ def _run_local_release_flow(version: str, no_build: bool, screenshot_pdf: str | 
     originals = _load_version_file_snapshots()
     try:
         update_version(version)
-        with _temporary_environment_value("GITHUB_ACTIONS", "true"):
+        with _temporary_environment_value("HSPH_SKIP_BUILD_PAUSE", "true"):
             if no_build:
                 print("--no-build specified: skipping actual build (dry-run).")
             else:
@@ -253,6 +260,7 @@ def _collect_release_artifacts() -> list[str]:
         SETUP_PY,
         SETUP_ISS,
         CONSTANTS_PY,
+        UV_LOCK,
         SCREENSHOT_PATH,
         SCREENSHOT_FILTER,
         SCREENSHOT_WATERMARK,
@@ -264,6 +272,7 @@ def _collect_release_artifacts() -> list[str]:
 
 def _run_release_flow(version: str, screenshot_pdf: str | None) -> None:
     update_version(version)
+    refresh_lockfile()
     _capture_release_screenshots(screenshot_pdf)
 
     to_stage = _collect_release_artifacts()

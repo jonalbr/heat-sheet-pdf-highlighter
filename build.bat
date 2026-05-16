@@ -107,6 +107,8 @@ REM In GitHub Actions, timeout reads from redirected stdin and returns an error.
 REM Skip waiting when running in CI to avoid non-zero exit codes post-build.
 if /i "%GITHUB_ACTIONS%"=="true" (
     rem CI detected, no pause
+) else if /i "%HSPH_SKIP_BUILD_PAUSE%"=="true" (
+    rem Local automation requested a non-interactive build, no pause
 ) else (
     echo Build complete. Exiting in 10 seconds...
     timeout /t 10 /nobreak >nul 2>&1

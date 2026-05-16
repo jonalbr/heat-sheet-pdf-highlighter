@@ -82,6 +82,9 @@ if __name__ == "__main__":
         os.environ["HSPH_SCREENSHOT_PATH"] = os.path.abspath(args.screenshot_path)
         # Force English in screenshots for consistency
         os.environ["HSPH_FORCE_LANGUAGE"] = "en"
+        # Force light mode before the app is constructed so screenshots do not
+        # inherit the user's current system theme.
+        os.environ["HSPH_FORCE_THEME"] = "light"
         if args.screenshot_target:
             os.environ["HSPH_SCREENSHOT_TARGET"] = args.screenshot_target
         if args.screenshot_pdf:

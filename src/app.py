@@ -32,7 +32,6 @@ def _setup_screenshot_state(app: PDFHighlighterApp) -> None:
         app.app_settings.settings["watermark_text"] = "SGS Hamburg"
         app.app_settings.settings["watermark_color"] = "#FF9F14"
         app.app_settings.settings["watermark_size"] = 20
-        app.app_settings.settings["theme_mode"] = "light"
     except Exception as e:
         print(f"Error setting up screenshot mode: {e}")
 

@@ -77,6 +77,18 @@ def test_language_force_env_invalid_fallback_en(settings_file, monkeypatch):
     assert app.settings["language"] == "en"
 
 
+def test_theme_force_env(settings_file, monkeypatch):
+    monkeypatch.setenv("HSPH_FORCE_THEME", "light")
+    app = AppSettings(settings_file)
+    assert app.settings["theme_mode"] == "light"
+
+
+def test_theme_force_env_invalid_fallback_light(settings_file, monkeypatch):
+    monkeypatch.setenv("HSPH_FORCE_THEME", "sepia")
+    app = AppSettings(settings_file)
+    assert app.settings["theme_mode"] == "light"
+
+
 def test_validator_coercions(settings_file):
     app = AppSettings(settings_file)
     # Directly tamper and revalidate
