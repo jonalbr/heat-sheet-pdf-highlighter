@@ -34,8 +34,8 @@ UV_LOCK = Path("uv.lock")
 
 
 def check_version_input(version: str) -> None:
-    if not re.fullmatch(r"\d+\.\d+\.\d+(?:-(?:rc|beta)\d+)?", version):
-        print("Invalid version format. Use x.y.z or x.y.z-rcN/-betaN.")
+    if not re.fullmatch(r"\d+\.\d+\.\d+(?:-rc\d+)?", version):
+        print("Invalid version format. Use x.y.z or x.y.z-rcN.")
         sys.exit(1)
 
 

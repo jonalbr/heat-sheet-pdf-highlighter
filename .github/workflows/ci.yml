@@ -426,7 +426,7 @@ jobs:
           generate_release_notes: false
           body_path: release_notes.md
           draft: false
-          prerelease: ${{ contains(github.ref_name, '-rc') || contains(github.ref_name, '-beta') }}
+          prerelease: ${{ contains(github.ref_name, '-rc') }}
           fail_on_unmatched_files: true
           files: |
             heat_sheet_pdf_highlighter_installer.exe

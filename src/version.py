@@ -5,6 +5,8 @@ Version handling
 import re
 from dataclasses import dataclass
 
+_VERSION_RE = re.compile(r"^v?(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)(?:-(?P<label>rc|beta)(?P<number>\d+))?$")
+
 
 @dataclass
 class Version:
@@ -14,15 +16,18 @@ class Version:
     rc: int | None = None
 
     def __str__(self):
-        if self.rc:
+        if self.rc is not None:
             return f"{self.major}.{self.minor}.{self.patch}-rc{self.rc}"
-        else:
-            return f"{self.major}.{self.minor}.{self.patch}"
+        return f"{self.major}.{self.minor}.{self.patch}"
 
     @classmethod
     def from_str(cls, version: str):
         """
-        Create a Version object from a version string in the format 'X.Y.Z' or 'X.Y.Z-rcN'.
+        Create a Version object from 'X.Y.Z' or 'X.Y.Z-rcN'.
+
+        A leading ``v`` is accepted for Git tags. Legacy ``-betaN`` strings are
+        accepted as an ``rc``-equivalent for backwards-compatible reads, but
+        newly-created releases only use ``rc``.
 
         Args:
             version (str): The version string.
@@ -30,28 +35,33 @@ class Version:
         Returns:
             Version: The Version object.
         """
-        # Extract the version numbers and the optional rc number
-        parts = re.findall(r"\d+", version)
+        match = _VERSION_RE.fullmatch(version)
+        if match is None:
+            raise ValueError(f"Invalid version string: {version}")
 
-        # Convert the version numbers to integers
-        major = int(parts[0])
-        minor = int(parts[1])
-        patch = int(parts[2])
-
-        # If there's a fourth part, it's the rc number
-        rc = int(parts[3]) if len(parts) > 3 else None
+        major = int(match.group("major"))
+        minor = int(match.group("minor"))
+        patch = int(match.group("patch"))
+        rc = int(match.group("number")) if match.group("number") is not None else None
 
         return cls(major, minor, patch, rc)
 
+    def _sort_key(self):
+        # Release candidates come before the final release of the same base
+        # version. Finals use a higher stage rank than RCs.
+        stage_rank = 1 if self.rc is None else 0
+        rc_number = self.rc if self.rc is not None else 0
+        return (self.major, self.minor, self.patch, stage_rank, rc_number)
+
     def __lt__(self, other):
-        self_rc = self.rc if self.rc is not None else -1
-        other_rc = other.rc if other.rc is not None else -1
-        return (self.major, self.minor, self.patch, self_rc) < (other.major, other.minor, other.patch, other_rc)
+        if not isinstance(other, Version):
+            return NotImplemented
+        return self._sort_key() < other._sort_key()
 
     def __gt__(self, other):
-        self_rc = self.rc if self.rc is not None else -1
-        other_rc = other.rc if other.rc is not None else -1
-        return (self.major, self.minor, self.patch, self_rc) > (other.major, other.minor, other.patch, other_rc)
+        if not isinstance(other, Version):
+            return NotImplemented
+        return self._sort_key() > other._sort_key()
 
     def __le__(self, other):
         return self < other or self == other

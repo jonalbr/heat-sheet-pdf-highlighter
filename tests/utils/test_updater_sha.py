@@ -102,12 +102,12 @@ class DummyGUI:
 
 
 class DummySettings:
-    def __init__(self, beta: bool):
+    def __init__(self):
         self.settings = {
-            "beta": "True" if beta else "False",
             "newest_version_available": "0.0.0",
             "ask_for_update": "True",
             "version": "0.0.0",
+            "update_channel": "stable",
         }
 
     def update_setting(self, k, v):
@@ -115,9 +115,9 @@ class DummySettings:
 
 
 class DummyApp:
-    def __init__(self, beta: bool):
+    def __init__(self):
         self.update_dialogs = DummyGUI()
-        self.app_settings = DummySettings(beta)
+        self.app_settings = DummySettings()
         self.on_version_update = lambda latest, current: None
 
 
@@ -148,7 +148,7 @@ def test_checksum_mismatch():
     (temp_dir / "heat_sheet_pdf_highlighter_installer.exe.sha256").write_text("0" * 64 + "  heat_sheet_pdf_highlighter_installer.exe\n")
     server, port = run_http_server(temp_dir)
     try:
-        app = DummyApp(beta=False)
+        app = DummyApp()
         uc = UpdateChecker(app)  # type: ignore[arg-type]
         # Avoid actually spawning update script if it somehow gets that far
         with _PopenPatch():
@@ -162,14 +162,14 @@ def test_checksum_mismatch():
         server.shutdown()
 
 
-def test_beta_cancelled_download():
+def test_cancelled_download():
     temp_dir = Path(tempfile.mkdtemp())
     installer = temp_dir / "heat_sheet_pdf_highlighter_installer.exe"
     # Create a larger file to simulate streaming (still cancel immediately)
     installer.write_bytes(b"X" * 1024 * 1024)
     server, port = run_http_server(temp_dir)
     try:
-        app = DummyApp(beta=True)
+        app = DummyApp()
         uc = UpdateChecker(app)  # type: ignore[arg-type]
         # Cancel immediately before download loop starts
         app.update_dialogs.cancel = True
@@ -179,14 +179,14 @@ def test_beta_cancelled_download():
                 f"http://127.0.0.1:{port}/heat_sheet_pdf_highlighter_installer.exe",
                 None,
             )
-        print("OK: beta cancel path returns without spawn")
+        print("OK: cancel path returns without spawn")
     finally:
         server.shutdown()
 
 
 def test_stable_no_sha_treated_as_up_to_date():
     # Mock _fetch_release_info to simulate a newer stable release without sha asset
-    app = DummyApp(beta=False)
+    app = DummyApp()
     uc = UpdateChecker(app)  # type: ignore[arg-type]
 
     def fake_fetch(url: str):
@@ -216,7 +216,7 @@ def test_checksum_ok_runs():
 
     server, port = run_http_server(temp_dir)
     try:
-        app = DummyApp(beta=False)
+        app = DummyApp()
         uc = UpdateChecker(app)  # type: ignore[arg-type]
 
         # Capture Popen invocations
@@ -234,7 +234,7 @@ def test_checksum_ok_runs():
 
 if __name__ == "__main__":
     test_checksum_mismatch()
-    test_beta_cancelled_download()
+    test_cancelled_download()
     test_stable_no_sha_treated_as_up_to_date()
     test_checksum_ok_runs()
     print("All tests passed")

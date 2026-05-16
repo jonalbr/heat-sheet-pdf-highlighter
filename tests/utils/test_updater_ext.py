@@ -94,7 +94,6 @@ class DummyGUIExtended:
 class DummySettingsExtended:
     def __init__(self, overrides: dict[str, str] | None = None):
         base = {
-            "beta": "False",
             "newest_version_available": "0.0.0",
             "ask_for_update": "True",
             "version": "0.0.0",
@@ -727,6 +726,29 @@ def test_channel_rc_adopts_newer_prerelease():
     current = Version.from_str("1.0.0")
     latest = uc._get_latest_version_from_github(current_version=current, force_check=True, quiet=True)
     assert latest == Version.from_str("2.1.0-rc1"), "RC channel should adopt newer prerelease"
+
+
+def test_channel_rc_prefers_final_over_same_base_rc():
+    app = DummyAppExtended({"update_channel": "rc"})
+    uc = UpdateChecker(app)  # type: ignore[arg-type]
+
+    assets = [
+        {"name": "heat_sheet_pdf_highlighter_installer.exe", "browser_download_url": "https://example/installer.exe"},
+        {"name": "heat_sheet_pdf_highlighter_installer.exe.sha256", "browser_download_url": "https://example/installer.exe.sha256"},
+    ]
+    stable_release = {"tag_name": "2.1.0", "assets": assets, "prerelease": False}
+    prerelease = {"tag_name": "2.1.0-rc1", "assets": assets, "prerelease": True}
+
+    def fake_fetch(url: str):
+        if url.endswith("/latest"):
+            return stable_release
+        return [prerelease, stable_release]
+
+    uc._fetch_release_info = fake_fetch  # type: ignore
+
+    current = Version.from_str("2.0.0")
+    latest = uc._get_latest_version_from_github(current_version=current, force_check=True, quiet=True)
+    assert latest == Version.from_str("2.1.0"), "Final release should outrank same-base RC"
 
 
 def test_concurrency_download_guard():

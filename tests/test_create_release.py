@@ -1,7 +1,19 @@
 import os
 from types import SimpleNamespace
 
+import pytest
+
 import create_release
+
+
+@pytest.mark.parametrize("version", ["1.5.0", "1.5.0-rc1"])
+def test_check_version_input_accepts_stable_and_rc(version):
+    create_release.check_version_input(version)
+
+
+def test_check_version_input_rejects_beta():
+    with pytest.raises(SystemExit):
+        create_release.check_version_input("1.5.0-beta1")
 
 
 def test_local_release_flow_skips_pause_without_simulating_ci(monkeypatch):

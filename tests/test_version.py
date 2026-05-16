@@ -13,18 +13,28 @@ def test_from_str_rc():
     assert str(v) == "2.5.0-rc7"
 
 
-def test_str_with_rc_zero_treated_as_final():
-    # rc=0 should behave like no rc (due to truthiness check in __str__)
+def test_from_str_tag_prefix():
+    v = Version.from_str("v2.5.0-rc7")
+    assert (v.major, v.minor, v.patch, v.rc) == (2, 5, 0, 7)
+    assert str(v) == "2.5.0-rc7"
+
+
+def test_from_str_legacy_beta_normalized_to_rc():
+    v = Version.from_str("2.5.0-beta7")
+    assert (v.major, v.minor, v.patch, v.rc) == (2, 5, 0, 7)
+    assert str(v) == "2.5.0-rc7"
+
+
+def test_str_with_rc_zero_preserved():
     v = Version(1, 0, 0, rc=0)
-    assert str(v) == "1.0.0"  # because rc attribute is falsy
+    assert str(v) == "1.0.0-rc0"
 
 
-def test_comparison_final_precedes_rc():
+def test_comparison_rc_precedes_final():
     final = Version.from_str("1.0.0")
     rc1 = Version.from_str("1.0.0-rc1")
-    # Implementation: final (rc=None -> -1 sentinel) sorts BEFORE rc versions of same base
-    assert final < rc1
-    assert rc1 > final
+    assert rc1 < final
+    assert final > rc1
 
 
 def test_comparison_different_components():
@@ -51,11 +61,11 @@ def test_equality_with_non_version():
     assert (v == "1.2.3") is False
 
 
-def test_ordering_multiple_rcs_and_final():
+def test_ordering_multiple_rcs_before_final():
     final = Version.from_str("1.2.3")
     rc1 = Version.from_str("1.2.3-rc1")
     rc2 = Version.from_str("1.2.3-rc2")
-    assert final < rc1 < rc2
+    assert rc1 < rc2 < final
 
 
 def test_round_trip_str():

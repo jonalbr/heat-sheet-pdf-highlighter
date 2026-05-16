@@ -92,9 +92,12 @@ class UpdateChecker:
         items: list[dict] = []
         for rel in releases_info:
             rel: dict
-            if channel != "rc" and rel.get("prerelease"):
-                continue
             tag = rel.get("tag_name", "")
+            is_prerelease = bool(rel.get("prerelease"))
+            if is_prerelease and not self._is_rc_tag(tag):
+                continue
+            if channel != "rc" and is_prerelease:
+                continue
             exe_url, sha_url = self._select_release_assets(rel)
             items.append(
                 {
@@ -106,6 +109,10 @@ class UpdateChecker:
                 }
             )
         return items
+
+    @staticmethod
+    def _is_rc_tag(tag: str) -> bool:
+        return bool(re.fullmatch(r"v?\d+\.\d+\.\d+-rc\d+", tag))
 
     def _select_release_assets(self, release: dict) -> tuple[str | None, str | None]:
         """Pick the .exe and .sha256 assets from a release, if present."""
@@ -120,9 +127,13 @@ class UpdateChecker:
                 sha_url = asset.get("browser_download_url")
         return exe_url, sha_url
 
-    def _handle_beta_releases(self, latest_version: Version, download_url: str | None, sha_url: str | None):
+    def _handle_rc_releases(self, latest_version: Version, download_url: str | None, sha_url: str | None):
         releases_info = self._fetch_release_info(self.paths.GITHUB_RELEASES)
-        pre_releases = [release for release in releases_info if release["prerelease"]]
+        pre_releases = [
+            release
+            for release in releases_info
+            if release["prerelease"] and self._is_rc_tag(release.get("tag_name", ""))
+        ]
         if pre_releases:
             latest_pre_release = pre_releases[0]
             latest_pre_release_version = Version.from_str(latest_pre_release["tag_name"])
@@ -188,7 +199,7 @@ class UpdateChecker:
         """Apply update channel policy (stable/rc) and return possibly updated values."""
         channel = self.app_settings.settings.get("update_channel", "stable")
         if channel == "rc":
-            return self._handle_beta_releases(latest_version, download_url, sha_url)
+            return self._handle_rc_releases(latest_version, download_url, sha_url)
         return latest_version, download_url, sha_url
 
     def _validate_required_assets(

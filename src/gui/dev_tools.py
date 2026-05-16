@@ -526,7 +526,7 @@ class DevToolsWindow:
             releases = [
                 {
                     "tag": v,
-                    "prerelease": ("-rc" in v or "-beta" in v),
+                    "prerelease": "-rc" in v,
                     "exe_url": f"https://example.invalid/download/{v}/installer.exe",
                     "sha_url": f"https://example.invalid/download/{v}/installer.exe.sha256",
                     "body": f"_Placeholder release notes for {v} (screenshot mode)._",
