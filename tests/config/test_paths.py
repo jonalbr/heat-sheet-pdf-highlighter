@@ -2,7 +2,7 @@ import os
 import sys
 import pytest
 
-from src.config.paths import Paths
+from src.config.paths import Paths, _get_bundle_dir
 from src.constants import APP_NAME
 from pathlib import Path as _Path
 
@@ -72,3 +72,21 @@ def test_get_settings_path_unsupported_os(monkeypatch):
     monkeypatch.setattr(os, "name", "weirdos")
     with pytest.raises(Exception):
         Paths.get_settings_path()
+
+
+def test_get_bundle_dir_for_source_tree(tmp_path):
+    module_file = tmp_path / "src" / "config" / "paths.py"
+
+    assert _get_bundle_dir(frozen=False, module_file=module_file) == tmp_path
+
+
+def test_get_bundle_dir_for_pyinstaller(tmp_path):
+    unpacked_root = tmp_path / "_MEI123"
+
+    assert _get_bundle_dir(frozen=True, meipass=unpacked_root) == unpacked_root
+
+
+def test_get_bundle_dir_for_cx_freeze(tmp_path):
+    executable = tmp_path / "installed" / "heat_sheet_pdf_highlighter.exe"
+
+    assert _get_bundle_dir(frozen=True, meipass=None, executable=executable) == executable.parent

@@ -15,6 +15,9 @@ import datetime
 import hashlib
 import os
 
+import pytest
+import requests
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.utils.updater import UpdateChecker  # type: ignore  # noqa: E402
@@ -861,4 +864,193 @@ def test_list_releases_skips_invalid_tag_names():
             "body": "_No release notes provided._",
         }
     ]
+
+
+def test_fetch_release_info_uses_json_response(monkeypatch):
+    app = DummyAppExtended()
+    uc = UpdateChecker(app)  # type: ignore[arg-type]
+    calls = []
+
+    class Response:
+        def raise_for_status(self):
+            calls.append("raised")
+
+        def json(self):
+            return {"tag_name": "1.2.3"}
+
+    monkeypatch.setattr(
+        "src.utils.updater.requests.get",
+        lambda url, timeout: calls.append((url, timeout)) or Response(),
+    )
+
+    assert uc._fetch_release_info("https://example/releases/latest") == {"tag_name": "1.2.3"}
+    assert calls == [("https://example/releases/latest", 30), "raised"]
+
+
+def test_list_releases_filters_non_rc_and_stable_prereleases():
+    app = DummyAppExtended()
+    uc = UpdateChecker(app)  # type: ignore[arg-type]
+    uc._fetch_release_info = lambda url: [  # type: ignore[assignment]
+        {"tag_name": "1.2.3-beta1", "assets": [], "prerelease": True},
+        {"tag_name": "1.2.4rc1", "assets": [], "prerelease": True},
+        {"tag_name": "1.2.3", "assets": [], "prerelease": False},
+    ]
+
+    assert [release["tag"] for release in uc.list_releases("stable")] == ["1.2.3"]
+
+
+def test_handle_rc_releases_without_prereleases_updates_settings():
+    app = DummyAppExtended({"update_channel": "rc"})
+    uc = UpdateChecker(app)  # type: ignore[arg-type]
+    uc._fetch_release_info = lambda url: []  # type: ignore[assignment]
+
+    latest, download_url, sha_url = uc._handle_rc_releases(Version.from_str("1.2.3"), "exe", "sha")
+
+    assert (latest, download_url, sha_url) == (Version.from_str("1.2.3"), "exe", "sha")
+    assert app.app_settings.settings["newest_version_available"] == "1.2.3"
+    assert app.app_settings.settings["ask_for_update"] == "True"
+
+
+def test_handle_rc_releases_ignores_malformed_entries_without_prerelease_flag():
+    app = DummyAppExtended({"update_channel": "rc"})
+    uc = UpdateChecker(app)  # type: ignore[arg-type]
+    uc._fetch_release_info = lambda url: [{"tag_name": "1.2.4rc1", "assets": []}]  # type: ignore[assignment]
+
+    latest, _, _ = uc._handle_rc_releases(Version.from_str("1.2.3"), None, None)
+
+    assert latest == Version.from_str("1.2.3")
+
+
+def test_validate_required_assets_missing_installer_reports_retry():
+    app = DummyAppExtended({"verify_sha": "False"})
+    uc = UpdateChecker(app)  # type: ignore[arg-type]
+
+    result = uc._validate_required_assets(
+        latest_version=Version.from_str("2.0.0"),
+        current_version=Version.from_str("1.0.0"),
+        download_url=None,
+        sha_url=None,
+        force_check=True,
+        quiet=False,
+    )
+
+    assert result == Version.from_str("2.0.0")
+    assert app.update_dialogs.errors == [("retry", "Installer asset not found for the latest release.")]
+
+
+def test_request_exception_path_returns_false(monkeypatch, capsys):
+    app = DummyAppExtended()
+    uc = UpdateChecker(app)  # type: ignore[arg-type]
+    uc._fetch_release_info = lambda url: (_ for _ in ()).throw(requests.ConnectionError("offline"))  # type: ignore[assignment]
+
+    latest = uc._get_latest_version_from_github(Version.from_str("1.0.0"), force_check=False, quiet=True)
+
+    assert latest is False
+    assert "offline" in capsys.readouterr().out
+
+
+def test_request_exception_retry_rechecks_when_user_accepts():
+    app = DummyAppExtended()
+    uc = UpdateChecker(app)  # type: ignore[arg-type]
+    uc.gui_callbacks.show_update_error_retry = lambda message: True  # type: ignore[assignment]
+    uc.check_for_app_updates = lambda current_version, force_check: None  # type: ignore[assignment]
+
+    result = uc._handle_update_check_exception(
+        requests.ConnectionError("offline"),
+        Version.from_str("1.0.0"),
+        force_check=True,
+        quiet=False,
+    )
+
+    assert result is False
+
+
+def test_invalid_metadata_retry_rechecks_when_user_accepts():
+    app = DummyAppExtended()
+    uc = UpdateChecker(app)  # type: ignore[arg-type]
+    uc.gui_callbacks.show_update_error_retry = lambda message: True  # type: ignore[assignment]
+    uc.check_for_app_updates = lambda current_version, force_check: None  # type: ignore[assignment]
+
+    result = uc._handle_invalid_release_metadata(
+        ValueError("bad metadata"),
+        Version.from_str("1.0.0"),
+        force_check=True,
+        quiet=False,
+    )
+
+    assert result is False
+
+
+def test_download_http_error_resets_guard_and_shows_error():
+    app = DummyAppExtended()
+    uc = UpdateChecker(app)  # type: ignore[arg-type]
+    uc._download_with_progress = lambda url, path: (_ for _ in ()).throw(requests.HTTPError("404"))  # type: ignore[assignment]
+
+    uc.download_and_run_installer("https://example/installer.exe")
+
+    assert uc._active_download is False
+    assert app.update_dialogs.download_errors == ["404"]
+
+
+def test_download_unexpected_error_resets_guard_and_reraises():
+    app = DummyAppExtended()
+    uc = UpdateChecker(app)  # type: ignore[arg-type]
+    uc._download_with_progress = lambda url, path: (_ for _ in ()).throw(RuntimeError("boom"))  # type: ignore[assignment]
+
+    with pytest.raises(RuntimeError, match="boom"):
+        uc.download_and_run_installer("https://example/installer.exe")
+
+    assert uc._active_download is False
+
+
+def test_sha_failure_releases_download_guard():
+    app = DummyAppExtended()
+    uc = UpdateChecker(app)  # type: ignore[arg-type]
+    uc._download_with_progress = lambda url, path: (False, 0)  # type: ignore[assignment]
+    uc._verify_sha256 = lambda path, sha_url: False  # type: ignore[assignment]
+
+    uc.download_and_run_installer("https://example/installer.exe", "https://example/installer.exe.sha256")
+
+    assert uc._active_download is False
+
+
+def test_should_prompt_user_force_check_shows_up_to_date():
+    app = DummyAppExtended()
+    uc = UpdateChecker(app)  # type: ignore[arg-type]
+
+    assert uc._should_prompt_user(Version.from_str("1.0.0"), Version.from_str("1.0.0"), force_check=True) is False
+    assert app.update_dialogs.up_to_date_calls == 1
+
+
+def test_prompt_yes_without_download_url_shows_error():
+    app = DummyAppExtended()
+    app.update_dialogs._update_available_response = True
+    uc = UpdateChecker(app)  # type: ignore[arg-type]
+
+    uc._handle_user_prompt(Version.from_str("2.0.0"), None, None)
+
+    assert app.update_dialogs.download_errors == ["Installer asset not found in the selected release."]
+
+
+def test_download_with_progress_uses_large_chunks_when_size_unknown(tmp_path, monkeypatch):
+    app = DummyAppExtended()
+    uc = UpdateChecker(app)  # type: ignore[arg-type]
+    seen = {}
+
+    class Response:
+        headers = {}
+
+        def raise_for_status(self):
+            pass
+
+        def iter_content(self, chunk_size):
+            seen["chunk_size"] = chunk_size
+            yield b"data"
+
+    monkeypatch.setattr("src.utils.updater.requests.get", lambda *args, **kwargs: Response())
+
+    cancelled, total_size = uc._download_with_progress("https://example/installer.exe", str(tmp_path / "installer.exe"))
+
+    assert (cancelled, total_size) == (False, 0)
+    assert seen["chunk_size"] == 1024 * 1024
 

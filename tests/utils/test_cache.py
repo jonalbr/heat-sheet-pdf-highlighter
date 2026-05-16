@@ -168,6 +168,14 @@ def test_atomic_write_json_dump_failure(monkeypatch, caplog):
     monkeypatch.setattr(cache_mod.json, "dump", original_dump)
 
 
+def test_atomic_write_ignores_temp_cleanup_failure(monkeypatch):
+    monkeypatch.setattr(cache_mod.os, "replace", lambda src, dst: (_ for _ in ()).throw(OSError("replace fail")))
+    monkeypatch.setattr(cache_mod.os, "unlink", lambda path: (_ for _ in ()).throw(OSError("unlink fail")))
+
+    with pytest.raises(OSError, match="replace fail"):
+        cache_mod._write_json_atomic(Paths.update_cache_file, {"a": 1}, retries=1, delay=0)
+
+
 def test_invalidate_releases_cache_write_failure(monkeypatch, caplog):
     def failing_write_json_atomic(target, payload, retries=5, delay=0.1):
         raise OSError("write fail")

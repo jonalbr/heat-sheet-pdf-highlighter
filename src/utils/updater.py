@@ -142,7 +142,7 @@ class UpdateChecker:
         pre_releases = [
             release
             for release in releases_info
-            if release["prerelease"] and self._is_rc_tag(release.get("tag_name", ""))
+            if release.get("prerelease") and self._is_rc_tag(release.get("tag_name", ""))
         ]
         if pre_releases:
             latest_pre_release = pre_releases[0]
@@ -323,6 +323,7 @@ class UpdateChecker:
         if sha_url and not self._verify_sha256(installer_path, sha_url):
             # Error already shown inside _verify_sha256
             self._safe_unlink(installer_path)
+            self._active_download = False
             return
 
         # Close the application and run installer

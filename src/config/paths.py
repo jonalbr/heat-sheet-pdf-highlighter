@@ -9,6 +9,28 @@ from pathlib import Path
 from ..constants import APP_NAME
 
 
+def _get_bundle_dir(
+    *,
+    frozen: bool | None = None,
+    meipass: str | Path | None = None,
+    executable: str | Path | None = None,
+    module_file: str | Path = __file__,
+) -> Path:
+    """Return the asset root for source, PyInstaller, or cx_Freeze runtimes."""
+    is_frozen = bool(getattr(sys, "frozen", False)) if frozen is None else frozen
+    if not is_frozen:
+        return Path(module_file).resolve().parent.parent.parent
+
+    pyinstaller_root = meipass
+    if pyinstaller_root is None and hasattr(sys, "_MEIPASS"):
+        pyinstaller_root = getattr(sys, "_MEIPASS")
+    if pyinstaller_root is not None:
+        return Path(pyinstaller_root)
+
+    frozen_executable = sys.executable if executable is None else executable
+    return Path(frozen_executable).parent
+
+
 class Paths:
     """
     Encapsulates all path logic and constants for the application.
@@ -35,17 +57,8 @@ class Paths:
         settings_dir.mkdir(parents=True, exist_ok=True)
         return settings_dir
 
-    # Handle both single file and multi-file builds
-    if getattr(sys, "frozen", False):
-        if hasattr(sys, "_MEIPASS"):
-            # PyInstaller
-            bundle_dir = Path(getattr(sys, "_MEIPASS"))
-        else:
-            # cx_Freeze
-            bundle_dir = Path(sys.executable).parent
-    else:
-        # Development - go up from src/config to project root
-        bundle_dir = Path(__file__).resolve().parent.parent.parent
+    # Handle source, PyInstaller, and cx_Freeze runtimes.
+    bundle_dir = _get_bundle_dir()
 
     locales_dir = bundle_dir / "locales"
     tcl_lib_path = bundle_dir / "assets" / "tkBreeze"
