@@ -19,6 +19,7 @@ echo Waiting for process with PID %pid% to finish...
 tasklist /FI "PID eq %pid%" 2>NUL | find /I /N "%pid%">NUL
 if "%ERRORLEVEL%"=="0" (
     echo Process with PID %pid% is still running...
+    timeout /t 1 /nobreak >NUL 2>&1
     goto LOOP
 )
 

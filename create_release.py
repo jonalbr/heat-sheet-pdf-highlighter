@@ -6,13 +6,13 @@ derived version artifacts, creates a signed git tag, and pushes it to the
 remote repository.
 
 Arguments:
-    version (str): The new version string (e.g., 1.2.3 or 1.2.3-rc1).
-    --local (flag): If specified, only updates version locally, runs build.bat,
-                    and then reverts changes. Does not commit, tag, or push.
+    version (str): The new version string (e.g., 1.2.3 or 1.2.3rc1).
+    --local (flag): If specified, only updates version locally, runs the
+                    Windows build driver, and then reverts changes. Does not
+                    commit, tag, or push.
 """
 
 import argparse
-from contextlib import contextmanager
 import subprocess
 import sys
 import os
@@ -47,13 +47,14 @@ SCREENSHOT_PATHS = {
 
 PYPROJECT_TOML = Path("pyproject.toml")
 UV_LOCK = Path("uv.lock")
+BUILD_SCRIPT = Path("build_windows_installer.py")
 
 
 def check_version_input(version: str) -> None:
     try:
         validate_release_version(version)
     except ValueError:
-        print("Invalid version format. Use x.y.z or x.y.z-rcN.")
+        print("Invalid version format. Use x.y.z or x.y.zrcN.")
         sys.exit(1)
 
 
@@ -70,13 +71,11 @@ def refresh_lockfile() -> None:
 
 
 def build_project() -> None:
-    """Invoke the repo's build script on Windows."""
-    bat = Path("build.bat")
-    if not bat.exists():
-        print("build.bat not found in repository root. Aborting local build.")
+    """Invoke the repo's Windows build driver."""
+    if not BUILD_SCRIPT.exists():
+        print(f"{BUILD_SCRIPT} not found in repository root. Aborting local build.")
         sys.exit(1)
-    # Use cmd /c to run .bat reliably
-    run(["cmd", "/c", str(bat.resolve())])
+    run([sys.executable, str(BUILD_SCRIPT.resolve())])
 
 
 def _capture_target_screenshot(
@@ -181,7 +180,7 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Create a release: update versions, tag, and push. Use --local to build with a temporary version change and then revert."
     )
-    parser.add_argument("version", help="Version string, e.g. 1.2.3 or 1.2.3-rc1")
+    parser.add_argument("version", help="Version string, e.g. 1.2.3 or 1.2.3rc1")
     parser.add_argument("--local", action="store_true", help="Only change version locally, run build, then revert changes. No commit/tag/push.")
     parser.add_argument("--no-build", action="store_true", help="Do not run the build; useful as a dry-run to test update+revert behavior")
     parser.add_argument("--screenshot-pdf", dest="screenshot_pdf", default=None, help="Optional PDF used to generate preview screenshot")
@@ -201,51 +200,51 @@ def _capture_release_screenshots(screenshot_pdf: str | None) -> None:
                 theme,
                 pdf_for_preview=screenshot_pdf,
             )
+    if not screenshot_pdf:
+        print("Preview screenshots skipped; pass --screenshot-pdf PATH to include them.")
+    elif not os.path.exists(screenshot_pdf):
+        print(f"Preview screenshots skipped; screenshot PDF not found: {screenshot_pdf}")
 
 
-def _load_version_file_snapshots() -> dict[Path, str | None]:
+def _load_file_snapshots(paths: tuple[Path, ...]) -> dict[Path, bytes | None]:
     return {
-        path: path.read_text(encoding="utf-8") if path.exists() else None
-        for path in (PYPROJECT_TOML, RUNTIME_VERSION_PY, INNO_VERSION_ISS, UV_LOCK)
+        path: path.read_bytes() if path.exists() else None
+        for path in paths
     }
 
 
-def _restore_version_file_snapshots(snapshots: dict[Path, str | None]) -> None:
+def _load_version_file_snapshots() -> dict[Path, bytes | None]:
+    return _load_file_snapshots((PYPROJECT_TOML, RUNTIME_VERSION_PY, INNO_VERSION_ISS, UV_LOCK))
+
+
+def _load_screenshot_file_snapshots() -> dict[Path, bytes | None]:
+    screenshot_paths = tuple(path for per_target in SCREENSHOT_PATHS.values() for path in per_target.values())
+    return _load_file_snapshots(screenshot_paths)
+
+
+def _restore_file_snapshots(snapshots: dict[Path, bytes | None]) -> None:
     for path, content in snapshots.items():
         if content is None:
             path.unlink(missing_ok=True)
         else:
-            path.write_text(content, encoding="utf-8")
-
-
-@contextmanager
-def _temporary_environment_value(key: str, value: str):
-    had_existing_value = key in os.environ
-    previous_value = os.environ[key] if had_existing_value else ""
-    os.environ[key] = value
-    try:
-        yield
-    finally:
-        if had_existing_value:
-            os.environ[key] = previous_value
-        else:
-            os.environ.pop(key, None)
+            path.write_bytes(content)
 
 
 def _run_local_release_flow(version: str, no_build: bool, screenshot_pdf: str | None) -> None:
-    originals = _load_version_file_snapshots()
+    version_originals = _load_version_file_snapshots()
+    screenshot_originals = _load_screenshot_file_snapshots()
     try:
         update_version(version)
         refresh_lockfile()
-        with _temporary_environment_value("HSPH_SKIP_BUILD_PAUSE", "true"):
-            if no_build:
-                print("--no-build specified: skipping actual build (dry-run).")
-            else:
-                build_project()
+        if no_build:
+            print("--no-build specified: skipping build and screenshot capture (dry-run).")
+        else:
+            build_project()
             _capture_release_screenshots(screenshot_pdf)
     finally:
-        _restore_version_file_snapshots(originals)
-    print("Local flow complete and version changes reverted.")
+        _restore_file_snapshots(version_originals)
+        _restore_file_snapshots(screenshot_originals)
+    print("Local flow complete and temporary version/screenshot changes reverted.")
 
 
 def _collect_release_artifacts() -> list[str]:
@@ -291,5 +290,5 @@ def main() -> None:
     _run_release_flow(version, args.screenshot_pdf)
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover - exercised via CLI use, not unit tests
     main()

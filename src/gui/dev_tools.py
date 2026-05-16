@@ -515,18 +515,16 @@ class DevToolsWindow:
             # Fabricate simple stub releases (ensure exe_url present so they appear selectable/valid)
             base = self.app.app_settings.settings.get("version", "1.0.0")
             try:
-                ver_parts = base.split("-")[0].split('.')
-                while len(ver_parts) < 3:
-                    ver_parts.append('0')
-                major, minor, patch = map(int, ver_parts[:3])
-            except Exception:
+                parsed = Version.from_str(base)
+                major, minor, patch = parsed.major, parsed.minor, parsed.patch
+            except ValueError:
                 major = minor = patch = 0
             # Create a couple of forward tags for realism
             stub_versions = [f"{major}.{minor}.{patch}"]
             releases = [
                 {
                     "tag": v,
-                    "prerelease": "-rc" in v,
+                    "prerelease": Version.from_str(v).rc is not None,
                     "exe_url": f"https://example.invalid/download/{v}/installer.exe",
                     "sha_url": f"https://example.invalid/download/{v}/installer.exe.sha256",
                     "body": f"_Placeholder release notes for {v} (screenshot mode)._",

@@ -120,7 +120,9 @@ class UpdateChecker:
 
     @staticmethod
     def _is_rc_tag(tag: str) -> bool:
-        return bool(re.fullmatch(r"v?\d+\.\d+\.\d+-rc\d+", tag))
+        # New releases use canonical PEP 440 ``rc`` notation. Keep accepting
+        # the historical hyphenated form so older GitHub releases remain visible.
+        return bool(re.fullmatch(r"v?\d+\.\d+\.\d+-?rc\d+", tag))
 
     def _select_release_assets(self, release: dict) -> tuple[str | None, str | None]:
         """Pick the .exe and .sha256 assets from a release, if present."""

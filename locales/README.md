@@ -13,25 +13,32 @@ The helper scripts expect GNU gettext tools from MSYS2.
 3. Update packages with `pacman -Syu` and reopen the terminal if MSYS2 asks you to.
 4. Install gettext with `pacman -S gettext`.
 
-By default, the scripts expect `xgettext`, `msgmerge`, `msginit`, and `msgfmt` under `C:\msys64\usr\bin\`. If MSYS2 lives elsewhere, update the path variables in:
+By default, the helper looks for `xgettext`, `msgmerge`, `msginit`, and `msgfmt` on `PATH`, then under `C:\msys64\usr\bin\`. If MSYS2 lives elsewhere, set any of these environment variables to the executable path:
 
-- `update_translation_files_interactive.bat`
-- `update_translation_files_noninteractive.bat`
-- `update_mo_files.bat`
+- `XGETTEXT_PATH`
+- `MSGMERGE_PATH`
+- `MSGINIT_PATH`
+- `MSGFMT_PATH`
 
 ## Translation workflow
 
 Interactive update:
 
 ```powershell
-# Generate/update POT/POs and run the interactive review (the batch calls the review script for you)
-& .\update_translation_files_interactive.bat
+# Generate/update POT/POs, run the interactive review, and compile MO files
+uv run python .\locales\update_translations.py
 ```
 
 Non-interactive / batch mode (for CI or automation):
 
 ```powershell
-& .\update_translation_files_noninteractive.bat
+uv run python .\locales\update_translations.py --non-interactive
+```
+
+Compile-only mode after manual `.po` edits:
+
+```powershell
+uv run python .\locales\update_translations.py --compile-only
 ```
 
 This workflow will:

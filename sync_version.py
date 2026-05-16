@@ -13,10 +13,8 @@ PYPROJECT_TOML = Path("pyproject.toml")
 RUNTIME_VERSION_PY = Path("src/_version.py")
 INNO_VERSION_ISS = Path("setup_version.iss")
 
-_SUPPORTED_VERSION_RE = re.compile(
-    r"^(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)(?:-?rc(?P<rc>\d+))?$"
-)
-_RELEASE_VERSION_RE = re.compile(r"^\d+\.\d+\.\d+(?:-rc\d+)?$")
+_SUPPORTED_VERSION_RE = re.compile(r"^(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)(?:rc(?P<rc>\d+))?$")
+_RELEASE_VERSION_RE = re.compile(r"^\d+\.\d+\.\d+(?:rc\d+)?$")
 
 
 @dataclass(frozen=True)
@@ -28,14 +26,14 @@ class VersionArtifacts:
 def validate_supported_version(version: str) -> str:
     """Validate and return a supported stable or rc version string."""
     if _SUPPORTED_VERSION_RE.fullmatch(version) is None:
-        raise ValueError(f"Unsupported version {version!r}; use X.Y.Z, X.Y.ZrcN, or X.Y.Z-rcN.")
+        raise ValueError(f"Unsupported version {version!r}; use X.Y.Z or X.Y.ZrcN.")
     return version
 
 
 def validate_release_version(version: str) -> str:
     """Validate the public release/tag form used by ``create_release.py``."""
     if _RELEASE_VERSION_RE.fullmatch(version) is None:
-        raise ValueError(f"Unsupported release version {version!r}; use X.Y.Z or X.Y.Z-rcN.")
+        raise ValueError(f"Unsupported release version {version!r}; use X.Y.Z or X.Y.ZrcN.")
     return version
 
 
@@ -62,7 +60,7 @@ def derive_version_artifacts(version: str) -> VersionArtifacts:
     numeric_version = f"{match.group('major')}.{match.group('minor')}.{match.group('patch')}.0"
     display_version = f"{match.group('major')}.{match.group('minor')}.{match.group('patch')}"
     if match.group("rc") is not None:
-        display_version = f"{display_version}-rc{match.group('rc')}"
+        display_version = f"{display_version}rc{match.group('rc')}"
     return VersionArtifacts(display_version=display_version, numeric_version=numeric_version)
 
 
@@ -162,5 +160,5 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover - exercised via CLI use, not unit tests
     raise SystemExit(main())

@@ -5,7 +5,9 @@ Version handling
 import re
 from dataclasses import dataclass
 
-_VERSION_RE = re.compile(r"^v?(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)(?:-(?P<label>rc|beta)(?P<number>\d+))?$")
+_VERSION_RE = re.compile(
+    r"^v?(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)(?:-?(?P<label>rc|beta)(?P<number>\d+))?$"
+)
 
 
 @dataclass
@@ -17,17 +19,18 @@ class Version:
 
     def __str__(self):
         if self.rc is not None:
-            return f"{self.major}.{self.minor}.{self.patch}-rc{self.rc}"
+            return f"{self.major}.{self.minor}.{self.patch}rc{self.rc}"
         return f"{self.major}.{self.minor}.{self.patch}"
 
     @classmethod
     def from_str(cls, version: str):
         """
-        Create a Version object from 'X.Y.Z' or 'X.Y.Z-rcN'.
+        Create a Version object from 'X.Y.Z' or canonical PEP 440 'X.Y.ZrcN'.
 
-        A leading ``v`` is accepted for Git tags. Legacy ``-betaN`` strings are
-        accepted as an ``rc``-equivalent for backwards-compatible reads, but
-        newly-created releases only use ``rc``.
+        A leading ``v`` is accepted for Git tags. Legacy ``-rcN`` and
+        ``-betaN`` strings are accepted as ``rc``-equivalents for
+        backwards-compatible reads, but newly-created releases use canonical
+        ``rc`` notation.
 
         Args:
             version (str): The version string.

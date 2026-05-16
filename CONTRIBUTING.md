@@ -28,7 +28,7 @@ uv run pytest
 uv run ruff check .
 uv run ruff check . --fix
 uv run ruff format .
-uv run cmd /c build.bat
+uv run python build_windows_installer.py
 ```
 
 ## Working on a change
@@ -67,15 +67,19 @@ The detailed localization workflow lives in:
 Typical interactive update:
 
 ```powershell
-cd locales
-.\update_translation_files_interactive.bat
+uv run python .\locales\update_translations.py
+```
+
+For non-interactive automation:
+
+```powershell
+uv run python .\locales\update_translations.py --non-interactive
 ```
 
 If you manually edit `.po` files, compile them afterward:
 
 ```powershell
-cd locales
-.\update_mo_files.bat
+uv run python .\locales\update_translations.py --compile-only
 ```
 
 ## Debug logging
@@ -100,14 +104,14 @@ Open the Dev Tools window by triple-clicking the app logo in the top-left corner
 
 ## Building the Windows installer
 
-The Windows build uses `cx_Freeze` and [Inno Setup](https://jrsoftware.org/isdl.php). `build.bat` looks for Inno Setup 6 in the standard install locations:
+The Windows build uses `cx_Freeze` and [Inno Setup](https://jrsoftware.org/isdl.php). `build_windows_installer.py` looks for Inno Setup 6 on `PATH`, in the standard install locations, or at `INNO_COMPILER` when that environment variable is set:
 
 ```text
 C:\Program Files (x86)\Inno Setup 6\ISCC.exe
 C:\Program Files\Inno Setup 6\ISCC.exe
 ```
 
-If you installed Inno Setup somewhere nonstandard, update `build.bat` before building.
+If you installed Inno Setup somewhere nonstandard, set `INNO_COMPILER` to the full path of `ISCC.exe` before building.
 
 Create a local `.env` file in the project root:
 
@@ -126,7 +130,7 @@ The official `AppId` is intentionally private. Update-compatible official instal
 Build locally with:
 
 ```powershell
-uv run cmd /c build.bat
+uv run python build_windows_installer.py
 ```
 
 Expected build outputs:
@@ -161,16 +165,16 @@ uv run python create_release.py 1.4.0 --local --no-build
 
 Notes:
 
-- Supported release versions are `X.Y.Z` and `X.Y.Z-rcN`.
-- `uv` stores release candidates in PEP 440 form inside `pyproject.toml` (for example `1.5.0rc1`); generated runtime and installer display versions keep the public `1.5.0-rc1` form.
-- Local flow temporarily sets `HSPH_SKIP_BUILD_PAUSE=true` so `build.bat` does not wait for prompts.
+- Supported release versions are canonical PEP 440 forms: `X.Y.Z` and `X.Y.ZrcN`.
+- Runtime versions, installer display versions, tags, and `pyproject.toml` all use the same canonical form (for example `1.5.0rc1`).
+- Local flow restores temporary version and screenshot changes after the rehearsal while leaving the ignored build outputs available for inspection; `--local --no-build` skips both the build and screenshot capture.
 - Do not edit `src/_version.py` or `setup_version.iss` by hand; regenerate them from `pyproject.toml`.
 
 ### Official release path
 
 - Tag pushes matching `v*` trigger `.github/workflows/ci.yml`.
 - The GitHub Actions workflow validates release metadata, runs tests, builds the installer with the private `INNO_APP_ID` secret, uploads the installer and checksum, and publishes the GitHub Release.
-- Tags containing `-rc` are published as prereleases.
+- Tags containing an `rcN` suffix are published as prereleases.
 
 ## Verifying installer checksums
 

@@ -126,7 +126,7 @@ class AppSettings:
 
     def validate_settings(self, settings: Dict | None = None):
         # Get provided settings or use saved settings
-        settings_dict = settings or getattr(self, "settings", {}) or {}
+        settings_dict = settings if settings is not None else getattr(self, "settings", {}) or {}
         # Migrate legacy 'beta' flag if present
         if "update_channel" not in settings_dict and "beta" in settings_dict:
             beta_val = settings_dict.get("beta")

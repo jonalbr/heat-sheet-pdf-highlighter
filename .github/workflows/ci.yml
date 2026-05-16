@@ -125,11 +125,10 @@ jobs:
           Write-Output "🍫 Using Chocolatey to upgrade..."
           choco upgrade innosetup --no-progress -y
       - name: Build installer
-        shell: cmd
+        shell: pwsh
         env:
           AppId: ${{ secrets.INNO_APP_ID }}
-        run: |
-          uv run cmd /c build.bat
+        run: uv run python build_windows_installer.py
       - name: Ensure SHA256 exists
         shell: pwsh
         run: |
@@ -164,7 +163,7 @@ jobs:
           $current = "${{ github.ref_name }}"
 
           # Determine previous FINAL tag (vX.Y.Z) below current version, even if current is prerelease
-          $base = ($current -replace '^v','') -replace '[-+].*$',''
+          $base = if ($current -match '^v?(\d+\.\d+\.\d+)') { $Matches[1] } else { $current -replace '^v','' }
           try { $currentVersion = [Version]$base } catch { $currentVersion = $null }
 
           $all = git tag -l 'v*' --sort=-v:refname
@@ -257,11 +256,11 @@ jobs:
             $c = $c.Trim()
             if (-not $c) { continue }
             if ($c -eq $current) { continue }
-            # Skip pure tag/version messages like "v1.3.3-rc1"
-            if ($c -match '^(?i)v?\d+\.\d+\.\d+(?:[-+\.][0-9A-Za-z.-]+)?$') { continue }
-            # Skip messages that are just a list of versions like
-            # "v1.3.4-rc2, v1.3.4-rc1, v1.3.3-rc3" (optional trailing period)
-            if ($c -match '^(?i)\s*(?:v?\d+\.\d+\.\d+(?:[-+\.][0-9A-Za-z.-]+)?)(?:\s*,\s*v?\d+\.\d+\.\d+(?:[-+\.][0-9A-Za-z.-]+)?)*(?:\s*(?:and|&)\s*v?\d+\.\d+\.\d+(?:[-+\.][0-9A-Za-z.-]+)?)?\s*\.?\s*$') { continue }
+          # Skip pure tag/version messages like "v1.3.3rc1"
+          if ($c -match '^(?i)v?\d+\.\d+\.\d+(?:(?:a|b|rc)\d+|[-+\.][0-9A-Za-z.-]+)?$') { continue }
+          # Skip messages that are just a list of versions like
+          # "v1.3.4rc2, v1.3.4rc1, v1.3.3rc3" (optional trailing period)
+          if ($c -match '^(?i)\s*(?:v?\d+\.\d+\.\d+(?:(?:a|b|rc)\d+|[-+\.][0-9A-Za-z.-]+)?)(?:\s*,\s*v?\d+\.\d+\.\d+(?:(?:a|b|rc)\d+|[-+\.][0-9A-Za-z.-]+)?)*(?:\s*(?:and|&)\s*v?\d+\.\d+\.\d+(?:(?:a|b|rc)\d+|[-+\.][0-9A-Za-z.-]+)?)?\s*\.?\s*$') { continue }
 
             $lower = $c.ToLowerInvariant()
             # Skip release/tag housekeeping commits that include a version
@@ -403,7 +402,7 @@ jobs:
           generate_release_notes: false
           body_path: release_notes.md
           draft: false
-          prerelease: ${{ contains(github.ref_name, '-rc') }}
+          prerelease: ${{ contains(github.ref_name, 'rc') }}
           fail_on_unmatched_files: true
           files: |
             heat_sheet_pdf_highlighter_installer.exe
