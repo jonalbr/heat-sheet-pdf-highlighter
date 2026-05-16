@@ -307,6 +307,21 @@ class WatermarkDialog:
         self.parent = self.app.root
         self.window = None
 
+    def close(self, close_preview: bool = False) -> None:
+        """Close the watermark dialog and optionally close the linked preview."""
+        if close_preview:
+            self.app.preview_window_handler.close()
+
+        if self.window is None:
+            return
+
+        try:
+            if self.window.winfo_exists():
+                self.window.destroy()
+        except Exception:
+            pass
+        self.window = None
+
     def open(self):
         """Open the watermark dialog window."""
         self.window = Toplevel(self.parent)
@@ -523,17 +538,14 @@ class WatermarkDialog:
             self.app.app_settings.update_setting("watermark_position", temp_position.get())
             self.app.app_settings.update_setting("watermark_x_ratio", temp_x_ratio.get())
             self.app.app_settings.update_setting("watermark_y_ratio", temp_y_ratio.get())
-            if dialog_window.winfo_exists():
-                dialog_window.destroy()
+            self.close()
 
         btn_apply = ttk.Button(dialog_window, text=get_ui_string(self.app.strings, "btn_apply"), command=apply_changes)
         btn_apply.grid(row=8, column=0, pady=10, padx=10, sticky="E")
 
         def cancel_changes():
             stop_repeating_nudge()
-            self.app.preview_window_handler.close()
-            if dialog_window.winfo_exists():
-                dialog_window.destroy()
+            self.close(close_preview=True)
 
         dialog_window.protocol("WM_DELETE_WINDOW", cancel_changes)
 
@@ -550,7 +562,7 @@ class WatermarkDialog:
         try:
             if self.window and self.window.winfo_exists():
                 try:
-                    self.window.destroy()
+                    self.close(close_preview=True)
                 except Exception as e:
                     logging.getLogger("dialogs").exception("Error destroying watermark dialog: %s", e)
                 # Re-open will recreate the dialog using current translations

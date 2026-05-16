@@ -118,6 +118,7 @@ class PDFHighlighterApp:
         self.root.geometry("600x350")  # Adjusted size for a better layout
         self.root.minsize(width=600, height=350)
         self.root.resizable(False, False)
+        self.root.protocol("WM_DELETE_WINDOW", self.close)
 
         # Improved styling
         self.style = ttk.Style()
@@ -708,6 +709,29 @@ class PDFHighlighterApp:
     def open_filter_window(self):
         """Open the filter configuration dialog."""
         self.filter_dialog.open()
+
+    def close(self) -> None:
+        """Close owned windows before destroying the main application window."""
+        try:
+            self.preview_window_handler.close()
+        except Exception as e:
+            logging.getLogger("main_window").debug("Could not close preview window: %s", e)
+
+        for owner_name in ("filter_dialog", "watermark_dialog", "dev_tools"):
+            owner = getattr(self, owner_name, None)
+            window = getattr(owner, "window", None)
+            if window is None:
+                continue
+            try:
+                if window.winfo_exists():
+                    window.destroy()
+            except Exception as e:
+                logging.getLogger("main_window").debug("Could not close %s window: %s", owner_name, e)
+
+        try:
+            self.root.destroy()
+        except Exception as e:
+            logging.getLogger("main_window").debug("Could not destroy root window: %s", e)
 
     def open_watermark_window(self):
         """Open the watermark configuration dialog."""
