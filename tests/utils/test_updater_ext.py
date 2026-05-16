@@ -696,6 +696,11 @@ def test_sha_io_error_reading_installer(tmp_path: Path | None = None):
 # Channel tests
 
 
+def test_rc_tag_detection_accepts_canonical_and_legacy_forms():
+    assert UpdateChecker._is_rc_tag("v2.1.0rc1")
+    assert UpdateChecker._is_rc_tag("v2.1.0-rc1")
+
+
 def test_channel_stable_skips_prerelease():
     app = DummyAppExtended({"update_channel": "stable"})
     uc = UpdateChecker(app)  # type: ignore[arg-type]
@@ -705,7 +710,7 @@ def test_channel_stable_skips_prerelease():
         {"name": "heat_sheet_pdf_highlighter_installer.exe.sha256", "browser_download_url": "https://example/installer.exe.sha256"},
     ]
     stable_release = {"tag_name": "2.0.0", "assets": assets, "prerelease": False}
-    prerelease = {"tag_name": "2.1.0-rc1", "assets": assets, "prerelease": True}
+    prerelease = {"tag_name": "2.1.0rc1", "assets": assets, "prerelease": True}
 
     def fake_fetch(url: str):
         if url.endswith("/latest"):
@@ -728,7 +733,7 @@ def test_channel_rc_adopts_newer_prerelease():
         {"name": "heat_sheet_pdf_highlighter_installer.exe.sha256", "browser_download_url": "https://example/installer.exe.sha256"},
     ]
     stable_release = {"tag_name": "2.0.0", "assets": assets, "prerelease": False}
-    prerelease = {"tag_name": "2.1.0-rc1", "assets": assets, "prerelease": True}
+    prerelease = {"tag_name": "2.1.0rc1", "assets": assets, "prerelease": True}
 
     def fake_fetch(url: str):
         if url.endswith("/latest"):
@@ -739,7 +744,7 @@ def test_channel_rc_adopts_newer_prerelease():
 
     current = Version.from_str("1.0.0")
     latest = uc._get_latest_version_from_github(current_version=current, force_check=True, quiet=True)
-    assert latest == Version.from_str("2.1.0-rc1"), "RC channel should adopt newer prerelease"
+    assert latest == Version.from_str("2.1.0rc1"), "RC channel should adopt newer prerelease"
 
 
 def test_channel_rc_prefers_final_over_same_base_rc():
@@ -751,7 +756,7 @@ def test_channel_rc_prefers_final_over_same_base_rc():
         {"name": "heat_sheet_pdf_highlighter_installer.exe.sha256", "browser_download_url": "https://example/installer.exe.sha256"},
     ]
     stable_release = {"tag_name": "2.1.0", "assets": assets, "prerelease": False}
-    prerelease = {"tag_name": "2.1.0-rc1", "assets": assets, "prerelease": True}
+    prerelease = {"tag_name": "2.1.0rc1", "assets": assets, "prerelease": True}
 
     def fake_fetch(url: str):
         if url.endswith("/latest"):
@@ -856,3 +861,4 @@ def test_list_releases_skips_invalid_tag_names():
             "body": "_No release notes provided._",
         }
     ]
+

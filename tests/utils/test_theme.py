@@ -1,5 +1,6 @@
 import sys
 import types
+import builtins
 
 import pytest
 
@@ -47,6 +48,30 @@ def test_get_windows_app_theme_dark(monkeypatch):
 def test_get_windows_app_theme_returns_none_on_error(monkeypatch):
     fake_winreg = FakeWinregModule(HKEY_CURRENT_USER="HKCU", value="bad")
     monkeypatch.setitem(sys.modules, "winreg", fake_winreg)
+
+    assert theme.get_windows_app_theme() is None
+
+
+def test_get_windows_app_theme_returns_none_when_winreg_missing(monkeypatch):
+    original_import = builtins.__import__
+
+    def fake_import(name, *args, **kwargs):
+        if name == "winreg":
+            raise ImportError("missing")
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+    monkeypatch.delitem(sys.modules, "winreg", raising=False)
+
+    assert theme.get_windows_app_theme() is None
+
+
+def test_get_windows_app_theme_returns_none_on_registry_oserror(monkeypatch):
+    class FailingWinreg(types.SimpleNamespace):
+        def OpenKey(self, key, path):
+            raise OSError("registry unavailable")
+
+    monkeypatch.setitem(sys.modules, "winreg", FailingWinreg(HKEY_CURRENT_USER="HKCU"))
 
     assert theme.get_windows_app_theme() is None
 

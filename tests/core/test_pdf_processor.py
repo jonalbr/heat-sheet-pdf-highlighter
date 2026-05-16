@@ -205,3 +205,38 @@ def test_line_text_normalization_list_and_dict(monkeypatch):
     assert skipped == 0
     assert len(fake_page.highlights) == 1
 
+
+@pytest.mark.parametrize(
+    "line_text",
+    [
+        {"line": "Bahn 5 Alice CLUB 01:10.00"},
+        12345,
+    ],
+)
+def test_line_text_normalization_dict_and_other_values(line_text):
+    class FakeHighlight:
+        def set_colors(self, stroke):
+            self.stroke = stroke
+
+        def update(self):
+            pass
+
+    class FakePage:
+        def search_for(self, needle):
+            return [pp.Rect(0, 0, 10, 10)]
+
+        def get_text(self, mode, clip=None):
+            if mode == "words":
+                return [[0, 0, 10, 10, "CLUB", 0, 0, 0]]
+            return line_text
+
+        def add_highlight_annot(self, rect):
+            return FakeHighlight()
+
+    matches, skipped = pp.highlight_matching_data(FakePage(), "CLUB", only_relevant=True)
+
+    if isinstance(line_text, dict):
+        assert (matches, skipped) == (1, 0)
+    else:
+        assert (matches, skipped) == (1, 1)
+

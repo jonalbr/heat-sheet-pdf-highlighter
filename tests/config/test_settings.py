@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from src.config.settings import AppSettings
+from src.config.settings import AppSettings, _is_valid_ratio
 from src.constants import VERSION_STR, LANGUAGE_OPTIONS
 
 
@@ -176,6 +176,19 @@ def test_validate_settings_returns_dict_when_explicit(settings_file):
     d = app.validate_settings({"version": VERSION_STR})
     assert isinstance(d, dict)
     assert d["version"] == VERSION_STR
+
+
+def test_validate_settings_explicit_empty_dict_uses_defaults_not_live_state(settings_file):
+    app = AppSettings(settings_file)
+    app.settings["search_str"] = "live-value"
+
+    validated = app.validate_settings({})
+
+    assert validated["search_str"] == "SGS Hamburg"
+
+
+def test_is_valid_ratio_rejects_non_numeric_values():
+    assert _is_valid_ratio("not-a-number") is False
 
 
 def test_invalid_newest_version_string_resets(settings_file):

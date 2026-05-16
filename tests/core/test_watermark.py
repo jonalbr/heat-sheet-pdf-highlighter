@@ -143,3 +143,25 @@ def test_overlay_watermark_on_image_custom_position(monkeypatch):
 
     assert calls["pos"] == (40.0, 70.0)
 
+
+def test_overlay_watermark_on_image_uses_default_font_when_truetype_missing(monkeypatch):
+    img = Image.new("RGB", (200, 100), "white")
+    calls = {"default_font": 0}
+
+    class DummyDraw:
+        def textbbox(self, pos, text, font):
+            return (0, 0, 20, 10)
+
+        def text(self, pos, text, font, fill):
+            calls["font"] = font
+
+    fallback_font = DummyFont()
+    monkeypatch.setattr(wm.ImageDraw, "Draw", lambda *args, **kwargs: DummyDraw())
+    monkeypatch.setattr(wm.ImageFont, "truetype", lambda *args, **kwargs: (_ for _ in ()).throw(OSError("missing")))
+    monkeypatch.setattr(wm.ImageFont, "load_default", lambda: calls.__setitem__("default_font", 1) or fallback_font)
+
+    wm.overlay_watermark_on_image(img, text="TXT", font_size=10, color_hex="#FF0000", position="top")
+
+    assert calls["default_font"] == 1
+    assert calls["font"] is fallback_font
+

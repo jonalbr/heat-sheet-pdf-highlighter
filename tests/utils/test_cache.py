@@ -61,6 +61,31 @@ def test_load_update_cache_invalid_latest_version_resets(caplog):
     assert data["latest_version"] == "0.0.0"
 
 
+def test_load_update_cache_logs_reset_failure_after_corruption(monkeypatch, caplog):
+    Paths.update_cache_file.write_text("{not-json", encoding="utf-8")
+    monkeypatch.setattr(cache_mod, "_write_json_atomic", lambda *args, **kwargs: (_ for _ in ()).throw(OSError("reset fail")))
+
+    with caplog.at_level(logging.ERROR, logger="cache"):
+        fetched, latest = cache_mod.load_update_cache()
+
+    assert fetched is None and latest is None
+    assert any("Failed to reset update cache" in rec.message for rec in caplog.records)
+
+
+def test_load_update_cache_logs_reset_failure_after_invalid_version(monkeypatch, caplog):
+    Paths.update_cache_file.write_text(
+        json.dumps({"fetched_at": datetime.datetime.now().isoformat(), "latest_version": "bad"}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(cache_mod, "_write_json_atomic", lambda *args, **kwargs: (_ for _ in ()).throw(OSError("reset fail")))
+
+    with caplog.at_level(logging.ERROR, logger="cache"):
+        fetched, latest = cache_mod.load_update_cache()
+
+    assert fetched is None and latest is None
+    assert any("Failed to reset update cache" in rec.message for rec in caplog.records)
+
+
 def test_releases_cache_roundtrip():
     rels = [{"tag_name": "v1"}, {"tag_name": "v2"}]
     ts = datetime.datetime.now()
@@ -79,6 +104,23 @@ def test_releases_cache_corrupt(monkeypatch, caplog):
     # ensure file was reset to minimal valid JSON
     data = json.loads(Paths.releases_cache_file.read_text(encoding="utf-8"))
     assert data["releases"] == []
+
+
+def test_load_releases_cache_missing_returns_none():
+    fetched, channel, releases = cache_mod.load_releases_cache()
+
+    assert fetched is None and channel is None and releases is None
+
+
+def test_releases_cache_logs_reset_failure(monkeypatch, caplog):
+    Paths.releases_cache_file.write_text("corrupt", encoding="utf-8")
+    monkeypatch.setattr(cache_mod, "_write_json_atomic", lambda *args, **kwargs: (_ for _ in ()).throw(OSError("reset fail")))
+
+    with caplog.at_level(logging.ERROR, logger="cache"):
+        fetched, channel, releases = cache_mod.load_releases_cache()
+
+    assert fetched is None and channel is None and releases is None
+    assert any("Failed to reset releases cache" in rec.message for rec in caplog.records)
 
 
 def test_releases_cache_invalid_fetched_at(caplog):
