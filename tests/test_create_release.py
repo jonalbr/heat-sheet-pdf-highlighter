@@ -80,3 +80,26 @@ def test_release_flow_refreshes_lockfile_before_staging(monkeypatch):
     create_release._run_release_flow("1.5.0", screenshot_pdf=None)
 
     assert calls[:3] == ["version", "lock", "screenshots"]
+
+
+def test_capture_release_screenshots_captures_light_and_dark_variants(monkeypatch):
+    calls = []
+
+    monkeypatch.setattr(
+        create_release,
+        "_capture_target_screenshot",
+        lambda target, out_path, theme, **kwargs: calls.append((target, out_path, theme, kwargs)),
+    )
+
+    create_release._capture_release_screenshots(screenshot_pdf=None)
+
+    assert calls == [
+        ("main", create_release.SCREENSHOT_PATHS["main"]["light"], "light", {}),
+        ("filter", create_release.SCREENSHOT_PATHS["filter"]["light"], "light", {}),
+        ("watermark", create_release.SCREENSHOT_PATHS["watermark"]["light"], "light", {}),
+        ("devtools", create_release.SCREENSHOT_PATHS["devtools"]["light"], "light", {}),
+        ("main", create_release.SCREENSHOT_PATHS["main"]["dark"], "dark", {}),
+        ("filter", create_release.SCREENSHOT_PATHS["filter"]["dark"], "dark", {}),
+        ("watermark", create_release.SCREENSHOT_PATHS["watermark"]["dark"], "dark", {}),
+        ("devtools", create_release.SCREENSHOT_PATHS["devtools"]["dark"], "dark", {}),
+    ]

@@ -6,21 +6,37 @@
 
 Heat Sheet PDF Highlighter is a Python application designed to facilitate the highlighting of heat sheets in PDF format. This tool is especially useful for individuals and organizations needing to annotate and highlight structured documents like event line-ups or timetables in a standardized PDF format.
 
-![Screenshot of Heat Sheet PDF Highlighter](images/app_screenshot.png "Screenshot of the application")
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="images/app_screenshot_dark.png">
+  <source media="(prefers-color-scheme: light)" srcset="images/app_screenshot_light.png">
+  <img alt="Screenshot of Heat Sheet PDF Highlighter" src="images/app_screenshot_light.png">
+</picture>
 
 ## Screenshots
 
 Filter dialog (example names):
 
-![Filter dialog](images/app_screenshot_filter.png "Filter dialog with example names")
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="images/app_screenshot_filter_dark.png">
+  <source media="(prefers-color-scheme: light)" srcset="images/app_screenshot_filter_light.png">
+  <img alt="Filter dialog with example names" src="images/app_screenshot_filter_light.png">
+</picture>
 
 Watermark dialog:
 
-![Watermark dialog](images/app_screenshot_watermark.png "Watermark dialog with demo text")
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="images/app_screenshot_watermark_dark.png">
+  <source media="(prefers-color-scheme: light)" srcset="images/app_screenshot_watermark_light.png">
+  <img alt="Watermark dialog with demo text" src="images/app_screenshot_watermark_light.png">
+</picture>
 
 Dev Tools window (open by triple-clicking the logo in the top-left):
 
-![Dev Tools](images/app_screenshot_devtools.png "Developer tools window")
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="images/app_screenshot_devtools_dark.png">
+  <source media="(prefers-color-scheme: light)" srcset="images/app_screenshot_devtools_light.png">
+  <img alt="Developer tools window" src="images/app_screenshot_devtools_light.png">
+</picture>
 
 Notes:
 
@@ -462,9 +478,9 @@ Notes:
 - `--no-build` is a dry-run helper that skips the actual build step (useful for
    testing the update+revert behavior or other local checks without running the
    build).
-- The script temporarily sets `GITHUB_ACTIONS=true` during local builds so the
-   build batch script won't pause for interactive prompts. This is only set for
-   the lifetime of the local operation and restored afterward.
+- The script temporarily sets `HSPH_SKIP_BUILD_PAUSE=true` during local builds
+   so the build batch script won't pause for interactive prompts. This is only
+   set for the lifetime of the local operation and restored afterward.
 
 Security / safety:
 

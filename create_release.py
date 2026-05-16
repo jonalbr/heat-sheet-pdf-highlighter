@@ -20,11 +20,29 @@ import os
 from pathlib import Path
 import shutil
 
-SCREENSHOT_PATH = Path("images/app_screenshot.png")
-SCREENSHOT_FILTER = Path("images/app_screenshot_filter.png")
-SCREENSHOT_WATERMARK = Path("images/app_screenshot_watermark.png")
-SCREENSHOT_DEVTOOLS = Path("images/app_screenshot_devtools.png")
-SCREENSHOT_PREVIEW = Path("images/app_screenshot_preview.png")
+SCREENSHOT_THEMES = ("light", "dark")
+SCREENSHOT_PATHS = {
+    "main": {
+        "light": Path("images/app_screenshot_light.png"),
+        "dark": Path("images/app_screenshot_dark.png"),
+    },
+    "filter": {
+        "light": Path("images/app_screenshot_filter_light.png"),
+        "dark": Path("images/app_screenshot_filter_dark.png"),
+    },
+    "watermark": {
+        "light": Path("images/app_screenshot_watermark_light.png"),
+        "dark": Path("images/app_screenshot_watermark_dark.png"),
+    },
+    "devtools": {
+        "light": Path("images/app_screenshot_devtools_light.png"),
+        "dark": Path("images/app_screenshot_devtools_dark.png"),
+    },
+    "preview": {
+        "light": Path("images/app_screenshot_preview_light.png"),
+        "dark": Path("images/app_screenshot_preview_dark.png"),
+    },
+}
 
 SETUP_PY = Path("setup.py")
 SETUP_ISS = Path("setup.iss")
@@ -92,32 +110,20 @@ def build_project() -> None:
     run(["cmd", "/c", str(bat.resolve())])
 
 
-def _try_capture_screenshot(timeout_sec: int = 20) -> None:
-    """Invoke main.py in screenshot mode to produce a PNG of the main window."""
-    python_exe = shutil.which("python") or shutil.which("py")
-    if not python_exe:
-        print("Python executable not found; skipping screenshot capture.")
-        return
-    SCREENSHOT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    env = os.environ.copy()
-    # Let main.py control off-screen and default settings
-    cmd = [python_exe, "main.py", "--use-default-settings", "--screenshot", str(SCREENSHOT_PATH)]
-    try:
-        res = subprocess.run(cmd, env=env, timeout=timeout_sec)
-        if res.returncode == 0 and SCREENSHOT_PATH.exists():
-            print(f"Updated screenshot at {SCREENSHOT_PATH}")
-        else:
-            print("Screenshot capture failed or was skipped.")
-    except Exception as e:
-        print(f"Screenshot capture error: {e}")
-
-
-def _capture_target_screenshot(target: str, out_path: Path, timeout_sec: int = 25, pdf_for_preview: str | None = None, delay: float = 0.6) -> None:
+def _capture_target_screenshot(
+    target: str,
+    out_path: Path,
+    theme: str,
+    timeout_sec: int = 25,
+    pdf_for_preview: str | None = None,
+    delay: float = 0.6,
+) -> None:
     """Capture a screenshot for a specific target window/dialog via main.py flags.
 
     target: one of 'main', 'filter', 'watermark', 'devtools', 'preview'
     out_path: where to save the PNG
     pdf_for_preview: optional PDF path required when target='preview'
+    theme: screenshot theme to force ('light' or 'dark')
     delay: seconds to wait before capture for UI settle
     """
     python_exe = shutil.which("python") or shutil.which("py")
@@ -133,6 +139,8 @@ def _capture_target_screenshot(target: str, out_path: Path, timeout_sec: int = 2
         str(out_path),
         "--screenshot-target",
         target,
+        "--screenshot-theme",
+        theme,
         "--screenshot-delay",
         str(delay),
     ]
@@ -141,11 +149,11 @@ def _capture_target_screenshot(target: str, out_path: Path, timeout_sec: int = 2
     try:
         res = subprocess.run(cmd, timeout=timeout_sec)
         if res.returncode == 0 and out_path.exists():
-            print(f"Captured {target} screenshot -> {out_path}")
+            print(f"Captured {theme} {target} screenshot -> {out_path}")
         else:
-            print(f"Skipping {target} screenshot (command returned {res.returncode}).")
+            print(f"Skipping {theme} {target} screenshot (command returned {res.returncode}).")
     except Exception as e:
-        print(f"Screenshot capture error for {target}: {e}")
+        print(f"Screenshot capture error for {theme} {target}: {e}")
 
 
 def _resolve_exec(cmd: list[str]) -> list[str]:
@@ -212,12 +220,18 @@ def _parse_args() -> argparse.Namespace:
 
 
 def _capture_release_screenshots(screenshot_pdf: str | None) -> None:
-    _try_capture_screenshot()
-    _capture_target_screenshot("filter", SCREENSHOT_FILTER)
-    _capture_target_screenshot("watermark", SCREENSHOT_WATERMARK)
-    _capture_target_screenshot("devtools", SCREENSHOT_DEVTOOLS)
-    if screenshot_pdf and os.path.exists(screenshot_pdf):
-        _capture_target_screenshot("preview", SCREENSHOT_PREVIEW, pdf_for_preview=screenshot_pdf)
+    for theme in SCREENSHOT_THEMES:
+        _capture_target_screenshot("main", SCREENSHOT_PATHS["main"][theme], theme)
+        _capture_target_screenshot("filter", SCREENSHOT_PATHS["filter"][theme], theme)
+        _capture_target_screenshot("watermark", SCREENSHOT_PATHS["watermark"][theme], theme)
+        _capture_target_screenshot("devtools", SCREENSHOT_PATHS["devtools"][theme], theme)
+        if screenshot_pdf and os.path.exists(screenshot_pdf):
+            _capture_target_screenshot(
+                "preview",
+                SCREENSHOT_PATHS["preview"][theme],
+                theme,
+                pdf_for_preview=screenshot_pdf,
+            )
 
 
 def _load_version_file_snapshots() -> dict[Path, str]:
@@ -261,11 +275,7 @@ def _collect_release_artifacts() -> list[str]:
         SETUP_ISS,
         CONSTANTS_PY,
         UV_LOCK,
-        SCREENSHOT_PATH,
-        SCREENSHOT_FILTER,
-        SCREENSHOT_WATERMARK,
-        SCREENSHOT_DEVTOOLS,
-        SCREENSHOT_PREVIEW,
+        *(path for per_target in SCREENSHOT_PATHS.values() for path in per_target.values()),
     )
     return [str(path) for path in artifacts if path.exists()]
 

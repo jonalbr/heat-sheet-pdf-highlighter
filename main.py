@@ -61,6 +61,13 @@ if __name__ == "__main__":
         default=None,
         help="Optional delay in seconds before capture to allow UI to stabilize",
     )
+    parser.add_argument(
+        "--screenshot-theme",
+        dest="screenshot_theme",
+        choices=["light", "dark"],
+        default="light",
+        help="Theme to force when using --screenshot (default: light)",
+    )
     args, _ = parser.parse_known_args(sys.argv[1:])
 
     env_level = os.getenv("LOG_LEVEL")
@@ -82,9 +89,9 @@ if __name__ == "__main__":
         os.environ["HSPH_SCREENSHOT_PATH"] = os.path.abspath(args.screenshot_path)
         # Force English in screenshots for consistency
         os.environ["HSPH_FORCE_LANGUAGE"] = "en"
-        # Force light mode before the app is constructed so screenshots do not
-        # inherit the user's current system theme.
-        os.environ["HSPH_FORCE_THEME"] = "light"
+        # Force the requested theme before the app is constructed so screenshots
+        # do not inherit the user's current system theme.
+        os.environ["HSPH_FORCE_THEME"] = args.screenshot_theme
         if args.screenshot_target:
             os.environ["HSPH_SCREENSHOT_TARGET"] = args.screenshot_target
         if args.screenshot_pdf:
