@@ -77,7 +77,15 @@ def load_update_cache():
     except Exception as e:
         logging.getLogger("cache").exception("Invalid fetched_at in cache: %s", e)
         return None, None
-    latest_version = Version.from_str(data["latest_version"])
+    try:
+        latest_version = Version.from_str(data["latest_version"])
+    except (KeyError, TypeError, ValueError) as e:
+        logging.getLogger("cache").exception("Invalid latest_version in cache, resetting: %s", e)
+        try:
+            _write_json_atomic(cache_file, {"fetched_at": "1970-01-01T00:00:00", "latest_version": "0.0.0"})
+        except Exception as reset_error:
+            logging.getLogger("cache").exception("Failed to reset update cache: %s", reset_error)
+        return None, None
     return fetched_at, latest_version
 
 

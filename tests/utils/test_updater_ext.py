@@ -326,6 +326,18 @@ def test_active_check_guard_returns_existing_version():
     assert uc._active_check is True
 
 
+def test_active_check_guard_handles_invalid_stored_version():
+    app = DummyAppExtended({"newest_version_available": "bad"})
+    uc = UpdateChecker(app)  # type: ignore[arg-type]
+    uc._active_check = True
+
+    current = Version.from_str("1.0.0")
+    result = uc.check_for_app_updates(current_version=current, force_check=False, quiet=True)
+
+    assert result == current
+    assert app.app_settings.settings["newest_version_available"] == "0.0.0"
+
+
 # Prompt logic tests
 
 
@@ -448,6 +460,7 @@ def test_prompt_yes_caches_metadata():
 def test_download_success_without_sha():
     app = DummyAppExtended({"verify_sha": "False"})
     uc = UpdateChecker(app)  # type: ignore[arg-type]
+    uc._spawn_installer = lambda path: None  # type: ignore[assignment]
 
     body = b"A" * (512 * 1024)  # 512 KiB (< 4MB triggers small chunk mode)
     # Patch requests.get for the download
@@ -504,6 +517,7 @@ def test_download_cancel_midstream():
 def test_download_size_mismatch_warning():
     app = DummyAppExtended({"verify_sha": "False"})
     uc = UpdateChecker(app)  # type: ignore[arg-type]
+    uc._spawn_installer = lambda path: None  # type: ignore[assignment]
 
     body = b"B" * (300 * 1024)
 
@@ -806,3 +820,39 @@ def test_metadata_set_on_successful_check():
     assert uc.last_download_url == "https://example/installer.exe"
     assert uc.last_sha_url == "https://example/installer.exe.sha256"
     assert uc.last_version_tag == "7.8.9"
+
+
+def test_invalid_remote_version_metadata_returns_false():
+    app = DummyAppExtended()
+    uc = UpdateChecker(app)  # type: ignore[arg-type]
+    uc._fetch_release_info = lambda url: {"tag_name": "not-a-version", "assets": [], "prerelease": False}  # type: ignore[assignment]
+
+    latest = uc._get_latest_version_from_github(current_version=Version.from_str("1.0.0"), force_check=True, quiet=True)
+
+    assert latest is False
+
+
+def test_list_releases_skips_invalid_tag_names():
+    app = DummyAppExtended()
+    uc = UpdateChecker(app)  # type: ignore[arg-type]
+    uc._fetch_release_info = lambda url: [  # type: ignore[assignment]
+        {"tag_name": None, "assets": [], "prerelease": False},
+        {"tag_name": "not-a-version", "assets": [], "prerelease": False},
+        {
+            "tag_name": "1.2.3",
+            "assets": [{"name": "heat_sheet_pdf_highlighter_installer.exe", "browser_download_url": "https://example/installer.exe"}],
+            "prerelease": False,
+        },
+    ]
+
+    releases = uc.list_releases()
+
+    assert releases == [
+        {
+            "tag": "1.2.3",
+            "prerelease": False,
+            "exe_url": "https://example/installer.exe",
+            "sha_url": None,
+            "body": "_No release notes provided._",
+        }
+    ]

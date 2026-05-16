@@ -8,6 +8,7 @@ from typing import Dict
 import os
 
 from ..constants import LANGUAGE_OPTIONS, VERSION_STR, WATERMARK_DEFAULT_X_RATIO, WATERMARK_DEFAULT_Y_RATIO
+from ..version import Version
 
 
 def _is_valid_ratio(value) -> bool:
@@ -16,6 +17,16 @@ def _is_valid_ratio(value) -> bool:
     except (TypeError, ValueError):
         return False
     return 0.0 <= numeric_value <= 1.0
+
+
+def _validated_newest_version(value) -> str:
+    if not isinstance(value, str):
+        return "0.0.0"
+    try:
+        parsed_value = Version.from_str(value)
+    except (TypeError, ValueError):
+        return "0.0.0"
+    return str(parsed_value) if parsed_value >= Version.from_str(VERSION_STR) else "0.0.0"
 
 
 class AppSettings:
@@ -97,7 +108,7 @@ class AppSettings:
             "language": lambda v: v if v in LANGUAGE_OPTIONS else "en",
             "ask_for_update": lambda v: v if v in ["True", "False"] else "True",
             "update_available": lambda v: v if v in ["True", "False"] else "False",
-            "newest_version_available": lambda v: v if isinstance(v, str) and v >= VERSION_STR else "0.0.0",
+            "newest_version_available": _validated_newest_version,
             "names": lambda v: v if isinstance(v, str) else "",
             "update_channel": lambda v: v if v in ["stable", "rc"] else "stable",
             "verify_sha": lambda v: v if v in ["True", "False"] else "True",

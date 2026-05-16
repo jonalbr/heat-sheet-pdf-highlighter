@@ -52,6 +52,15 @@ def test_load_update_cache_invalid_fetched_at(monkeypatch, caplog):
     assert fetched is None and latest is None
 
 
+def test_load_update_cache_invalid_latest_version_resets(caplog):
+    cache_mod._write_json_atomic(Paths.update_cache_file, {"fetched_at": datetime.datetime.now().isoformat(), "latest_version": "bad"})
+    with caplog.at_level(logging.ERROR, logger="cache"):
+        fetched, latest = cache_mod.load_update_cache()
+    assert fetched is None and latest is None
+    data = json.loads(Paths.update_cache_file.read_text(encoding="utf-8"))
+    assert data["latest_version"] == "0.0.0"
+
+
 def test_releases_cache_roundtrip():
     rels = [{"tag_name": "v1"}, {"tag_name": "v2"}]
     ts = datetime.datetime.now()

@@ -49,7 +49,7 @@ class UpdateChecker:
         """
         # Prevent overlapping network checks (unless forced); a force can still be ignored if one is already active
         if self._active_check:
-            return Version.from_str(self.app_settings.settings.get("newest_version_available", str(current_version)))
+            return self._stored_newest_version_or(current_version)
         self._active_check = True
         now = datetime.datetime.now()
 
@@ -93,6 +93,14 @@ class UpdateChecker:
         for rel in releases_info:
             rel: dict
             tag = rel.get("tag_name", "")
+            if not isinstance(tag, str):
+                logging.getLogger("updater").warning("Skipping release with invalid tag_name: %r", tag)
+                continue
+            try:
+                Version.from_str(tag)
+            except ValueError:
+                logging.getLogger("updater").warning("Skipping release with invalid version tag: %r", tag)
+                continue
             is_prerelease = bool(rel.get("prerelease"))
             if is_prerelease and not self._is_rc_tag(tag):
                 continue
@@ -189,6 +197,8 @@ class UpdateChecker:
 
         except requests.exceptions.RequestException as e:
             return self._handle_update_check_exception(e, current_version, force_check, quiet)
+        except (KeyError, TypeError, ValueError) as e:
+            return self._handle_invalid_release_metadata(e, current_version, force_check, quiet)
 
     def _apply_channel_policy(
         self,
@@ -242,6 +252,20 @@ class UpdateChecker:
             print(f"Failed to check for updates: {str(e)}")
         else:
             print(f"Failed to check for updates: {str(e)}")
+        return False
+
+    def _handle_invalid_release_metadata(
+        self,
+        e: Exception,
+        current_version: Version,
+        force_check: bool,
+        quiet: bool,
+    ) -> Version | bool:
+        logging.getLogger("updater").exception("Invalid release metadata while checking updates: %s", e)
+        if force_check and not quiet:
+            if self.gui_callbacks.show_update_error_retry("Invalid release metadata received from GitHub."):
+                result = self.check_for_app_updates(current_version, force_check)
+                return result if result is not None else False
         return False
 
     def download_and_run_installer(self, download_url: str, sha_url: str | None = None):
@@ -310,9 +334,18 @@ class UpdateChecker:
     # --- helper methods to reduce complexity ---
 
     def _update_settings_if_newer(self, latest_version: Version) -> None:
-        if latest_version > Version.from_str(self.app_settings.settings["newest_version_available"]):
+        if latest_version > self._stored_newest_version_or(Version()):
             self.app_settings.update_setting("ask_for_update", "True")
             self.app_settings.update_setting("newest_version_available", str(latest_version))
+
+    def _stored_newest_version_or(self, fallback: Version) -> Version:
+        stored_value = self.app_settings.settings.get("newest_version_available", str(fallback))
+        try:
+            return Version.from_str(stored_value)
+        except (TypeError, ValueError):
+            logging.getLogger("updater").warning("Invalid stored newest version %r; using %s", stored_value, fallback)
+            self.app_settings.update_setting("newest_version_available", "0.0.0")
+            return fallback
 
     def _should_prompt_user(self, latest_version: Version, current_version: Version, force_check: bool) -> bool:
         should_prompt = latest_version > current_version and (self.app_settings.settings["ask_for_update"] == "True" or force_check)

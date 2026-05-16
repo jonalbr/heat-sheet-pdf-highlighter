@@ -176,3 +176,24 @@ def test_validate_settings_returns_dict_when_explicit(settings_file):
     d = app.validate_settings({"version": VERSION_STR})
     assert isinstance(d, dict)
     assert d["version"] == VERSION_STR
+
+
+def test_invalid_newest_version_string_resets(settings_file):
+    app = AppSettings(settings_file)
+    app.settings["newest_version_available"] = "not-a-version"
+    app.validate_settings()
+    assert app.settings["newest_version_available"] == "0.0.0"
+
+
+def test_valid_newest_version_string_is_kept(settings_file):
+    app = AppSettings(settings_file)
+    app.settings["newest_version_available"] = "99.0.0"
+    app.validate_settings()
+    assert app.settings["newest_version_available"] == "99.0.0"
+
+
+def test_non_string_newest_version_resets(settings_file):
+    app = AppSettings(settings_file)
+    app.settings["newest_version_available"] = 123
+    app.validate_settings()
+    assert app.settings["newest_version_available"] == "0.0.0"
