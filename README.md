@@ -12,11 +12,11 @@
     <a href="https://www.codefactor.io/repository/github/jonalbr/heat-sheet-pdf-highlighter">
       <img alt="CodeFactor" src="https://www.codefactor.io/repository/github/jonalbr/heat-sheet-pdf-highlighter/badge">
     </a>
-    <a href="https://www.paypal.me/AlbrechtJonas">
-            <img src="https://img.shields.io/badge/donate-PayPal-blue.svg">
-        </a>
     <a href="LICENSE">
       <img alt="License GPL-3.0" src="https://img.shields.io/badge/license-GPL--3.0-orange">
+    </a>
+    <a href="https://www.paypal.me/AlbrechtJonas">
+      <img src="https://img.shields.io/badge/donate-PayPal-blue.svg">
     </a>
   </p>
 
