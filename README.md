@@ -76,19 +76,23 @@ The app saves a new PDF with a `_highlighted` suffix at the location you choose.
 
 Filter dialog:
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="images/app_screenshot_filter_dark.png">
-  <source media="(prefers-color-scheme: light)" srcset="images/app_screenshot_filter_light.png">
-  <img alt="Filter dialog with example names" src="images/app_screenshot_filter_light.png">
-</picture>
+<div align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="images/app_screenshot_filter_dark.png">
+    <source media="(prefers-color-scheme: light)" srcset="images/app_screenshot_filter_light.png">
+    <img alt="Filter dialog with example names" src="images/app_screenshot_filter_light.png">
+  </picture>
+</div>
 
 Watermark dialog:
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="images/app_screenshot_watermark_dark.png">
-  <source media="(prefers-color-scheme: light)" srcset="images/app_screenshot_watermark_light.png">
-  <img alt="Watermark dialog with demo text" src="images/app_screenshot_watermark_light.png">
-</picture>
+<div align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="images/app_screenshot_watermark_dark.png">
+    <source media="(prefers-color-scheme: light)" srcset="images/app_screenshot_watermark_light.png">
+    <img alt="Watermark dialog with demo text" src="images/app_screenshot_watermark_light.png">
+  </picture>
+</div>
 
 ## Run from source
 
@@ -102,6 +106,16 @@ uv run python main.py
 ```
 
 This project requires Python `>=3.14,<3.15`.
+
+## Support the Project
+
+I maintain Heat Sheet PDF Highlighter in my free time. If you find it useful and want to say thanks, you’re welcome to support me.
+
+<div align="center">
+  <a href="https://ko-fi.com/L4L81ZOT4V">
+    <img alt="ko-fi" src="https://ko-fi.com/img/githubbutton_sm.svg">
+  </a>
+</div>
 
 ## Contributing
 
