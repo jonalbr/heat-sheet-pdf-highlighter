@@ -12,6 +12,7 @@ Arguments:
 """
 
 import argparse
+from contextlib import contextmanager
 import subprocess
 import sys
 import re
@@ -192,7 +193,7 @@ def create_and_push_signed_tag(version: str) -> None:
     run(["git", "push", "origin", tag])
 
 
-def main() -> None:
+def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Create a release: update versions, tag, and push. Use --local to build with a temporary version change and then revert."
     )
@@ -200,67 +201,54 @@ def main() -> None:
     parser.add_argument("--local", action="store_true", help="Only change version locally, run build, then revert changes. No commit/tag/push.")
     parser.add_argument("--no-build", action="store_true", help="Do not run the build; useful as a dry-run to test update+revert behavior")
     parser.add_argument("--screenshot-pdf", dest="screenshot_pdf", default=None, help="Optional PDF used to generate preview screenshot")
-    args = parser.parse_args()
+    return parser.parse_args()
 
-    version = args.version.strip()
-    check_version_input(version)
 
-    if args.local:
-        # Save originals to restore after build/dry-run
-        originals: dict[Path, str] = {}
-        for p in (PYPROJECT_TOML, SETUP_PY, SETUP_ISS, CONSTANTS_PY):
-            if p.exists():
-                originals[p] = p.read_text(encoding="utf-8")
-
-        try:
-            update_version(version)
-            # Simulate CI environment so build scripts that check for GITHUB_ACTIONS skip interactive pauses
-            old_env_val = None
-            env_key = "GITHUB_ACTIONS"
-            if env_key in os.environ:
-                old_env_val = os.environ[env_key]
-            os.environ[env_key] = "true"
-            try:
-                if args.no_build:
-                    print("--no-build specified: skipping actual build (dry-run).")
-                else:
-                    build_project()
-                # Exercise screenshot capture path locally; don't fail build if it skips
-                _try_capture_screenshot()
-                # Also capture additional dialogs for docs
-                _capture_target_screenshot("filter", SCREENSHOT_FILTER)
-                _capture_target_screenshot("watermark", SCREENSHOT_WATERMARK)
-                _capture_target_screenshot("devtools", SCREENSHOT_DEVTOOLS)
-                if args.screenshot_pdf and os.path.exists(args.screenshot_pdf):
-                    _capture_target_screenshot("preview", SCREENSHOT_PREVIEW, pdf_for_preview=args.screenshot_pdf)
-            finally:
-                # restore environment
-                if old_env_val is None:
-                    del os.environ[env_key]
-                else:
-                    os.environ[env_key] = old_env_val
-        finally:
-            # Revert files to their original state
-            for p, content in originals.items():
-                p.write_text(content, encoding="utf-8")
-        print("Local flow complete and version changes reverted.")
-        return
-
-    # Non-local: proceed with normal release flow
-    update_version(version)
-
-    # Capture screenshots (with updated version visible) BEFORE staging so they are part of the same commit.
+def _capture_release_screenshots(screenshot_pdf: str | None) -> None:
     _try_capture_screenshot()
     _capture_target_screenshot("filter", SCREENSHOT_FILTER)
     _capture_target_screenshot("watermark", SCREENSHOT_WATERMARK)
     _capture_target_screenshot("devtools", SCREENSHOT_DEVTOOLS)
-    # Optionally produce preview screenshot if a PDF was supplied (mirrors local behavior)
-    if args.screenshot_pdf and os.path.exists(args.screenshot_pdf):
-        _capture_target_screenshot("preview", SCREENSHOT_PREVIEW, pdf_for_preview=args.screenshot_pdf)
+    if screenshot_pdf and os.path.exists(screenshot_pdf):
+        _capture_target_screenshot("preview", SCREENSHOT_PREVIEW, pdf_for_preview=screenshot_pdf)
 
-    # Collect files to stage (only those that exist)
-    to_stage: list[str] = []
-    for p in (
+
+def _load_version_file_snapshots() -> dict[Path, str]:
+    return {path: path.read_text(encoding="utf-8") for path in (PYPROJECT_TOML, SETUP_PY, SETUP_ISS, CONSTANTS_PY) if path.exists()}
+
+
+@contextmanager
+def _temporary_environment_value(key: str, value: str):
+    had_existing_value = key in os.environ
+    previous_value = os.environ[key] if had_existing_value else ""
+    os.environ[key] = value
+    try:
+        yield
+    finally:
+        if had_existing_value:
+            os.environ[key] = previous_value
+        else:
+            os.environ.pop(key, None)
+
+
+def _run_local_release_flow(version: str, no_build: bool, screenshot_pdf: str | None) -> None:
+    originals = _load_version_file_snapshots()
+    try:
+        update_version(version)
+        with _temporary_environment_value("GITHUB_ACTIONS", "true"):
+            if no_build:
+                print("--no-build specified: skipping actual build (dry-run).")
+            else:
+                build_project()
+            _capture_release_screenshots(screenshot_pdf)
+    finally:
+        for path, content in originals.items():
+            path.write_text(content, encoding="utf-8")
+    print("Local flow complete and version changes reverted.")
+
+
+def _collect_release_artifacts() -> list[str]:
+    artifacts = (
         PYPROJECT_TOML,
         SETUP_PY,
         SETUP_ISS,
@@ -270,23 +258,39 @@ def main() -> None:
         SCREENSHOT_WATERMARK,
         SCREENSHOT_DEVTOOLS,
         SCREENSHOT_PREVIEW,
-    ):
-        if p.exists():
-            to_stage.append(str(p))
+    )
+    return [str(path) for path in artifacts if path.exists()]
 
+
+def _run_release_flow(version: str, screenshot_pdf: str | None) -> None:
+    update_version(version)
+    _capture_release_screenshots(screenshot_pdf)
+
+    to_stage = _collect_release_artifacts()
     if to_stage:
         run(["git", "add", *to_stage], check=False)
 
-    # Commit only if there is any staged change (version bumps and/or screenshots updated)
-    commit = run(["git", "diff", "--cached", "--quiet"], check=False)  # returncode 0 if no diff
+    commit = run(["git", "diff", "--cached", "--quiet"], check=False)
     if commit.returncode == 1:
         run(["git", "commit", "-m", f"chore(release): v{version}"])
-        # Pushing the commit might be blocked by branch policies; user can open PR.
         run(["git", "push"], check=False)
 
     ensure_ssh_signing()
     create_and_push_signed_tag(version)
     print(f"Created and pushed signed tag v{version}")
+
+
+def main() -> None:
+    args = _parse_args()
+
+    version = args.version.strip()
+    check_version_input(version)
+
+    if args.local:
+        _run_local_release_flow(version, args.no_build, args.screenshot_pdf)
+        return
+
+    _run_release_flow(version, args.screenshot_pdf)
 
 
 if __name__ == "__main__":

@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-05-16 15:46+0200\n"
+"POT-Creation-Date: 2026-05-16 16:21+0200\n"
 "PO-Revision-Date: 2024-05-15 13:58+0200\n"
 "Last-Translator: Automatically generated\n"
 "Language-Team: none\n"
@@ -345,56 +345,60 @@ msgid "Downloading... {0:.1f} MB of {1:.1f} MB, {2:.0f} seconds remaining"
 msgstr "Downloading... {0:.1f} MB of {1:.1f} MB, {2:.0f} seconds remaining"
 
 #: ..\src\gui\ui_strings.py:151
+msgid "Starting download..."
+msgstr "Starting download..."
+
+#: ..\src\gui\ui_strings.py:152
 #, python-brace-format
 msgid "A new version ({0}) is available. Do you want to update?"
 msgstr "A new version ({0}) is available. Do you want to update?"
 
-#: ..\src\gui\ui_strings.py:156
+#: ..\src\gui\ui_strings.py:157
 msgid "Install"
 msgstr "Install"
 
-#: ..\src\gui\ui_strings.py:157
+#: ..\src\gui\ui_strings.py:158
 msgid "Channel"
 msgstr "Channel"
 
-#: ..\src\gui\ui_strings.py:158
+#: ..\src\gui\ui_strings.py:159
 #, python-brace-format
 msgid "Are you sure you want to install version {0}?"
 msgstr "Are you sure you want to install version {0}?"
 
-#: ..\src\gui\ui_strings.py:159
+#: ..\src\gui\ui_strings.py:160
 msgid "Are you sure you want to reset all settings to defaults?"
 msgstr "Are you sure you want to reset all settings to defaults?"
 
-#: ..\src\gui\ui_strings.py:160
+#: ..\src\gui\ui_strings.py:161
 msgid "Debug Options"
 msgstr "Debug Options"
 
-#: ..\src\gui\ui_strings.py:161
+#: ..\src\gui\ui_strings.py:162
 msgid "Install Specific Version"
 msgstr "Install Specific Version"
 
-#: ..\src\gui\ui_strings.py:162
+#: ..\src\gui\ui_strings.py:163
 msgid "Open Settings File"
 msgstr "Open Settings File"
 
-#: ..\src\gui\ui_strings.py:163
+#: ..\src\gui\ui_strings.py:164
 msgid "Release Candidates (rc)"
 msgstr "Release Candidates (rc)"
 
-#: ..\src\gui\ui_strings.py:164
+#: ..\src\gui\ui_strings.py:165
 msgid "Release Notes"
 msgstr "Release Notes"
 
-#: ..\src\gui\ui_strings.py:165
+#: ..\src\gui\ui_strings.py:166
 msgid "Reset to Defaults"
 msgstr "Reset to Defaults"
 
-#: ..\src\gui\ui_strings.py:166
+#: ..\src\gui\ui_strings.py:167
 msgid "Reset Settings"
 msgstr "Reset Settings"
 
-#: ..\src\gui\ui_strings.py:167
+#: ..\src\gui\ui_strings.py:168
 msgid ""
 "When enabled, updates require a matching .sha256 file for verification "
 "(affects all channels)"
@@ -402,30 +406,30 @@ msgstr ""
 "When enabled, updates require a matching .sha256 file for verification "
 "(affects all channels)"
 
-#: ..\src\gui\ui_strings.py:168
+#: ..\src\gui\ui_strings.py:169
 msgid "Stable"
 msgstr "Stable"
 
-#: ..\src\gui\ui_strings.py:169
+#: ..\src\gui\ui_strings.py:170
 msgid "Dev Tools"
 msgstr "Dev Tools"
 
-#: ..\src\gui\ui_strings.py:170
+#: ..\src\gui\ui_strings.py:171
 msgid "Update Channel"
 msgstr "Update Channel"
 
-#: ..\src\gui\ui_strings.py:171
+#: ..\src\gui\ui_strings.py:172
 msgid "Verify SHA256"
 msgstr "Verify SHA256"
 
-#: ..\src\gui\ui_strings.py:209
+#: ..\src\gui\ui_strings.py:210
 #, python-brace-format
 msgid "Processing complete: {0} match found. {1} skipped."
 msgid_plural "Processing complete: {0} matches found. {1} skipped."
 msgstr[0] "Processing complete: {0} match found. {1} skipped."
 msgstr[1] "Processing complete: {0} matches found. {1} skipped."
 
-#: ..\src\gui\ui_strings.py:210
+#: ..\src\gui\ui_strings.py:211
 #, python-brace-format
 msgid "Processed: {0}/{1} pages. {2} match found. {3} skipped."
 msgid_plural "Processed: {0}/{1} pages. {2} matches found. {3} skipped."

@@ -8,7 +8,7 @@ import logging
 import threading
 import time
 from pathlib import Path
-from tkinter import Button, IntVar, Menu, StringVar, Tk, filedialog, ttk
+from tkinter import Button, IntVar, Menu, StringVar, TclError, Tk, filedialog, ttk
 
 from PIL import Image, ImageTk
 from pymupdf import Document
@@ -337,20 +337,23 @@ class PDFHighlighterApp:
                     and not getattr(self.update_checker, "_active_download", False)
                 ):
                     # Optional: ensure cached tag still represents a newer version
+                    cached_version_is_current = False
                     try:
-                        if self.update_checker.last_version_tag and Version.from_str(self.update_checker.last_version_tag) <= Version.from_str(
-                            self.app_settings.settings["version"]
-                        ):
-                            # Version already current; fallback to check instead
-                            import threading as _th
+                        cached_version_is_current = bool(
+                            self.update_checker.last_version_tag
+                            and Version.from_str(self.update_checker.last_version_tag) <= Version.from_str(self.app_settings.settings["version"])
+                        )
+                    except ValueError:
+                        cached_version_is_current = False
+                    if cached_version_is_current:
+                        # Version already current; fallback to check instead
+                        import threading as _th
 
-                            _th.Thread(
-                                target=lambda: self.check_for_app_updates(current_version, force_check=True),
-                                daemon=True,
-                            ).start()
-                            return
-                    except Exception:
-                        pass
+                        _th.Thread(
+                            target=lambda: self.check_for_app_updates(current_version, force_check=True),
+                            daemon=True,
+                        ).start()
+                        return
                     verify_sha = self.app_settings.settings.get("verify_sha", "True") == "True"
                     dl = self.update_checker.last_download_url  # type: ignore[assignment]
                     sha = self.update_checker.last_sha_url if verify_sha else None
@@ -669,12 +672,12 @@ class PDFHighlighterApp:
     def _safe_configure(widget, **kwargs) -> None:
         try:
             widget.configure(**kwargs)
-        except Exception:
+        except TclError:
             for key, value in kwargs.items():
                 try:
                     widget.configure(**{key: value})
-                except Exception:
-                    pass
+                except TclError:
+                    continue
 
     def _apply_theme_to_open_windows(self) -> None:
         for owner_name in ("filter_dialog", "watermark_dialog", "preview_window_handler", "dev_tools"):

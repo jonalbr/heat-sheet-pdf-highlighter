@@ -6,7 +6,7 @@ import csv
 import re
 import time
 from functools import partial
-from tkinter import WORD, DoubleVar, IntVar, StringVar, Text, Toplevel, colorchooser, filedialog, ttk
+from tkinter import WORD, DoubleVar, IntVar, StringVar, TclError, Text, Toplevel, colorchooser, filedialog, ttk
 from tkinter import Button as tkButton
 from typing import TYPE_CHECKING, Dict, Optional
 import logging
@@ -169,7 +169,12 @@ class UpdateDialogs:
 
     def start_download_ui(self):
         """Start download UI state."""
-        self._ui(self.app.start_download)
+        def _start_download_ui():
+            self.app.start_download()
+            if hasattr(self.app, "status_var"):
+                self.app.status_var.set(get_ui_string(self.app.strings, "upd_starting"))
+
+        self._ui(_start_download_ui)
 
     def is_download_cancelled(self) -> bool:
         """Check if download was cancelled by user."""
@@ -318,8 +323,9 @@ class WatermarkDialog:
         try:
             if self.window.winfo_exists():
                 self.window.destroy()
-        except Exception:
-            pass
+        except TclError:
+            self.window = None
+            return
         self.window = None
 
     def open(self):

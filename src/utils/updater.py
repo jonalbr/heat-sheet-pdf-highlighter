@@ -249,13 +249,8 @@ class UpdateChecker:
         # Start download UI state
         self.gui_callbacks.start_download_ui()
 
-        # Provide an immediate initial status (even before first bytes) if total size known later
-        try:
-            if hasattr(self.gui_callbacks, "update_download_status"):
-                # We don't know size yet; will be updated after HEAD/GET
-                pass
-        except Exception:  # pragma: no cover - defensive
-            pass
+        # setup_download_progress() publishes the first visible 0-byte status
+        # once the GET response exposes a total size.
 
         # Create a temporary file for the installer
         with tempfile.NamedTemporaryFile(suffix=".exe", delete=False) as temp_file:
@@ -358,16 +353,12 @@ class UpdateChecker:
             block_size = 1024 * 1024  # 1 MiB
 
         self.gui_callbacks.setup_download_progress(total_size_in_bytes)
-        # Immediate initial status (will show 0 progress)
-        try:
-            self.gui_callbacks.update_download_status(time.time(), total_size_in_bytes)
-        except Exception:  # pragma: no cover
-            pass
         start_time = time.time()
         cancelled = False
 
         with open(dest_path, "wb") as file:
             last_update_time = time.time()
+            status_published = False
             for data in response.iter_content(chunk_size=block_size):
                 if self.gui_callbacks.is_download_cancelled():
                     cancelled = True
@@ -375,9 +366,10 @@ class UpdateChecker:
                 file.write(data)
                 self.gui_callbacks.update_download_progress(len(data))
                 current_time = time.time()
-                # Always show first-chunk status immediately for responsiveness
-                if current_time - last_update_time >= 0.25 or (self.gui_callbacks.get_progress_value() and last_update_time == start_time):
+                # Always show the first real progress update immediately, then throttle later updates.
+                if not status_published or current_time - last_update_time >= 0.25:
                     self.gui_callbacks.update_download_status(start_time, total_size_in_bytes)
+                    status_published = True
                     last_update_time = current_time
         return cancelled, total_size_in_bytes
 

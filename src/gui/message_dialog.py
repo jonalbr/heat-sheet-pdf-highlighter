@@ -4,9 +4,10 @@ Theme-aware modal dialogs for app-owned popups.
 
 from __future__ import annotations
 
+from contextlib import suppress
 import threading
 from typing import TYPE_CHECKING, Any
-from tkinter import Toplevel, ttk
+from tkinter import TclError, Toplevel, ttk
 
 from .ui_strings import get_ui_string
 
@@ -125,10 +126,8 @@ def _show_dialog(
 
     def close(value: Any = cancel_value) -> None:
         result["value"] = value
-        try:
+        with suppress(TclError):
             window.grab_release()
-        except Exception:
-            pass
         window.destroy()
 
     window.protocol("WM_DELETE_WINDOW", lambda: close(cancel_value))

@@ -1,6 +1,6 @@
 # Heat Sheet PDF Highlighter
 
-[![CodeFactor](https://www.codefactor.io/repository/github/jonalbr/heat-sheet-pdf-highlighter/badge)](https://www.codefactor.io/repository/github/jonalbr/heat-sheet-pdf-highlighter)
+[![CodeFactor](https://www.codefactor.io/repository/github/jonalbr/heat-sheet-pdf-highlighter/badge)](https://www.codefactor.io/repository/github/jonalbr/heat-sheet-pdf-highlighter) [![License](https://img.shields.io/badge/License-GPL--3.0-orange)](https://github.com/jonalbr/heat-sheet-pdf-highlighter/blob/main/LICENSE)
 
 ## Overview
 

@@ -148,6 +148,7 @@ def build_strings(_: Callable[[str], str]) -> Dict[str, str]:
         ),
         "upd_ok": _("Up to Date"),
         "upd_progress": _("Downloading... {0:.1f} MB of {1:.1f} MB, {2:.0f} seconds remaining"),
+        "upd_starting": _("Starting download..."),
         "upd_prompt": _("A new version ({0}) is available. Do you want to update?"),
     }
 

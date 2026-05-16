@@ -8,7 +8,7 @@ import os
 import queue
 import threading
 import webbrowser
-from tkinter import BooleanVar, StringVar, Toplevel, ttk
+from tkinter import BooleanVar, StringVar, TclError, Toplevel, ttk
 from typing import TYPE_CHECKING
 
 import markdown2
@@ -306,8 +306,8 @@ class DevToolsWindow:
             return
         try:
             self.notes_html.configure(background=colors.field_background)
-        except Exception:
-            pass
+        except TclError:
+            return
 
     def _themed_html(self, body_html: str) -> str:
         colors = getattr(self.app, "_current_theme_colors", None)
@@ -556,14 +556,13 @@ class DevToolsWindow:
             try:
                 if self.app.root and getattr(self.app.root, 'tk', None):
                     self.app.root.after(50, _drain_queue)
-            except Exception:
-                pass
+            except TclError:
+                return
 
         try:
             self.app.root.after(50, _drain_queue)
-        except Exception:
-            # Root may be gone; ignore
-            pass
+        except TclError:
+            return
 
     def _schedule_on_main(self, cb):
         """Enqueue a callback to run soon on the Tk main thread, ignoring if root destroyed.
@@ -573,17 +572,14 @@ class DevToolsWindow:
         """
         if os.getenv("HSPH_SCREENSHOT_MODE") in ("1", "true", "True"):
             return  # Skip all scheduling during automated screenshots
+        if self._dispatcher_started:
+            self._dispatch_queue.put(cb)
+            return
+
         try:
-            if self._dispatcher_started:
-                self._dispatch_queue.put(cb)
-            else:
-                # Best-effort immediate scheduling
-                try:
-                    self.app.root.after(0, cb)
-                except Exception:
-                    pass
-        except Exception:
-            pass
+            self.app.root.after(0, cb)
+        except TclError:
+            return
 
     def _safe_apply_releases(self, releases: list[dict]):
         if not self._is_open():

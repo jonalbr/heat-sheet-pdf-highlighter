@@ -2,7 +2,8 @@
 Custom widgets
 """
 
-from tkinter import Frame, Label, Toplevel, Widget
+from contextlib import suppress
+from tkinter import Frame, Label, TclError, Toplevel, Widget
 
 from ..utils.theme import get_theme_colors
 
@@ -12,13 +13,14 @@ TOOLTIP_OFFSET = (14, 18)
 
 def _resolve_widget_theme(widget: Widget) -> str:
     """Return the effective app theme stored on the nearest Tk root."""
+    top_theme = None
     try:
         top = widget.winfo_toplevel()
-        theme = getattr(top, "_hsph_effective_theme", None)
-        if theme:
-            return theme
-    except Exception:
-        pass
+        top_theme = getattr(top, "_hsph_effective_theme", None)
+    except (AttributeError, TclError):
+        top_theme = None
+    if top_theme:
+        return top_theme
 
     try:
         root = widget._root()  # type: ignore[attr-defined]
@@ -73,10 +75,8 @@ class Tooltip:
     def _cancel_scheduled_tip(self):
         if not self._after_id:
             return
-        try:
+        with suppress(TclError):
             self.widget.after_cancel(self._after_id)
-        except Exception:
-            pass
         self._after_id = None
 
     def show_tip(self, event=None):
@@ -90,11 +90,9 @@ class Tooltip:
         self.tooltip_window = tw = Toplevel(self.widget)
         tw.wm_overrideredirect(True)
         tw.configure(background=colors.tooltip_border)
-        try:
+        with suppress(TclError):
             tw.wm_attributes("-topmost", True)
             tw.wm_attributes("-alpha", 0.98)
-        except Exception:
-            pass
 
         frame = Frame(tw, background=colors.tooltip_border, borderwidth=0)
         frame.pack()

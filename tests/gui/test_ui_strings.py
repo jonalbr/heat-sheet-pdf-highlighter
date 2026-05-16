@@ -15,6 +15,11 @@ def test_get_ui_string_existing_key():
     assert get_ui_string(s, "error") == "Error"
 
 
+def test_download_starting_status_string_exists():
+    s = build_strings(lambda x: x)
+    assert get_ui_string(s, "upd_starting") == "Starting download..."
+
+
 def test_get_ui_string_with_default():
     s = {}
     assert get_ui_string(s, "missing_key", default="Fallback") == "Fallback"
