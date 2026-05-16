@@ -35,8 +35,8 @@ def test_add_watermark_top_position(blank_page, monkeypatch):
     # Color hex -> normalized rgb
     assert args['color'] == (17/255, 34/255, 51/255)
     assert args['text'] == "HELLO"
-    # y should be near 20 from top margin (allow font height variance)
-    assert 15 <= args['point'][1] <= 40
+    # y should remain in the upper part of the page
+    assert args['point'][1] < blank_page.rect.height / 2
 
 
 def test_add_watermark_bottom_position(blank_page, monkeypatch):
@@ -64,6 +64,14 @@ def test_add_watermark_invalid_position_defaults_to_top(blank_page, monkeypatch)
     assert args['point'][1] < blank_page.rect.height / 2  # top
 
 
+def test_calculate_text_position_custom_uses_normalized_center_coordinates():
+    assert wm.calculate_text_position(200, 100, 20, 10, "custom", 0.25, 0.75) == (40.0, 70.0)
+
+
+def test_calculate_text_position_clamps_text_inside_page():
+    assert wm.calculate_text_position(200, 100, 20, 10, "custom", 1.0, 1.0) == (180, 90)
+
+
 def test_add_watermark_font_fallback(blank_page, monkeypatch):
     # Force truetype to raise -> then supply dummy font via load_default
     def fail_truetype(name, size):  # pragma: no cover - behavior itself
@@ -85,6 +93,7 @@ def test_add_watermark_font_fallback(blank_page, monkeypatch):
 @pytest.mark.parametrize(
     'settings,should_call', [
         ({'watermark_enabled': 'True', 'watermark_text': 'X', 'watermark_size': '10', 'watermark_color': '#FFFFFF', 'watermark_position': 'top'}, True),
+        ({'watermark_enabled': 'True', 'watermark_text': 'X', 'watermark_size': '10', 'watermark_color': '#FFFFFF', 'watermark_position': 'custom', 'watermark_x_ratio': 0.25, 'watermark_y_ratio': 0.75}, True),
         ({'watermark_enabled': 'False', 'watermark_text': 'X', 'watermark_size': '10', 'watermark_color': '#FFFFFF', 'watermark_position': 'top'}, False),
         ({'watermark_enabled': 'True', 'watermark_text': '', 'watermark_size': '10', 'watermark_color': '#FFFFFF', 'watermark_position': 'top'}, False),
         ({'watermark_enabled': 'True', 'watermark_text': 'X', 'watermark_size': '0', 'watermark_color': '#FFFFFF', 'watermark_position': 'top'}, False),
@@ -95,7 +104,7 @@ def test_add_watermark_font_fallback(blank_page, monkeypatch):
 def test_watermark_pdf_page_guard_logic(blank_page, monkeypatch, settings, should_call):
     called = {'v': False}
 
-    def fake_add(page, text, font_size, color_hex, position):
+    def fake_add(page, text, font_size, color_hex, position, x_ratio, y_ratio):
         called['v'] = True
 
     monkeypatch.setattr(wm, 'add_watermark', fake_add)
@@ -114,4 +123,23 @@ def test_overlay_watermark_on_image_top_and_bottom(monkeypatch):
     # but at least ensure images still return and have same size
     assert out_top.size == (200, 100)
     assert out_bottom.size == (200, 100)
+
+
+def test_overlay_watermark_on_image_custom_position(monkeypatch):
+    img = Image.new('RGB', (200, 100), 'white')
+    calls = {}
+
+    class DummyDraw:
+        def textbbox(self, pos, text, font):
+            return (0, 0, 20, 10)
+
+        def text(self, pos, text, font, fill):
+            calls["pos"] = pos
+
+    monkeypatch.setattr(wm.ImageDraw, "Draw", lambda *args, **kwargs: DummyDraw())
+    monkeypatch.setattr(wm.ImageFont, "truetype", lambda *args, **kwargs: DummyFont(char_w=5, h=10))
+
+    wm.overlay_watermark_on_image(img, text="TXT", font_size=10, color_hex="#FF0000", position="custom", x_ratio=0.25, y_ratio=0.75)
+
+    assert calls["pos"] == (40.0, 70.0)
 

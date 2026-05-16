@@ -47,7 +47,7 @@ def test_dynamic_preview_update_without_open_window_or_pdf_is_silent(monkeypatch
     preview = PreviewWindow(app)
     monkeypatch.setattr("src.gui.preview.show_error", lambda *args: errors.append(args))
 
-    preview.preview_watermark(1, "TXT", "#FF0000", 16, "top", 1, force_open=False)
+    preview.preview_watermark(1, "TXT", "#FF0000", 16, "top", 0.5, 0.05, 1, force_open=False)
 
     assert errors == []
 
@@ -58,7 +58,7 @@ def test_explicit_preview_without_pdf_still_reports_error(monkeypatch):
     preview = PreviewWindow(app)
     monkeypatch.setattr("src.gui.preview.show_error", lambda *args: errors.append(args))
 
-    preview.preview_watermark(1, "TXT", "#FF0000", 16, "top", 1, force_open=True)
+    preview.preview_watermark(1, "TXT", "#FF0000", 16, "top", 0.5, 0.05, 1, force_open=True)
 
     assert len(errors) == 1
 

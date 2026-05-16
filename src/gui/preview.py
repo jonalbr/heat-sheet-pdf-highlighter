@@ -34,7 +34,7 @@ class PreviewWindow:
         self.last_watermark_data = {}
         self.last_origin = None
 
-    def preview_watermark(self, enabled, text, color, size, position, preview_page, origin=None, force_open=True):
+    def preview_watermark(self, enabled, text, color, size, position, x_ratio, y_ratio, preview_page, origin=None, force_open=True):
         """Show watermark preview."""
         if not force_open and not self.is_open():
             return
@@ -58,10 +58,18 @@ class PreviewWindow:
             page = document[preview_page - 1]
             image = _page_to_image(page)
             if enabled and text:
-                image = overlay_watermark_on_image(image, text, size, color, position)
+                image = overlay_watermark_on_image(image, text, size, color, position, x_ratio, y_ratio)
 
             # Save last settings and origin for dynamic updates and navigation
-            self.last_watermark_data = {"enabled": enabled, "text": text, "color": color, "size": size, "position": position}
+            self.last_watermark_data = {
+                "enabled": enabled,
+                "text": text,
+                "color": color,
+                "size": size,
+                "position": position,
+                "x_ratio": x_ratio,
+                "y_ratio": y_ratio,
+            }
             self.last_origin = origin if origin else self.app.root
             self.current_page = preview_page
 
@@ -147,6 +155,8 @@ class PreviewWindow:
                 self.last_watermark_data["color"],
                 self.last_watermark_data["size"],
                 self.last_watermark_data["position"],
+                self.last_watermark_data["x_ratio"],
+                self.last_watermark_data["y_ratio"],
                 self.current_page,
                 origin=self.last_origin,
             )

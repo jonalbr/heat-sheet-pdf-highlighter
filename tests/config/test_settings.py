@@ -98,6 +98,8 @@ def test_validator_coercions(settings_file):
             "watermark_color": "notcolor",
             "watermark_size": -5,
             "watermark_position": "left",
+            "watermark_x_ratio": 2,
+            "watermark_y_ratio": -1,
         }
     )
     app.validate_settings()
@@ -118,6 +120,21 @@ def test_validator_coercions(settings_file):
     assert s["watermark_color"] == "#FFA500"
     assert s["watermark_size"] == 16
     assert s["watermark_position"] == "top"
+    assert s["watermark_x_ratio"] == 0.5
+    assert s["watermark_y_ratio"] == 0.05
+
+
+def test_custom_watermark_position_persists(settings_file):
+    app = AppSettings(settings_file)
+    app.update_setting("watermark_position", "custom")
+    app.update_setting("watermark_x_ratio", 0.25)
+    app.update_setting("watermark_y_ratio", 0.75)
+
+    app2 = AppSettings(settings_file)
+
+    assert app2.settings["watermark_position"] == "custom"
+    assert app2.settings["watermark_x_ratio"] == 0.25
+    assert app2.settings["watermark_y_ratio"] == 0.75
 
 
 def test_migration_from_legacy_beta_flag(settings_file):

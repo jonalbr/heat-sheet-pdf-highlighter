@@ -56,12 +56,16 @@ def _preview_target(app: PDFHighlighterApp, root: Tk, target: str, pdf_for_previ
                     print(f"Error getting watermark size: {e}")
                     _wm_size = 20
                 _wm_pos = app.app_settings.settings.get("watermark_position") or "bottom"
+                _wm_x_ratio = app.app_settings.settings.get("watermark_x_ratio")
+                _wm_y_ratio = app.app_settings.settings.get("watermark_y_ratio")
                 app.preview_watermark(
                     enabled=1,
                     text=_wm_text,
                     color=_wm_color,
                     size=_wm_size,
                     position=_wm_pos,
+                    x_ratio=_wm_x_ratio,
+                    y_ratio=_wm_y_ratio,
                     preview_page=1,
                     origin=app.root,
                     force_open=True,

@@ -7,7 +7,15 @@ from pathlib import Path
 from typing import Dict
 import os
 
-from ..constants import VERSION_STR, LANGUAGE_OPTIONS
+from ..constants import LANGUAGE_OPTIONS, VERSION_STR, WATERMARK_DEFAULT_X_RATIO, WATERMARK_DEFAULT_Y_RATIO
+
+
+def _is_valid_ratio(value) -> bool:
+    try:
+        numeric_value = float(value)
+    except (TypeError, ValueError):
+        return False
+    return 0.0 <= numeric_value <= 1.0
 
 
 class AppSettings:
@@ -37,6 +45,8 @@ class AppSettings:
             "watermark_color": "#FFA500",
             "watermark_size": 16,
             "watermark_position": "top",
+            "watermark_x_ratio": WATERMARK_DEFAULT_X_RATIO,
+            "watermark_y_ratio": WATERMARK_DEFAULT_Y_RATIO,
         }
         self.settings: Dict = self.load_settings()
         # Apply optional environment override for language (e.g., forced 'en' in screenshot mode)
@@ -92,7 +102,9 @@ class AppSettings:
             "watermark_text": lambda v: v if isinstance(v, str) else "",
             "watermark_color": lambda v: v if isinstance(v, str) and v.startswith("#") else "#FFA500",
             "watermark_size": lambda v: int(v) if str(v).isdigit() and int(v) > 0 else 16,
-            "watermark_position": lambda v: v if v in ["top", "bottom"] else "top",
+            "watermark_position": lambda v: v if v in ["top", "bottom", "custom"] else "top",
+            "watermark_x_ratio": lambda v: float(v) if _is_valid_ratio(v) else WATERMARK_DEFAULT_X_RATIO,
+            "watermark_y_ratio": lambda v: float(v) if _is_valid_ratio(v) else WATERMARK_DEFAULT_Y_RATIO,
         }
         return validators[key](value) if key in validators else None
 

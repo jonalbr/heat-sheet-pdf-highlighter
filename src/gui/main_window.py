@@ -713,9 +713,9 @@ class PDFHighlighterApp:
         """Open the watermark configuration dialog."""
         self.watermark_dialog.open()
 
-    def preview_watermark(self, enabled, text, color, size, position, preview_page, origin=None, force_open=True):
+    def preview_watermark(self, enabled, text, color, size, position, x_ratio, y_ratio, preview_page, origin=None, force_open=True):
         """Preview watermark (delegate to preview window handler)."""
-        self.preview_window_handler.preview_watermark(enabled, text, color, size, position, preview_page, origin, force_open)
+        self.preview_window_handler.preview_watermark(enabled, text, color, size, position, x_ratio, y_ratio, preview_page, origin, force_open)
 
     @property
     def current_preview_page(self):

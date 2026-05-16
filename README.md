@@ -45,7 +45,7 @@ Notes:
   - **System** mode automatically follows Windows appearance changes
 - **Watermark System:**
   - **Live preview:** See watermark changes in real-time and on different pages
-  - **Customizable text, preset or custom color selection, size, and position**
+  - **Customizable text, preset or custom color selection, size, and nudgeable position**
 - **Professional GUI:**
   - **Progress tracking:** Real-time processing status and progress bar
   - **Persistent settings:** Language, search terms, and preferences saved between sessions
@@ -158,7 +158,7 @@ Click the **"Watermark"** button to add custom watermarks:
 - **Watermark Text:** Custom text to overlay on pages
 - **Color Selection:** Choose from presets or open the native system color picker
 - **Size Control:** Adjust watermark size
-- **Position:** Place watermark at top or bottom of pages
+- **Position:** Start from top or bottom presets, then nudge left/right/up/down for a saved custom position. Click or hold the arrow buttons, use the keyboard arrow keys, and hold **Shift** for larger moves.
 - **Live Preview:** See changes in real-time on different PDF pages
 
 #### Settings Persistence

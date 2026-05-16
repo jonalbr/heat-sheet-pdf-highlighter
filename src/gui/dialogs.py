@@ -5,7 +5,8 @@ Dialog windows (Filter and Watermark dialogs)
 import csv
 import re
 import time
-from tkinter import WORD, IntVar, StringVar, Text, Toplevel, colorchooser, filedialog, ttk
+from functools import partial
+from tkinter import WORD, DoubleVar, IntVar, StringVar, Text, Toplevel, colorchooser, filedialog, ttk
 from tkinter import Button as tkButton
 from typing import TYPE_CHECKING, Dict, Optional
 import logging
@@ -14,6 +15,7 @@ if TYPE_CHECKING:
     from src.gui.main_window import PDFHighlighterApp
 
 from ..models import HighlightMode
+from ..core.watermark import get_position_ratios
 from ..version import Version
 from .message_dialog import ask_ok_cancel, ask_retry_cancel, ask_yes_no_cancel, show_error, show_info
 from .ui_strings import get_ui_string
@@ -319,6 +321,8 @@ class WatermarkDialog:
         temp_color = StringVar(value=self.app.app_settings.settings.get("watermark_color"))
         temp_size = StringVar(value=str(self.app.app_settings.settings.get("watermark_size")))
         temp_position = StringVar(value=self.app.app_settings.settings.get("watermark_position"))
+        temp_x_ratio = DoubleVar(value=self.app.app_settings.settings.get("watermark_x_ratio"))
+        temp_y_ratio = DoubleVar(value=self.app.app_settings.settings.get("watermark_y_ratio"))
 
         ttk.Label(dialog_window, text=get_ui_string(self.app.strings, "wm_enable")).grid(row=0, column=0, sticky="W", padx=10, pady=5)
         chk = ttk.Checkbutton(dialog_window, variable=temp_enabled)
@@ -392,9 +396,90 @@ class WatermarkDialog:
         entry_size.grid(row=4, column=1, padx=10, pady=5, sticky="W")
 
         ttk.Label(dialog_window, text=get_ui_string(self.app.strings, "wm_pos")).grid(row=5, column=0, sticky="W", padx=10, pady=5)
-        position_options = ["top", "bottom"]
+        position_options = ["top", "bottom", "custom"]
         option_position = ttk.OptionMenu(dialog_window, temp_position, temp_position.get(), *position_options)
         option_position.grid(row=5, column=1, padx=10, pady=5, sticky="W")
+
+        ttk.Label(dialog_window, text=get_ui_string(self.app.strings, "wm_adjust")).grid(row=6, column=0, sticky="W", padx=10, pady=5)
+        adjust_frame = ttk.Frame(dialog_window)
+        adjust_frame.grid(row=6, column=1, padx=10, pady=5, sticky="W")
+
+        def set_preset_position():
+            if temp_position.get() in {"top", "bottom"}:
+                x_ratio, y_ratio = get_position_ratios(temp_position.get())
+                temp_x_ratio.set(x_ratio)
+                temp_y_ratio.set(y_ratio)
+
+        def nudge_position(dx: float, dy: float):
+            x_ratio, y_ratio = get_position_ratios(temp_position.get(), temp_x_ratio.get(), temp_y_ratio.get())
+            temp_position.set("custom")
+            temp_x_ratio.set(max(0.0, min(1.0, x_ratio + dx)))
+            temp_y_ratio.set(max(0.0, min(1.0, y_ratio + dy)))
+
+        fine_nudge_step = 0.0025
+        coarse_nudge_step = 0.01
+        repeat_after_id = None
+
+        def stop_repeating_nudge(*args):
+            nonlocal repeat_after_id
+            if repeat_after_id is not None:
+                dialog_window.after_cancel(repeat_after_id)
+                repeat_after_id = None
+
+        def repeat_nudge(dx: float, dy: float):
+            nonlocal repeat_after_id
+            nudge_position(dx, dy)
+            repeat_after_id = dialog_window.after(60, repeat_nudge, dx, dy)
+
+        def start_repeating_nudge(dx: float, dy: float, *args):
+            nonlocal repeat_after_id
+            stop_repeating_nudge()
+            nudge_position(dx, dy)
+            repeat_after_id = dialog_window.after(300, repeat_nudge, dx, dy)
+
+        def get_nudge_delta(direction_x: int, direction_y: int, coarse: bool = False) -> tuple[float, float]:
+            step = coarse_nudge_step if coarse else fine_nudge_step
+            return direction_x * step, direction_y * step
+
+        def is_shift_pressed(event) -> bool:
+            return bool(event.state & 0x0001)
+
+        def start_mouse_nudge(direction_x: int, direction_y: int, event):
+            dx, dy = get_nudge_delta(direction_x, direction_y, coarse=is_shift_pressed(event))
+            start_repeating_nudge(dx, dy)
+
+        def make_nudge_button(text: str, direction_x: int, direction_y: int):
+            button = ttk.Button(adjust_frame, text=text, width=3)
+            button.bind("<ButtonPress-1>", partial(start_mouse_nudge, direction_x, direction_y))
+            button.bind("<ButtonRelease-1>", stop_repeating_nudge)
+            button.bind("<Leave>", stop_repeating_nudge)
+            button.pack(side="left", padx=1)
+            return button
+
+        make_nudge_button("←", -1, 0)
+        make_nudge_button("↑", 0, -1)
+        make_nudge_button("↓", 0, 1)
+        make_nudge_button("→", 1, 0)
+
+        keyboard_nudge_bindings = {
+            "<Left>": ("<KeyRelease-Left>", -1, 0, False),
+            "<Right>": ("<KeyRelease-Right>", 1, 0, False),
+            "<Up>": ("<KeyRelease-Up>", 0, -1, False),
+            "<Down>": ("<KeyRelease-Down>", 0, 1, False),
+            "<Shift-Left>": ("<KeyRelease-Left>", -1, 0, True),
+            "<Shift-Right>": ("<KeyRelease-Right>", 1, 0, True),
+            "<Shift-Up>": ("<KeyRelease-Up>", 0, -1, True),
+            "<Shift-Down>": ("<KeyRelease-Down>", 0, 1, True),
+        }
+
+        def start_keyboard_nudge(direction_x: int, direction_y: int, coarse: bool, *args):
+            dx, dy = get_nudge_delta(direction_x, direction_y, coarse=coarse)
+            start_repeating_nudge(dx, dy)
+            return "break"
+
+        for sequence, (release_sequence, direction_x, direction_y, coarse) in keyboard_nudge_bindings.items():
+            dialog_window.bind(sequence, partial(start_keyboard_nudge, direction_x, direction_y, coarse))
+            dialog_window.bind(release_sequence, stop_repeating_nudge)
 
         def preview(force_open=True):
             self.app.preview_watermark(
@@ -403,6 +488,8 @@ class WatermarkDialog:
                 temp_color.get(),
                 int(temp_size.get()) if temp_size.get().isdigit() else 16,
                 temp_position.get(),
+                temp_x_ratio.get(),
+                temp_y_ratio.get(),
                 self.app.current_preview_page,
                 origin=dialog_window,
                 force_open=force_open,
@@ -415,17 +502,27 @@ class WatermarkDialog:
         temp_text.trace_add("write", update_preview)
         temp_color.trace_add("write", update_preview)
         temp_size.trace_add("write", update_preview)
-        temp_position.trace_add("write", update_preview)
+
+        def on_position_change(*args):
+            set_preset_position()
+            update_preview()
+
+        temp_position.trace_add("write", on_position_change)
+        temp_x_ratio.trace_add("write", update_preview)
+        temp_y_ratio.trace_add("write", update_preview)
 
         btn_preview = ttk.Button(dialog_window, text=get_ui_string(self.app.strings, "btn_preview"), command=lambda: preview(force_open=True))
         btn_preview.grid(row=7, column=0, columnspan=2, pady=10)
 
         def apply_changes():
+            stop_repeating_nudge()
             self.app.app_settings.update_setting("watermark_enabled", "True" if temp_enabled.get() else "False")
             self.app.app_settings.update_setting("watermark_text", temp_text.get())
             self.app.app_settings.update_setting("watermark_color", temp_color.get())
             self.app.app_settings.update_setting("watermark_size", int(temp_size.get()) if temp_size.get().isdigit() else 16)
             self.app.app_settings.update_setting("watermark_position", temp_position.get())
+            self.app.app_settings.update_setting("watermark_x_ratio", temp_x_ratio.get())
+            self.app.app_settings.update_setting("watermark_y_ratio", temp_y_ratio.get())
             if dialog_window.winfo_exists():
                 dialog_window.destroy()
 
@@ -433,6 +530,7 @@ class WatermarkDialog:
         btn_apply.grid(row=8, column=0, pady=10, padx=10, sticky="E")
 
         def cancel_changes():
+            stop_repeating_nudge()
             self.app.preview_window_handler.close()
             if dialog_window.winfo_exists():
                 dialog_window.destroy()
