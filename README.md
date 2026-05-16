@@ -10,11 +10,11 @@ Heat Sheet PDF Highlighter is a Python application designed to facilitate the hi
 
 ## Screenshots
 
-Filter dialog (example names populated for screenshots):
+Filter dialog (example names):
 
 ![Filter dialog](images/app_screenshot_filter.png "Filter dialog with example names")
 
-Watermark dialog (preview enabled with demo text):
+Watermark dialog:
 
 ![Watermark dialog](images/app_screenshot_watermark.png "Watermark dialog with demo text")
 
@@ -45,7 +45,7 @@ Notes:
   - **System** mode automatically follows Windows appearance changes
 - **Watermark System:**
   - **Live preview:** See watermark changes in real-time and on different pages
-  - **Customizable text, color, size, and position**
+  - **Customizable text, preset or custom color selection, size, and position**
 - **Professional GUI:**
   - **Progress tracking:** Real-time processing status and progress bar
   - **Persistent settings:** Language, search terms, and preferences saved between sessions
@@ -156,7 +156,7 @@ Click the **"Watermark"** button to add custom watermarks:
 
 - **Enable Watermark:** Toggle watermark on/off
 - **Watermark Text:** Custom text to overlay on pages
-- **Color Selection:** Choose from presets or enter custom hex colors
+- **Color Selection:** Choose from presets or open the native system color picker
 - **Size Control:** Adjust watermark size
 - **Position:** Place watermark at top or bottom of pages
 - **Live Preview:** See changes in real-time on different PDF pages

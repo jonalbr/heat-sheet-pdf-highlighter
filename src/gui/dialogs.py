@@ -5,7 +5,7 @@ Dialog windows (Filter and Watermark dialogs)
 import csv
 import re
 import time
-from tkinter import WORD, IntVar, StringVar, Text, Toplevel, filedialog, ttk
+from tkinter import WORD, IntVar, StringVar, Text, Toplevel, colorchooser, filedialog, ttk
 from tkinter import Button as tkButton
 from typing import TYPE_CHECKING, Dict, Optional
 import logging
@@ -308,9 +308,11 @@ class WatermarkDialog:
     def open(self):
         """Open the watermark dialog window."""
         self.window = Toplevel(self.parent)
-        self.window.title(get_ui_string(self.app.strings, "wm_settings"))
-        self.app.apply_theme_to_window(self.window)
-        self.window.focus_set()
+        dialog_window = self.window
+        dialog_window.title(get_ui_string(self.app.strings, "wm_settings"))
+        dialog_window.columnconfigure(1, weight=1, minsize=260)
+        self.app.apply_theme_to_window(dialog_window)
+        dialog_window.focus_set()
 
         temp_enabled = IntVar(value=1 if self.app.app_settings.settings.get("watermark_enabled") == "True" else 0)
         temp_text = StringVar(value=self.app.app_settings.settings.get("watermark_text"))
@@ -318,49 +320,80 @@ class WatermarkDialog:
         temp_size = StringVar(value=str(self.app.app_settings.settings.get("watermark_size")))
         temp_position = StringVar(value=self.app.app_settings.settings.get("watermark_position"))
 
-        ttk.Label(self.window, text=get_ui_string(self.app.strings, "wm_enable")).grid(row=0, column=0, sticky="W", padx=10, pady=5)
-        chk = ttk.Checkbutton(self.window, variable=temp_enabled)
+        ttk.Label(dialog_window, text=get_ui_string(self.app.strings, "wm_enable")).grid(row=0, column=0, sticky="W", padx=10, pady=5)
+        chk = ttk.Checkbutton(dialog_window, variable=temp_enabled)
         chk.grid(row=0, column=1, sticky="W", padx=10, pady=5)
 
-        ttk.Label(self.window, text=get_ui_string(self.app.strings, "wm_text")).grid(row=1, column=0, sticky="W", padx=10, pady=5)
-        entry_text = ttk.Entry(self.window, textvariable=temp_text)
-        entry_text.grid(row=1, column=1, padx=10, pady=5)
+        ttk.Label(dialog_window, text=get_ui_string(self.app.strings, "wm_text")).grid(row=1, column=0, sticky="W", padx=10, pady=5)
+        entry_text = ttk.Entry(dialog_window, textvariable=temp_text, width=30)
+        entry_text.grid(row=1, column=1, padx=10, pady=5, sticky="EW")
 
-        ttk.Label(self.window, text=get_ui_string(self.app.strings, "wm_color_hex")).grid(row=2, column=0, sticky="W", padx=10, pady=5)
-        entry_color = ttk.Entry(self.window, textvariable=temp_color)
-        entry_color.grid(row=2, column=1, padx=10, pady=5)
+        ttk.Label(dialog_window, text=get_ui_string(self.app.strings, "wm_color")).grid(row=2, column=0, sticky="W", padx=10, pady=5)
+        current_color_frame = ttk.Frame(dialog_window)
+        current_color_frame.grid(row=2, column=1, padx=10, pady=5, sticky="W")
 
-        # Preselect color frame
-        preselect_frame = ttk.Frame(self.window)
-        preselect_frame.grid(row=3, column=0, columnspan=2, padx=10, pady=5, sticky="W")
-        ttk.Label(preselect_frame, text=get_ui_string(self.app.strings, "wm_pre_color")).pack(side="left")
+        ttk.Label(dialog_window, text=get_ui_string(self.app.strings, "wm_color_select")).grid(row=3, column=0, sticky="W", padx=10, pady=5)
+        color_choice_frame = ttk.Frame(dialog_window)
+        color_choice_frame.grid(row=3, column=1, padx=10, pady=5, sticky="W")
 
         preset_colors = ["#FFA500", "#FF0000", "#00FF00", "#0000FF"]
         preselect_buttons: Dict[str, tkButton] = {}
 
+        current_color_swatch = tkButton(current_color_frame, width=3, height=1, relief="flat")
+        current_color_swatch._hsph_swatch_color = temp_color.get()
+        current_color_swatch._hsph_swatch_selected = False
+        current_color_swatch.pack(side="left")
+
+        def update_color_swatches():
+            selected_color = temp_color.get().upper()
+            current_color_swatch._hsph_swatch_color = selected_color
+            current_color_swatch.config(background=selected_color, activebackground=selected_color)
+            for col, btn in preselect_buttons.items():
+                is_selected = col == selected_color
+                btn._hsph_swatch_selected = is_selected
+                btn.config(relief="sunken" if is_selected else "flat")
+
         def on_color_select(color):
             temp_color.set(color)
-            for col, btn in preselect_buttons.items():
-                btn.config(relief="flat" if col != color else "sunken")
 
         for col in preset_colors:
-            btn = tkButton(preselect_frame, bg=col, width=3, height=1, relief="flat", command=lambda c=col: on_color_select(c))
+            btn = tkButton(color_choice_frame, bg=col, width=3, height=1, relief="flat", command=lambda c=col: on_color_select(c))
+            btn._hsph_swatch_color = col
+            btn._hsph_swatch_selected = False
             btn.pack(side="left", padx=2)
             preselect_buttons[col] = btn
 
-        def on_color_entry(*args):
-            for btn in preselect_buttons.values():
-                btn.config(relief="flat")
+        def choose_custom_color():
+            try:
+                if not dialog_window.winfo_exists():
+                    return
+            except Exception:
+                return
 
-        temp_color.trace_add("write", on_color_entry)
+            _, selected_hex = colorchooser.askcolor(color=temp_color.get(), parent=dialog_window)
+            if selected_hex:
+                temp_color.set(selected_hex.upper())
 
-        ttk.Label(self.window, text=get_ui_string(self.app.strings, "wm_size")).grid(row=4, column=0, sticky="W", padx=10, pady=5)
-        entry_size = ttk.Spinbox(self.window, from_=1, to=100, textvariable=temp_size, width=5)
+        btn_custom_color = ttk.Button(
+            color_choice_frame,
+            text=get_ui_string(self.app.strings, "wm_custom_color"),
+            command=choose_custom_color,
+        )
+        btn_custom_color.pack(side="left", padx=(8, 0))
+
+        def on_color_change(*args):
+            update_color_swatches()
+
+        temp_color.trace_add("write", on_color_change)
+        update_color_swatches()
+
+        ttk.Label(dialog_window, text=get_ui_string(self.app.strings, "wm_size")).grid(row=4, column=0, sticky="W", padx=10, pady=5)
+        entry_size = ttk.Spinbox(dialog_window, from_=1, to=100, textvariable=temp_size, width=5)
         entry_size.grid(row=4, column=1, padx=10, pady=5, sticky="W")
 
-        ttk.Label(self.window, text=get_ui_string(self.app.strings, "wm_pos")).grid(row=5, column=0, sticky="W", padx=10, pady=5)
+        ttk.Label(dialog_window, text=get_ui_string(self.app.strings, "wm_pos")).grid(row=5, column=0, sticky="W", padx=10, pady=5)
         position_options = ["top", "bottom"]
-        option_position = ttk.OptionMenu(self.window, temp_position, temp_position.get(), *position_options)
+        option_position = ttk.OptionMenu(dialog_window, temp_position, temp_position.get(), *position_options)
         option_position.grid(row=5, column=1, padx=10, pady=5, sticky="W")
 
         def preview(force_open=True):
@@ -371,7 +404,7 @@ class WatermarkDialog:
                 int(temp_size.get()) if temp_size.get().isdigit() else 16,
                 temp_position.get(),
                 self.app.current_preview_page,
-                origin=self.window,
+                origin=dialog_window,
                 force_open=force_open,
             )
 
@@ -384,7 +417,7 @@ class WatermarkDialog:
         temp_size.trace_add("write", update_preview)
         temp_position.trace_add("write", update_preview)
 
-        btn_preview = ttk.Button(self.window, text=get_ui_string(self.app.strings, "btn_preview"), command=lambda: preview(force_open=True))
+        btn_preview = ttk.Button(dialog_window, text=get_ui_string(self.app.strings, "btn_preview"), command=lambda: preview(force_open=True))
         btn_preview.grid(row=7, column=0, columnspan=2, pady=10)
 
         def apply_changes():
@@ -393,17 +426,26 @@ class WatermarkDialog:
             self.app.app_settings.update_setting("watermark_color", temp_color.get())
             self.app.app_settings.update_setting("watermark_size", int(temp_size.get()) if temp_size.get().isdigit() else 16)
             self.app.app_settings.update_setting("watermark_position", temp_position.get())
-            if self.window:
-                self.window.destroy()
+            if dialog_window.winfo_exists():
+                dialog_window.destroy()
 
-        btn_apply = ttk.Button(self.window, text=get_ui_string(self.app.strings, "btn_apply"), command=apply_changes)
+        btn_apply = ttk.Button(dialog_window, text=get_ui_string(self.app.strings, "btn_apply"), command=apply_changes)
         btn_apply.grid(row=8, column=0, pady=10, padx=10, sticky="E")
 
+        def cancel_changes():
+            self.app.preview_window_handler.close()
+            if dialog_window.winfo_exists():
+                dialog_window.destroy()
+
+        dialog_window.protocol("WM_DELETE_WINDOW", cancel_changes)
+
         btn_cancel = ttk.Button(
-            self.window, text=get_ui_string(self.app.strings, "btn_cancel"), command=lambda: self.window.destroy() if self.window else None
+            dialog_window,
+            text=get_ui_string(self.app.strings, "btn_cancel"),
+            command=cancel_changes,
         )
         btn_cancel.grid(row=8, column=1, pady=10, padx=10, sticky="W")
-        self.app.apply_theme_to_window(self.window)
+        self.app.apply_theme_to_window(dialog_window)
 
     def refresh_ui_strings(self):
         """Refresh the Watermark dialog UI strings by recreating the window if open."""

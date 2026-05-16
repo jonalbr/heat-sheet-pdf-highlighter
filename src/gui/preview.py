@@ -36,8 +36,12 @@ class PreviewWindow:
 
     def preview_watermark(self, enabled, text, color, size, position, preview_page, origin=None, force_open=True):
         """Show watermark preview."""
+        if not force_open and not self.is_open():
+            return
+
         if not hasattr(self.app, "input_file_full_path"):
-            show_error(self.app, get_ui_string(self.app.strings, "error"), get_ui_string(self.app.strings, "val_pdf_first"))
+            if force_open:
+                show_error(self.app, get_ui_string(self.app.strings, "error"), get_ui_string(self.app.strings, "val_pdf_first"))
             return
 
         try:
@@ -62,7 +66,7 @@ class PreviewWindow:
             self.current_page = preview_page
 
             # If preview_window exists, update image; otherwise, only open window if force_open is True.
-            if self.window and self.window.winfo_exists():
+            if self.is_open():
                 self.window.lift()
                 if force_open:
                     self.window.focus_set()  # Only force focus when preview is explicitly opened
@@ -79,6 +83,22 @@ class PreviewWindow:
             logging.getLogger("preview").exception("Error previewing watermark: %s", e)
             show_error(self.app, get_ui_string(self.app.strings, "error"), str(e))
 
+    def is_open(self) -> bool:
+        """Return whether the preview window currently exists."""
+        try:
+            return bool(self.window and self.window.winfo_exists())
+        except Exception:
+            return False
+
+    def close(self) -> None:
+        """Close the preview window if it is open."""
+        if not self.is_open():
+            self.window = None
+            return
+
+        self.window.destroy()
+        self.window = None
+
     def _create_preview_window(self, image):
         """Create the preview window."""
         self.window = Toplevel(self.app.root)
@@ -94,7 +114,7 @@ class PreviewWindow:
 
         self.window.transient(None)
         self.window.grab_release()
-        self.window.protocol("WM_DELETE_WINDOW", self.window.destroy)
+        self.window.protocol("WM_DELETE_WINDOW", self.close)
 
         img_tk = ImageTk.PhotoImage(image)
         self.image_label = ttk.Label(self.window, image=img_tk, style="Logo.TLabel")

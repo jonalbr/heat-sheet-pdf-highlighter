@@ -81,10 +81,11 @@ def build_strings(_: Callable[[str], str]) -> Dict[str, str]:
 
     # ---- Watermark dialog ----
     watermark_strings = {
-        "wm_color_hex": _("Color (hex)"),
+        "wm_color": _("Color"),
+        "wm_color_select": _("Choose"),
+        "wm_custom_color": _("Custom"),
         "wm_enable": _("Enable Watermark"),
         "wm_pos": _("Position"),
-        "wm_pre_color": _("Preselect Color:"),
         "wm_preview_window": _("Watermark Preview"),
         "wm_settings": _("Watermark Settings"),
         "wm_size": _("Size"),

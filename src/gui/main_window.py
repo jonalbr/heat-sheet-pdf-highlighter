@@ -588,6 +588,21 @@ class PDFHighlighterApp:
         if widget_class in {"Tk", "Toplevel", "Frame", "Labelframe"}:
             self._safe_configure(widget, background=colors.background, highlightbackground=colors.background)
         elif widget_class == "Button":
+            swatch_color = getattr(widget, "_hsph_swatch_color", None)
+            if swatch_color:
+                self._safe_configure(
+                    widget,
+                    background=swatch_color,
+                    activebackground=swatch_color,
+                    highlightbackground=colors.border,
+                    highlightcolor=colors.select_background,
+                    borderwidth=1,
+                    relief="sunken" if getattr(widget, "_hsph_swatch_selected", False) else "flat",
+                    overrelief="raised",
+                    padx=0,
+                    pady=0,
+                )
+                return
             self._safe_configure(
                 widget,
                 background=colors.background,
