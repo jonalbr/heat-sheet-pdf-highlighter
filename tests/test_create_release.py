@@ -23,6 +23,7 @@ def test_local_release_flow_skips_pause_without_simulating_ci(monkeypatch):
     monkeypatch.delenv("HSPH_SKIP_BUILD_PAUSE", raising=False)
     monkeypatch.setattr(create_release, "_load_version_file_snapshots", lambda: {})
     monkeypatch.setattr(create_release, "update_version", lambda version: None)
+    monkeypatch.setattr(create_release, "refresh_lockfile", lambda: None)
     monkeypatch.setattr(create_release, "_capture_release_screenshots", lambda screenshot_pdf: None)
 
     def fake_build_project():
@@ -40,9 +41,8 @@ def test_local_release_flow_skips_pause_without_simulating_ci(monkeypatch):
 def test_local_release_flow_restores_lockfile_after_temporary_build(tmp_path, monkeypatch):
     file_map = {
         "PYPROJECT_TOML": tmp_path / "pyproject.toml",
-        "SETUP_PY": tmp_path / "setup.py",
-        "SETUP_ISS": tmp_path / "setup.iss",
-        "CONSTANTS_PY": tmp_path / "constants.py",
+        "RUNTIME_VERSION_PY": tmp_path / "_version.py",
+        "INNO_VERSION_ISS": tmp_path / "setup_version.iss",
         "UV_LOCK": tmp_path / "uv.lock",
     }
     for attr_name, path in file_map.items():
@@ -50,13 +50,14 @@ def test_local_release_flow_restores_lockfile_after_temporary_build(tmp_path, mo
         monkeypatch.setattr(create_release, attr_name, path)
 
     def fake_update_version(version):
-        for attr_name in ("PYPROJECT_TOML", "SETUP_PY", "SETUP_ISS", "CONSTANTS_PY"):
+        for attr_name in ("PYPROJECT_TOML", "RUNTIME_VERSION_PY", "INNO_VERSION_ISS"):
             getattr(create_release, attr_name).write_text(f"temporary-{version}", encoding="utf-8")
 
     def fake_build_project():
         create_release.UV_LOCK.write_text("temporary-lock", encoding="utf-8")
 
     monkeypatch.setattr(create_release, "update_version", fake_update_version)
+    monkeypatch.setattr(create_release, "refresh_lockfile", lambda: create_release.UV_LOCK.write_text("temporary-lock", encoding="utf-8"))
     monkeypatch.setattr(create_release, "build_project", fake_build_project)
     monkeypatch.setattr(create_release, "_capture_release_screenshots", lambda screenshot_pdf: None)
 
@@ -80,6 +81,17 @@ def test_release_flow_refreshes_lockfile_before_staging(monkeypatch):
     create_release._run_release_flow("1.5.0", screenshot_pdf=None)
 
     assert calls[:3] == ["version", "lock", "screenshots"]
+
+
+def test_update_version_uses_uv_and_regenerates_artifacts(monkeypatch):
+    calls = []
+
+    monkeypatch.setattr(create_release, "run", lambda cmd, check=True: calls.append(cmd))
+    monkeypatch.setattr(create_release, "write_generated_files", lambda: calls.append(["sync"]))
+
+    create_release.update_version("1.5.0-rc1")
+
+    assert calls == [["uv", "version", "--frozen", "1.5.0-rc1"], ["sync"]]
 
 
 def test_capture_release_screenshots_captures_light_and_dark_variants(monkeypatch):

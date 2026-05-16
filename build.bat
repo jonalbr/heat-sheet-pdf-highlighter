@@ -36,7 +36,6 @@ if %ERRORLEVEL% neq 0 (
 )
 set "PYTHON_CMD=uv run python"
 
-set CX_FREEZE_SETUP=setup.py
 REM --- Resolve Inno Setup compiler path (prefer ProgramFiles(x86), fallback to ProgramFiles) ---
 if defined ProgramFiles(x86) (
      set "INNO_COMPILER=%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe"
@@ -61,7 +60,7 @@ cd
 
 REM --- Building the application with cx_Freeze ---
 echo Building application with cx_Freeze...
-%PYTHON_CMD% "%CX_FREEZE_SETUP%" build
+uv run cxfreeze build
 if %ERRORLEVEL% neq 0 (
     echo Failed to build with cx_Freeze!
     exit /b 1

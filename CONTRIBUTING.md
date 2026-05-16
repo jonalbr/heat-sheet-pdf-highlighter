@@ -134,13 +134,19 @@ Expected build outputs:
 - `cx_build/heat_sheet_pdf_highlighter.exe`
 - `heat_sheet_pdf_highlighter_installer.exe`
 - `heat_sheet_pdf_highlighter_installer.exe.sha256`
-- `cx_freeze.log`
 
 Optional code-signing settings can also be supplied through environment variables, but they are not required for a local build.
 
 ## Release helper
 
-`create_release.py` updates version metadata, captures documentation screenshots, refreshes `uv.lock`, and creates a signed release tag for the GitHub Actions release workflow.
+`pyproject.toml` is the canonical version source. `sync_version.py` generates the frozen-app runtime version module and the Inno Setup version include from that value:
+
+```powershell
+uv run python sync_version.py --write
+uv run python sync_version.py --check
+```
+
+`create_release.py` updates the canonical version through `uv version`, regenerates derived version files, captures documentation screenshots, refreshes `uv.lock`, and creates a signed release tag for the GitHub Actions release workflow.
 
 ```powershell
 # Real release flow: update versions, commit if needed, push, tag, and publish via CI
@@ -156,7 +162,9 @@ uv run python create_release.py 1.4.0 --local --no-build
 Notes:
 
 - Supported release versions are `X.Y.Z` and `X.Y.Z-rcN`.
+- `uv` stores release candidates in PEP 440 form inside `pyproject.toml` (for example `1.5.0rc1`); generated runtime and installer display versions keep the public `1.5.0-rc1` form.
 - Local flow temporarily sets `HSPH_SKIP_BUILD_PAUSE=true` so `build.bat` does not wait for prompts.
+- Do not edit `src/_version.py` or `setup_version.iss` by hand; regenerate them from `pyproject.toml`.
 
 ### Official release path
 

@@ -2,9 +2,10 @@
 Application constants
 """
 
+from ._version import VERSION_STR as VERSION_STR
+
 # Application metadata
 APP_NAME = "Heat Sheet PDF Highlighter"
-VERSION_STR = "1.4.3"
 
 # Supported languages
 LANGUAGE_OPTIONS = ["en", "de"]

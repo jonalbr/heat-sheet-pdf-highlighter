@@ -1,9 +1,9 @@
 """
 Release automation script for Heat Sheet PDF Highlighter.
 
-This script updates version numbers in pyproject.toml, setup.py, setup.iss,
-and src/constants.py, creates a signed git tag, and pushes it to the remote
-repository.
+This script updates the canonical version in pyproject.toml, regenerates the
+derived version artifacts, creates a signed git tag, and pushes it to the
+remote repository.
 
 Arguments:
     version (str): The new version string (e.g., 1.2.3 or 1.2.3-rc1).
@@ -15,10 +15,11 @@ import argparse
 from contextlib import contextmanager
 import subprocess
 import sys
-import re
 import os
 from pathlib import Path
 import shutil
+
+from sync_version import INNO_VERSION_ISS, RUNTIME_VERSION_PY, validate_release_version, write_generated_files
 
 SCREENSHOT_THEMES = ("light", "dark")
 SCREENSHOT_PATHS = {
@@ -44,54 +45,22 @@ SCREENSHOT_PATHS = {
     },
 }
 
-SETUP_PY = Path("setup.py")
-SETUP_ISS = Path("setup.iss")
 PYPROJECT_TOML = Path("pyproject.toml")
-CONSTANTS_PY = Path("src/constants.py")
 UV_LOCK = Path("uv.lock")
 
 
 def check_version_input(version: str) -> None:
-    if not re.fullmatch(r"\d+\.\d+\.\d+(?:-rc\d+)?", version):
+    try:
+        validate_release_version(version)
+    except ValueError:
         print("Invalid version format. Use x.y.z or x.y.z-rcN.")
         sys.exit(1)
 
 
 def update_version(version: str) -> None:
-    # Derive a numeric, 4-part file version for Inno (strip prerelease, append .0 if needed)
-    base_match = re.match(r"(\d+\.\d+\.\d+)", version)
-    if not base_match:
-        print("Failed to parse base numeric version from input.")
-        sys.exit(1)
-    base_numeric = base_match.group(1)
-    file_version = base_numeric if base_numeric.count(".") == 3 else f"{base_numeric}.0"
-    # setup.py
-    if SETUP_PY.exists():
-        text = SETUP_PY.read_text(encoding="utf-8")
-        text = re.sub(r"(version\s*=\s*['\"])([^'\"]+)(['\"])", rf"\g<1>{version}\g<3>", text)
-        SETUP_PY.write_text(text, encoding="utf-8")
-    # pyproject.toml
-    if PYPROJECT_TOML.exists():
-        text = PYPROJECT_TOML.read_text(encoding="utf-8")
-        text = re.sub(r'(^version\s*=\s*")([^"]+)(")', rf"\g<1>{version}\g<3>", text, count=1, flags=re.MULTILINE)
-        PYPROJECT_TOML.write_text(text, encoding="utf-8")
-    # setup.iss
-    if SETUP_ISS.exists():
-        text = SETUP_ISS.read_text(encoding="utf-8")
-        # Update display version
-        text = re.sub(r'(#define\s+MyAppVersion\s*")([^"]+)(")', rf"\g<1>{version}\g<3>", text)
-        # Ensure numeric file version define exists and is updated
-        if re.search(r'#define\s+MyAppVersionNumeric\s*"[^"]*"', text):
-            text = re.sub(r'(#define\s+MyAppVersionNumeric\s*")([^"]*)(")', rf"\g<1>{file_version}\g<3>", text)
-        else:
-            # Insert after MyAppVersion define
-            text = re.sub(r'(#define\s+MyAppVersion\s*"[^"]*"\s*)', rf"\g<1>\n#define MyAppVersionNumeric \"{file_version}\"", text, count=1)
-        SETUP_ISS.write_text(text, encoding="utf-8")
-    # src/constants.py
-    if CONSTANTS_PY.exists():
-        text = CONSTANTS_PY.read_text(encoding="utf-8")
-        text = re.sub(r"(VERSION_STR\s*=\s*['\"])([^'\"]+)(['\"])", rf"\g<1>{version}\g<3>", text)
-        CONSTANTS_PY.write_text(text, encoding="utf-8")
+    """Update canonical project version and regenerate derived artifacts."""
+    run(["uv", "version", "--frozen", version])
+    write_generated_files()
 
 
 def refresh_lockfile() -> None:
@@ -234,8 +203,19 @@ def _capture_release_screenshots(screenshot_pdf: str | None) -> None:
             )
 
 
-def _load_version_file_snapshots() -> dict[Path, str]:
-    return {path: path.read_text(encoding="utf-8") for path in (PYPROJECT_TOML, SETUP_PY, SETUP_ISS, CONSTANTS_PY, UV_LOCK) if path.exists()}
+def _load_version_file_snapshots() -> dict[Path, str | None]:
+    return {
+        path: path.read_text(encoding="utf-8") if path.exists() else None
+        for path in (PYPROJECT_TOML, RUNTIME_VERSION_PY, INNO_VERSION_ISS, UV_LOCK)
+    }
+
+
+def _restore_version_file_snapshots(snapshots: dict[Path, str | None]) -> None:
+    for path, content in snapshots.items():
+        if content is None:
+            path.unlink(missing_ok=True)
+        else:
+            path.write_text(content, encoding="utf-8")
 
 
 @contextmanager
@@ -256,6 +236,7 @@ def _run_local_release_flow(version: str, no_build: bool, screenshot_pdf: str | 
     originals = _load_version_file_snapshots()
     try:
         update_version(version)
+        refresh_lockfile()
         with _temporary_environment_value("HSPH_SKIP_BUILD_PAUSE", "true"):
             if no_build:
                 print("--no-build specified: skipping actual build (dry-run).")
@@ -263,17 +244,15 @@ def _run_local_release_flow(version: str, no_build: bool, screenshot_pdf: str | 
                 build_project()
             _capture_release_screenshots(screenshot_pdf)
     finally:
-        for path, content in originals.items():
-            path.write_text(content, encoding="utf-8")
+        _restore_version_file_snapshots(originals)
     print("Local flow complete and version changes reverted.")
 
 
 def _collect_release_artifacts() -> list[str]:
     artifacts = (
         PYPROJECT_TOML,
-        SETUP_PY,
-        SETUP_ISS,
-        CONSTANTS_PY,
+        RUNTIME_VERSION_PY,
+        INNO_VERSION_ISS,
         UV_LOCK,
         *(path for per_target in SCREENSHOT_PATHS.values() for path in per_target.values()),
     )

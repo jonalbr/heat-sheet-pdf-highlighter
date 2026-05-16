@@ -21,41 +21,18 @@ jobs:
       - name: Validate lockfile
         shell: pwsh
         run: uv lock --locked
+      - name: Validate generated version artifacts
+        shell: pwsh
+        run: python sync_version.py --check
       - name: Validate release version metadata
         shell: pwsh
         run: |
           $expected = "${{ github.ref_name }}" -replace '^v', ''
 
-          $pyproject = Select-String -Path 'pyproject.toml' -Pattern '^version\s*=\s*"([^"]+)"$'
-          $setupPy = Select-String -Path 'setup.py' -Pattern 'version\s*=\s*"([^"]+)"'
-          $setupIss = Select-String -Path 'setup.iss' -Pattern '^#define\s+MyAppVersion\s*"([^"]+)"$'
-          $constants = Select-String -Path 'src/constants.py' -Pattern '^VERSION_STR\s*=\s*"([^"]+)"$'
-          $uvLockProjectLine = Select-String -Path 'uv.lock' -Pattern '^name = "heat-sheet-pdf-highlighter"$' | Select-Object -First 1
-          $uvLockLines = Get-Content 'uv.lock'
-          $uvLockVersion = $null
-          if ($uvLockProjectLine) {
-            for ($i = $uvLockProjectLine.LineNumber; $i -lt $uvLockLines.Count; $i++) {
-              if ($uvLockLines[$i] -match '^version = "([^"]+)"$') {
-                $uvLockVersion = $Matches[1]
-                break
-              }
-            }
-          }
-
-          $actual = [ordered]@{
-            'pyproject.toml' = if ($pyproject) { $pyproject.Matches[0].Groups[1].Value } else { $null }
-            'setup.py' = if ($setupPy) { $setupPy.Matches[0].Groups[1].Value } else { $null }
-            'setup.iss' = if ($setupIss) { $setupIss.Matches[0].Groups[1].Value } else { $null }
-            'src/constants.py' = if ($constants) { $constants.Matches[0].Groups[1].Value } else { $null }
-            'uv.lock' = $uvLockVersion
-          }
-
-          $mismatches = @($actual.GetEnumerator() | Where-Object { $_.Value -ne $expected })
-          if ($mismatches.Count -gt 0) {
-            Write-Error "Tag version '$expected' does not match release metadata:"
-            foreach ($entry in $actual.GetEnumerator()) {
-              Write-Error "  $($entry.Key): $($entry.Value)"
-            }
+          $generated = Select-String -Path 'src/_version.py' -Pattern '^VERSION_STR\s*=\s*"([^"]+)"$'
+          $actual = if ($generated) { $generated.Matches[0].Groups[1].Value } else { $null }
+          if ($actual -ne $expected) {
+            Write-Error "Tag version '$expected' does not match generated display version '$actual'."
             exit 1
           }
       - name: Install dependencies
