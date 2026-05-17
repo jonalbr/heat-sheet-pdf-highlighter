@@ -60,9 +60,13 @@ def build_strings(_: Callable[[str], str]) -> Dict[str, str]:
         "btn_clear": _("Clear"),
         "btn_filter": _("Filter"),
         "btn_import": _("Import"),
+        "btn_no": _("No"),
+        "btn_ok": _("OK"),
         "btn_preview": _("Preview"),
+        "btn_retry": _("Retry"),
         "btn_start": _("Start"),
         "btn_watermark": _("Watermark"),
+        "btn_yes": _("Yes"),
     }
 
     # ---- File pickers, filters, and output naming ----

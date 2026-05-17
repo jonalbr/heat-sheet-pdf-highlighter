@@ -1,4 +1,5 @@
 from src.gui.ui_strings import build_strings, get_ui_string, plural_strings, _xgettext_dummy
+from src.utils.localization import setup_translation
 import logging
 
 
@@ -18,6 +19,34 @@ def test_get_ui_string_existing_key():
 def test_download_starting_status_string_exists():
     s = build_strings(lambda x: x)
     assert get_ui_string(s, "upd_starting") == "Starting download..."
+
+
+def test_generic_dialog_button_strings_exist():
+    s = build_strings(lambda x: x)
+
+    assert {key: get_ui_string(s, key) for key in ("btn_yes", "btn_no", "btn_ok", "btn_retry", "btn_cancel")} == {
+        "btn_yes": "Yes",
+        "btn_no": "No",
+        "btn_ok": "OK",
+        "btn_retry": "Retry",
+        "btn_cancel": "Cancel",
+    }
+
+
+def test_generic_dialog_button_strings_are_translated_in_german_catalog():
+    gettext_de, _ = setup_translation("de")
+    s = build_strings(gettext_de)
+
+    assert {
+        key: get_ui_string(s, key)
+        for key in ("btn_yes", "btn_no", "btn_ok", "btn_retry", "btn_cancel")
+    } == {
+        "btn_yes": "Ja",
+        "btn_no": "Nein",
+        "btn_ok": "OK",
+        "btn_retry": "Erneut versuchen",
+        "btn_cancel": "Abbrechen",
+    }
 
 
 def test_get_ui_string_with_default():
