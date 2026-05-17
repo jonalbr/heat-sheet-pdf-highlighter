@@ -25,6 +25,14 @@ class FakeWinregModule(types.SimpleNamespace):
         raise OSError("Unknown registry value")
 
 
+class FakeTkWindow:
+    def __init__(self, hwnd=123):
+        self.hwnd = hwnd
+
+    def winfo_id(self):
+        return self.hwnd
+
+
 @pytest.fixture(autouse=True)
 def patch_os_name(monkeypatch):
     monkeypatch.setattr(theme, "os", types.SimpleNamespace(name="nt"))
@@ -95,3 +103,68 @@ def test_theme_colors_have_distinct_text_and_background():
     for colors in theme.THEME_COLORS.values():
         assert colors.foreground != colors.background
         assert colors.tooltip_foreground != colors.tooltip_background
+
+
+def test_get_windows_title_bar_hwnd_prefers_parent_handle(monkeypatch):
+    fake_windll = types.SimpleNamespace(user32=types.SimpleNamespace(GetParent=lambda hwnd: 456))
+    monkeypatch.setattr(theme.ctypes, "windll", fake_windll, raising=False)
+
+    assert theme._get_windows_title_bar_hwnd(FakeTkWindow()) == 456
+
+
+def test_get_windows_title_bar_hwnd_falls_back_to_window_handle(monkeypatch):
+    fake_windll = types.SimpleNamespace(user32=types.SimpleNamespace(GetParent=lambda hwnd: 0))
+    monkeypatch.setattr(theme.ctypes, "windll", fake_windll, raising=False)
+
+    assert theme._get_windows_title_bar_hwnd(FakeTkWindow()) == 123
+
+
+def test_set_windows_title_bar_theme_calls_dwm(monkeypatch):
+    calls = {}
+
+    class FakeDwmapi:
+        def DwmSetWindowAttribute(self, hwnd, attribute, value, size):
+            calls["args"] = (hwnd, attribute, value._obj.value, size)
+            return 0
+
+    fake_windll = types.SimpleNamespace(
+        user32=types.SimpleNamespace(GetParent=lambda hwnd: 456),
+        dwmapi=FakeDwmapi(),
+    )
+    monkeypatch.setattr(theme.ctypes, "windll", fake_windll, raising=False)
+
+    assert theme.set_windows_title_bar_theme(FakeTkWindow(), "dark") is True
+    assert calls["args"][:3] == (456, theme.DWMWA_USE_IMMERSIVE_DARK_MODE, 1)
+
+
+def test_set_windows_title_bar_theme_disables_dark_mode_for_light(monkeypatch):
+    values = []
+
+    class FakeDwmapi:
+        def DwmSetWindowAttribute(self, hwnd, attribute, value, size):
+            values.append(value._obj.value)
+            return 0
+
+    fake_windll = types.SimpleNamespace(
+        user32=types.SimpleNamespace(GetParent=lambda hwnd: 0),
+        dwmapi=FakeDwmapi(),
+    )
+    monkeypatch.setattr(theme.ctypes, "windll", fake_windll, raising=False)
+
+    assert theme.set_windows_title_bar_theme(FakeTkWindow(), "light") is True
+    assert values == [0]
+
+
+def test_set_windows_title_bar_theme_is_noop_off_windows(monkeypatch):
+    monkeypatch.setattr(theme, "os", types.SimpleNamespace(name="posix"))
+
+    assert theme.set_windows_title_bar_theme(FakeTkWindow(), "dark") is False
+
+
+def test_set_windows_title_bar_theme_returns_false_on_platform_error(monkeypatch):
+    fake_windll = types.SimpleNamespace(
+        user32=types.SimpleNamespace(GetParent=lambda hwnd: (_ for _ in ()).throw(OSError("boom")))
+    )
+    monkeypatch.setattr(theme.ctypes, "windll", fake_windll, raising=False)
+
+    assert theme.set_windows_title_bar_theme(FakeTkWindow(), "dark") is False

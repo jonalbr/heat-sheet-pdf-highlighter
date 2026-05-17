@@ -20,7 +20,7 @@ from ..core.pdf_processor import highlight_matching_data
 from ..core.watermark import watermark_pdf_page
 from ..models import HighlightMode
 from ..utils.localization import setup_translation
-from ..utils.theme import ThemeColors, get_effective_theme, get_theme_colors
+from ..utils.theme import ThemeColors, get_effective_theme, get_theme_colors, set_windows_title_bar_theme
 from ..utils.updater import UpdateChecker
 from ..version import Version
 from .dev_tools import DevToolsWindow
@@ -570,7 +570,9 @@ class PDFHighlighterApp:
     def apply_theme_to_window(self, window) -> None:
         """Apply the active theme to a Tk/Toplevel and classic Tk descendants."""
         colors = getattr(self, "_current_theme_colors", get_theme_colors(getattr(self, "_current_effective_theme", "light")))
-        setattr(window, "_hsph_effective_theme", getattr(self, "_current_effective_theme", "light"))
+        effective_theme = getattr(self, "_current_effective_theme", "light")
+        setattr(window, "_hsph_effective_theme", effective_theme)
+        set_windows_title_bar_theme(window, effective_theme)
         self._configure_classic_widget(window, colors)
         for child in window.winfo_children():
             self._apply_theme_to_widget_tree(child, colors)

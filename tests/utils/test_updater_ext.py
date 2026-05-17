@@ -965,6 +965,21 @@ def test_request_exception_retry_rechecks_when_user_accepts():
     assert result is False
 
 
+def test_request_exception_declined_retry_prints_failure(capsys):
+    app = DummyAppExtended()
+    uc = UpdateChecker(app)  # type: ignore[arg-type]
+
+    result = uc._handle_update_check_exception(
+        requests.ConnectionError("offline"),
+        Version.from_str("1.0.0"),
+        force_check=True,
+        quiet=False,
+    )
+
+    assert result is False
+    assert "offline" in capsys.readouterr().out
+
+
 def test_invalid_metadata_retry_rechecks_when_user_accepts():
     app = DummyAppExtended()
     uc = UpdateChecker(app)  # type: ignore[arg-type]

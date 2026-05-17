@@ -8,8 +8,10 @@ appearance is light or dark and for resolving effective theme choices when
 
 from __future__ import annotations
 
+import ctypes
 from dataclasses import dataclass
 import os
+from tkinter import TclError
 from typing import Literal
 
 ThemeMode = Literal["system", "light", "dark"]
@@ -17,6 +19,7 @@ EffectiveTheme = Literal["light", "dark"]
 
 WINDOWS_THEME_KEY = r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"
 WINDOWS_THEME_VALUE = "AppsUseLightTheme"
+DWMWA_USE_IMMERSIVE_DARK_MODE = 20
 
 
 @dataclass(frozen=True)
@@ -103,3 +106,29 @@ def get_effective_theme(theme_mode: str) -> EffectiveTheme:
 def get_theme_colors(effective_theme: str) -> ThemeColors:
     """Return UI colors for the resolved theme, falling back to light."""
     return THEME_COLORS.get(effective_theme, THEME_COLORS["light"])
+
+
+def _get_windows_title_bar_hwnd(window) -> int:
+    """Return the native frame HWND for a Tk top-level window."""
+    hwnd = int(window.winfo_id())
+    parent_hwnd = ctypes.windll.user32.GetParent(hwnd)
+    return int(parent_hwnd or hwnd)
+
+
+def set_windows_title_bar_theme(window, effective_theme: str) -> bool:
+    """Best-effort toggle for the native Windows title bar dark mode state."""
+    if os.name != "nt":
+        return False
+
+    try:
+        hwnd = _get_windows_title_bar_hwnd(window)
+        enabled = ctypes.c_int(1 if effective_theme == "dark" else 0)
+        result = ctypes.windll.dwmapi.DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_USE_IMMERSIVE_DARK_MODE,
+            ctypes.byref(enabled),
+            ctypes.sizeof(enabled),
+        )
+    except (AttributeError, OSError, TclError, TypeError, ValueError):
+        return False
+    return result == 0

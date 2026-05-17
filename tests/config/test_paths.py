@@ -86,6 +86,13 @@ def test_get_bundle_dir_for_pyinstaller(tmp_path):
     assert _get_bundle_dir(frozen=True, meipass=unpacked_root) == unpacked_root
 
 
+def test_get_bundle_dir_reads_sys_meipass_when_not_passed(tmp_path, monkeypatch):
+    unpacked_root = tmp_path / "_MEI456"
+    monkeypatch.setattr(sys, "_MEIPASS", str(unpacked_root), raising=False)
+
+    assert _get_bundle_dir(frozen=True, meipass=None) == unpacked_root
+
+
 def test_get_bundle_dir_for_cx_freeze(tmp_path):
     executable = tmp_path / "installed" / "heat_sheet_pdf_highlighter.exe"
 
