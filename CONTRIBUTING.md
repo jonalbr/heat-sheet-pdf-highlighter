@@ -150,14 +150,20 @@ uv run python sync_version.py --write
 uv run python sync_version.py --check
 ```
 
-`create_release.py` updates the canonical version through `uv version`, regenerates derived version files, captures documentation screenshots, refreshes `uv.lock`, and creates a signed release tag for the GitHub Actions release workflow.
+`create_release.py` updates the canonical version through `uv version`, regenerates derived version files, refreshes `uv.lock`, and creates a signed release tag for the GitHub Actions release workflow. Stable releases also refresh documentation screenshots automatically; rc releases intentionally skip them.
 
 ```powershell
 # Real release flow: update versions, commit if needed, push, tag, and publish via CI
 uv run python create_release.py 1.4.0
 
-# Local-only build: temporarily update versions, build, capture screenshots, then revert version files
+# Local-only build: temporarily update versions, build, capture screenshots, then revert version files and screenshots
 uv run python create_release.py 1.4.0 --local
+
+# Local rehearsal, but keep the regenerated screenshots for review/commit
+uv run python create_release.py 1.4.0 --local --keep-screenshots
+
+# Refresh documentation screenshots only; no version change or build
+uv run python create_release.py --screenshots-only
 
 # Dry run of the local version-update flow without building
 uv run python create_release.py 1.4.0 --local --no-build
@@ -167,7 +173,8 @@ Notes:
 
 - Supported release versions are canonical PEP 440 forms: `X.Y.Z` and `X.Y.ZrcN`.
 - Runtime versions, installer display versions, tags, and `pyproject.toml` all use the same canonical form (for example `1.5.0rc1`).
-- Local flow restores temporary version and screenshot changes after the rehearsal while leaving the ignored build outputs available for inspection; `--local --no-build` skips both the build and screenshot capture.
+- Stable releases refresh documentation screenshots automatically; rc releases do not. Use `--screenshots-only` when screenshots are intentionally the whole job.
+- Local flow restores temporary version and screenshot changes after the rehearsal while leaving the ignored build outputs available for inspection. Add `--keep-screenshots` when the refreshed images should remain, or use `--screenshots-only` when images are the whole job. `--local --no-build` skips both the build and screenshot capture.
 - Do not edit `src/_version.py` or `setup_version.iss` by hand; regenerate them from `pyproject.toml`.
 
 ### Official release path

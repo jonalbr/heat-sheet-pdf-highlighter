@@ -15,6 +15,14 @@ def test_check_version_input_rejects_beta():
         create_release.check_version_input("1.5.0-beta1")
 
 
+@pytest.mark.parametrize(
+    ("version", "expected"),
+    [("1.5.0", True), ("1.5.0rc1", False)],
+)
+def test_should_capture_release_screenshots_only_for_stable_versions(version, expected):
+    assert create_release._should_capture_release_screenshots(version) is expected
+
+
 def test_local_release_flow_builds_and_captures_screenshots(monkeypatch):
     calls = []
 
@@ -28,6 +36,22 @@ def test_local_release_flow_builds_and_captures_screenshots(monkeypatch):
     create_release._run_local_release_flow("1.5.0", no_build=False, screenshot_pdf=None)
 
     assert calls == ["build", "screenshots"]
+
+
+def test_local_release_flow_skips_automatic_screenshots_for_rc(monkeypatch, capsys):
+    calls = []
+
+    monkeypatch.setattr(create_release, "_load_version_file_snapshots", lambda: {})
+    monkeypatch.setattr(create_release, "_load_screenshot_file_snapshots", lambda: {})
+    monkeypatch.setattr(create_release, "update_version", lambda version: None)
+    monkeypatch.setattr(create_release, "refresh_lockfile", lambda: None)
+    monkeypatch.setattr(create_release, "build_project", lambda: calls.append("build"))
+    monkeypatch.setattr(create_release, "_capture_release_screenshots", lambda screenshot_pdf: calls.append("screenshots"))
+
+    create_release._run_local_release_flow("1.5.0rc1", no_build=False, screenshot_pdf=None)
+
+    assert calls == ["build"]
+    assert "RC release detected" in capsys.readouterr().out
 
 
 def test_local_release_flow_no_build_skips_screenshots(monkeypatch):
@@ -91,6 +115,46 @@ def test_local_release_flow_restores_screenshots(tmp_path, monkeypatch):
     assert screenshot.read_bytes() == b"original-image"
 
 
+def test_local_release_flow_can_keep_regenerated_screenshots(tmp_path, monkeypatch, capsys):
+    screenshot = tmp_path / "screenshot.png"
+    screenshot.write_bytes(b"original-image")
+
+    monkeypatch.setattr(create_release, "_load_version_file_snapshots", lambda: {})
+    monkeypatch.setattr(
+        create_release,
+        "_load_screenshot_file_snapshots",
+        lambda: (_ for _ in ()).throw(AssertionError("screenshots should not be snapshotted")),
+    )
+    monkeypatch.setattr(create_release, "update_version", lambda version: None)
+    monkeypatch.setattr(create_release, "refresh_lockfile", lambda: None)
+    monkeypatch.setattr(create_release, "build_project", lambda: None)
+    monkeypatch.setattr(create_release, "_capture_release_screenshots", lambda screenshot_pdf: screenshot.write_bytes(b"kept-image"))
+
+    create_release._run_local_release_flow(
+        "1.5.0",
+        no_build=False,
+        screenshot_pdf=None,
+        keep_screenshots=True,
+    )
+
+    assert screenshot.read_bytes() == b"kept-image"
+    assert "regenerated screenshots kept" in capsys.readouterr().out
+
+
+def test_screenshots_only_flow_captures_without_release_steps(monkeypatch, capsys):
+    calls = []
+    monkeypatch.setattr(
+        create_release,
+        "_capture_release_screenshots",
+        lambda screenshot_pdf: calls.append(("screenshots", screenshot_pdf)),
+    )
+
+    create_release._run_screenshots_only_flow("preview.pdf")
+
+    assert calls == [("screenshots", "preview.pdf")]
+    assert "Screenshot flow complete." in capsys.readouterr().out
+
+
 def test_release_flow_refreshes_lockfile_before_staging(monkeypatch):
     calls = []
 
@@ -105,6 +169,23 @@ def test_release_flow_refreshes_lockfile_before_staging(monkeypatch):
     create_release._run_release_flow("1.5.0", screenshot_pdf=None)
 
     assert calls[:3] == ["version", "lock", "screenshots"]
+
+
+def test_release_flow_skips_automatic_screenshots_for_rc(monkeypatch, capsys):
+    calls = []
+
+    monkeypatch.setattr(create_release, "update_version", lambda version: calls.append("version"))
+    monkeypatch.setattr(create_release, "refresh_lockfile", lambda: calls.append("lock"))
+    monkeypatch.setattr(create_release, "_capture_release_screenshots", lambda screenshot_pdf: calls.append("screenshots"))
+    monkeypatch.setattr(create_release, "_collect_release_artifacts", lambda: [])
+    monkeypatch.setattr(create_release, "run", lambda cmd, check=True: SimpleNamespace(returncode=0))
+    monkeypatch.setattr(create_release, "ensure_ssh_signing", lambda: calls.append("signing"))
+    monkeypatch.setattr(create_release, "create_and_push_signed_tag", lambda version: calls.append("tag"))
+
+    create_release._run_release_flow("1.5.0rc1", screenshot_pdf=None)
+
+    assert calls == ["version", "lock", "signing", "tag"]
+    assert "RC release detected" in capsys.readouterr().out
 
 
 def test_update_version_uses_uv_and_regenerates_artifacts(monkeypatch):
@@ -297,7 +378,15 @@ def test_parse_args_reads_release_options(monkeypatch):
     monkeypatch.setattr(
         create_release.sys,
         "argv",
-        ["create_release.py", "1.5.0rc1", "--local", "--no-build", "--screenshot-pdf", "preview.pdf"],
+        [
+            "create_release.py",
+            "1.5.0rc1",
+            "--local",
+            "--no-build",
+            "--keep-screenshots",
+            "--screenshot-pdf",
+            "preview.pdf",
+        ],
     )
 
     args = create_release._parse_args()
@@ -305,7 +394,39 @@ def test_parse_args_reads_release_options(monkeypatch):
     assert args.version == "1.5.0rc1"
     assert args.local is True
     assert args.no_build is True
+    assert args.keep_screenshots is True
+    assert args.screenshots_only is False
     assert args.screenshot_pdf == "preview.pdf"
+
+
+def test_parse_args_supports_screenshots_only_without_version(monkeypatch):
+    monkeypatch.setattr(
+        create_release.sys,
+        "argv",
+        ["create_release.py", "--screenshots-only", "--screenshot-pdf", "preview.pdf"],
+    )
+
+    args = create_release._parse_args()
+
+    assert args.version is None
+    assert args.screenshots_only is True
+    assert args.screenshot_pdf == "preview.pdf"
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["create_release.py"],
+        ["create_release.py", "--screenshots-only", "1.5.0"],
+        ["create_release.py", "--screenshots-only", "--local"],
+        ["create_release.py", "1.5.0", "--keep-screenshots"],
+    ],
+)
+def test_parse_args_rejects_invalid_option_combinations(monkeypatch, argv):
+    monkeypatch.setattr(create_release.sys, "argv", argv)
+
+    with pytest.raises(SystemExit):
+        create_release._parse_args()
 
 
 def test_capture_release_screenshots_captures_light_and_dark_variants(monkeypatch):
@@ -423,13 +544,22 @@ def test_main_routes_to_local_or_release_flow(monkeypatch):
     monkeypatch.setattr(
         create_release,
         "_parse_args",
-        lambda: SimpleNamespace(version=" 1.5.0 ", local=True, no_build=True, screenshot_pdf=None),
+        lambda: SimpleNamespace(
+            version=" 1.5.0 ",
+            local=True,
+            no_build=True,
+            keep_screenshots=True,
+            screenshots_only=False,
+            screenshot_pdf=None,
+        ),
     )
     monkeypatch.setattr(create_release, "check_version_input", lambda version: calls.append(("check", version)))
     monkeypatch.setattr(
         create_release,
         "_run_local_release_flow",
-        lambda version, no_build, screenshot_pdf: calls.append(("local", version, no_build, screenshot_pdf)),
+        lambda version, no_build, screenshot_pdf, keep_screenshots: calls.append(
+            ("local", version, no_build, screenshot_pdf, keep_screenshots)
+        ),
     )
     monkeypatch.setattr(
         create_release,
@@ -441,14 +571,47 @@ def test_main_routes_to_local_or_release_flow(monkeypatch):
     monkeypatch.setattr(
         create_release,
         "_parse_args",
-        lambda: SimpleNamespace(version="1.5.1", local=False, no_build=False, screenshot_pdf="preview.pdf"),
+        lambda: SimpleNamespace(
+            version="1.5.1",
+            local=False,
+            no_build=False,
+            keep_screenshots=False,
+            screenshots_only=False,
+            screenshot_pdf="preview.pdf",
+        ),
     )
     create_release.main()
 
     assert calls == [
         ("check", "1.5.0"),
-        ("local", "1.5.0", True, None),
+        ("local", "1.5.0", True, None, True),
         ("check", "1.5.1"),
         ("release", "1.5.1", "preview.pdf"),
     ]
+
+
+def test_main_routes_to_screenshots_only_flow(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        create_release,
+        "_parse_args",
+        lambda: SimpleNamespace(
+            version=None,
+            local=False,
+            no_build=False,
+            keep_screenshots=False,
+            screenshots_only=True,
+            screenshot_pdf="preview.pdf",
+        ),
+    )
+    monkeypatch.setattr(create_release, "check_version_input", lambda version: calls.append(("check", version)))
+    monkeypatch.setattr(
+        create_release,
+        "_run_screenshots_only_flow",
+        lambda screenshot_pdf: calls.append(("screenshots_only", screenshot_pdf)),
+    )
+
+    create_release.main()
+
+    assert calls == [("screenshots_only", "preview.pdf")]
 
