@@ -198,8 +198,14 @@ def _windows_capture(root: Tk, app: PDFHighlighterApp, screenshot_path: str, tar
         img = _win_capture_hwnd(hwnd_target) or img
 
     if img is not None:
-        os.makedirs(os.path.dirname(screenshot_path), exist_ok=True)
-        img.save(screenshot_path)
+        _save_capture_image(img, screenshot_path)
+
+
+def _save_capture_image(img, screenshot_path: str) -> None:
+    output_dir = os.path.dirname(screenshot_path)
+    if output_dir:
+        os.makedirs(output_dir, exist_ok=True)
+    img.save(screenshot_path)
 
 
 def main():

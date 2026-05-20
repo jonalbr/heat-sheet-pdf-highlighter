@@ -1,16 +1,10 @@
-"""Extended tests for UpdateChecker covering caching, prompts, downloads, channels, concurrency, metadata.
-
-We reuse ideas from test_updater_sha.py but broaden coverage.
-
-Each section has TODO markers that will be filled in progressively.
-"""
+"""Extended tests for UpdateChecker covering caching, prompts, downloads, channels, concurrency, metadata."""
 
 from __future__ import annotations
 
 from pathlib import Path
 from typing import Any, Optional
 import logging
-import sys
 import datetime
 import hashlib
 import os
@@ -18,10 +12,8 @@ import os
 import pytest
 import requests
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
-from src.utils.updater import UpdateChecker  # type: ignore  # noqa: E402
-from src.version import Version  # type: ignore  # noqa: E402
+from src.utils.updater import UpdateChecker
+from src.version import Version
 
 # --- Shared dummy objects (kept minimal; specialized versions may be defined per test) ---
 
@@ -192,16 +184,6 @@ class DummyResponse:
         data = self._body
         for i in range(0, len(data), chunk_size):
             yield data[i : i + chunk_size]
-
-
-# Placeholder tests (implemented progressively)
-
-
-def test_placeholder_sanity():
-    app = DummyAppExtended()
-    uc = UpdateChecker(app)  # type: ignore[arg-type]
-    # Sanity: initial guards false
-    assert not uc._active_check and not uc._active_download
 
 
 # Cache tests

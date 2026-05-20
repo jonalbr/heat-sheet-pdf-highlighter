@@ -3,6 +3,7 @@ Main application window
 """
 
 from contextlib import suppress
+from dataclasses import dataclass
 import re
 import os
 import logging
@@ -21,6 +22,7 @@ from ..config.settings import AppSettings
 from ..constants import LANGUAGE_OPTIONS, VERSION_STR
 from ..core.ocr import (
     OcrCancelled,
+    OcrSaveResult,
     create_searchable_ocr_pdf_in_process,
     document_needs_ocr,
     ensure_bundled_tessdata,
@@ -52,6 +54,15 @@ OCR_LANGUAGE_CHOICES = (
     ("ocr_language_eng", "eng"),
     ("ocr_language_deu_eng", "deu+eng"),
 )
+
+
+@dataclass(frozen=True)
+class ProcessingOptions:
+    search_str: str
+    only_relevant: bool
+    filter_enabled: bool
+    names: list[str]
+    highlight_mode: HighlightMode
 
 
 class PDFHighlighterApp:
@@ -949,159 +960,191 @@ class PDFHighlighterApp:
     def process_pdf(self, input_file: str):
         """Process the PDF file with highlighting and watermarks."""
         self.processing_active = True
-        search_str = self.search_phrase_var.get()
-        only_relevant = bool(self.relevant_lines_var.get())
-        filter_enabled = bool(self.enable_filter_var.get())
-        highlight_mode = HighlightMode[self.highlight_mode_var.get()]
-        names = [name.strip() for name in re.split(r",\s*", self.names_var.get()) if name.strip()]
+        options = self._collect_processing_options()
         ocr_used = False
         ocr_temp_file: str | None = None
-        prepared_save_temp_file: str | None = None
         document = None
 
         try:
-            self.paths.is_valid_path(input_file)
-            document = Document(input_file)
-            if document.is_encrypted:
-                self.root.after_idle(lambda: show_error(self, get_ui_string(self.strings, "error"), get_ui_string(self.strings, "val_pdf_protected")))
-                document.close()
-                document = None
+            document = self._open_source_document(input_file)
+            if document is None:
                 return
 
-            if self._should_use_ocr(input_file, document):
-                language = self._confirm_ocr_processing_threadsafe()
-                if language is None:
-                    document.close()
-                    document = None
-                    self.root.after_idle(lambda: self.status_var.set(get_ui_string(self.strings, "status_aborted")))
-                    return
-                if language != self.app_settings.settings.get("ocr_language"):
-                    self.app_settings.update_setting("ocr_language", language)
+            document, ocr_temp_file, ocr_used = self._prepare_pdf_document(input_file, document)
+            if document is None:
+                return
 
-                try:
-                    tessdata_dir = ensure_bundled_tessdata(self.paths.ocr_tessdata_dir, language)
-                except FileNotFoundError:
-                    document.close()
-                    document = None
-                    self.root.after_idle(
-                        lambda: show_error(self, get_ui_string(self.strings, "error"), get_ui_string(self.strings, "val_ocr_assets_missing"))
-                    )
-                    return
+            page_result = self._process_document_pages(document, options)
+            if page_result is None:
+                return
 
-                dpi = int(self.app_settings.settings.get("ocr_dpi", 300))
-                ocr_temp_file = self._create_temp_pdf_path()
-                document.close()
-                document = None
-                create_searchable_ocr_pdf_in_process(
-                    input_file,
-                    ocr_temp_file,
-                    tessdata_dir=tessdata_dir,
-                    language=language,
-                    dpi=dpi,
-                    progress_callback=self.update_ocr_progress,
-                    is_cancelled=lambda: not self.processing_active,
-                )
-                document = Document(ocr_temp_file)
-                ocr_used = True
-
-            total_matches = 0
-            total_skipped = 0
-            total_pages = len(document)
-
-            for i in range(len(document)):
-                page = document[i]
-
-                if not self.processing_active:  # Check if the process should continue
-                    document.close()
-                    document = None
-                    self._safe_unlink(ocr_temp_file)
-                    ocr_temp_file = None
-                    self.root.after_idle(lambda: self.status_var.set(get_ui_string(self.strings, "status_aborted")))
-                    self.root.after_idle(self.finalize_processing)
-                    return
-
-                # Highlight the matching data on the page
-                matches_found, skipped_matches = highlight_matching_data(
-                    page=page,
-                    search_str=search_str,
-                    only_relevant=only_relevant,
-                    filter_enabled=filter_enabled,
-                    names=names,
-                    highlight_mode=highlight_mode,
-                )
-                total_matches += matches_found
-                total_skipped += skipped_matches
-
-                # Apply watermark on each page if enabled
-                watermark_pdf_page(page, self.app_settings.settings)
-
-                # Update the progress bar and status message
-                self.update_progress(i + 1, total_pages, total_matches, total_skipped)
-
-            total_marked = total_matches - total_skipped
-
-            if self.processing_active and total_marked > 0:  # Check we finished normally and have matches
-                output_file = self._ask_output_file_threadsafe(input_file)
-                if output_file and self.processing_active:
-                    self.start_indeterminate_progress(get_ui_string(self.strings, "status_saving"))
-                    save_result = None
-                    if ocr_used:
-                        prepared_save_temp_file = self._create_temp_pdf_path()
-                        document.save(prepared_save_temp_file)
-                        document.close()
-                        document = None
-                        save_result = save_pdf_path_in_process(
-                            prepared_save_temp_file,
-                            output_file,
-                            original_pdf_path=input_file,
-                            ocr_used=True,
-                            reduce_large_outputs=self.app_settings.settings.get("ocr_reduce_large_outputs", "True") == "True",
-                            is_cancelled=lambda: not self.processing_active,
-                        )
-                        self._safe_unlink(prepared_save_temp_file)
-                        prepared_save_temp_file = None
-                    else:
-                        save_compact_pdf(document, output_file)
-                        document.close()
-                        document = None
-                    self._safe_unlink(ocr_temp_file)
-                    ocr_temp_file = None
-
-                    message = self.get_plural_string("processing_complete", total_matches).format(total_matches, total_skipped)
-                    if save_result and save_result.reduction_failed:
-                        message += "\n\n" + get_ui_string(self.strings, "ocr_reduction_failed").format(save_result.output_size / (1024 * 1024))
-                    self.root.after_idle(lambda: show_info(self, get_ui_string(self.strings, "status_done"), message))
-                elif output_file:
-                    document.close()
-                    document = None
-                    self._safe_unlink(ocr_temp_file)
-                    ocr_temp_file = None
-                    self.root.after_idle(lambda: self.status_var.set(get_ui_string(self.strings, "status_aborted")))
-                else:
-                    document.close()
-                    document = None
-                    self._safe_unlink(ocr_temp_file)
-                    ocr_temp_file = None
-                    self.root.after_idle(lambda: show_info(self, get_ui_string(self.strings, "info"), get_ui_string(self.strings, "val_no_output")))
-            elif self.processing_active and total_marked == 0:
-                document.close()
-                document = None
-                self._safe_unlink(ocr_temp_file)
-                ocr_temp_file = None
-                self.root.after_idle(lambda: show_info(self, get_ui_string(self.strings, "info"), get_ui_string(self.strings, "val_nothing")))
+            if self.processing_active:
+                total_matches, total_skipped = page_result
+                document = self._finish_processed_document(input_file, document, total_matches, total_skipped, ocr_used)
 
         except OcrCancelled:
-            self.root.after_idle(lambda: self.status_var.set(get_ui_string(self.strings, "status_aborted")))
+            self._set_status_idle("status_aborted")
         except Exception as e:
-            error_msg = str(e)
-            self.root.after_idle(lambda: show_error(self, get_ui_string(self.strings, "error"), error_msg))
+            self._show_error_idle(str(e))
         finally:
             if document is not None:
                 with suppress(Exception):
                     document.close()
             self._safe_unlink(ocr_temp_file)
-            self._safe_unlink(prepared_save_temp_file)
             self.root.after_idle(self.finalize_processing)
+
+    def _collect_processing_options(self) -> ProcessingOptions:
+        return ProcessingOptions(
+            search_str=self.search_phrase_var.get(),
+            only_relevant=bool(self.relevant_lines_var.get()),
+            filter_enabled=bool(self.enable_filter_var.get()),
+            names=[name.strip() for name in re.split(r",\s*", self.names_var.get()) if name.strip()],
+            highlight_mode=HighlightMode[self.highlight_mode_var.get()],
+        )
+
+    def _open_source_document(self, input_file: str) -> Document | None:
+        self.paths.is_valid_path(input_file)
+        document = Document(input_file)
+        if not document.is_encrypted:
+            return document
+
+        document.close()
+        self._show_error_idle(get_ui_string(self.strings, "val_pdf_protected"))
+        return None
+
+    def _prepare_pdf_document(self, input_file: str, document: Document) -> tuple[Document | None, str | None, bool]:
+        if not self._should_use_ocr(input_file, document):
+            return document, None, False
+
+        language = self._confirm_ocr_processing_threadsafe()
+        if language is None:
+            document.close()
+            self._set_status_idle("status_aborted")
+            return None, None, False
+
+        if language != self.app_settings.settings.get("ocr_language"):
+            self.app_settings.update_setting("ocr_language", language)
+
+        try:
+            tessdata_dir = ensure_bundled_tessdata(self.paths.ocr_tessdata_dir, language)
+        except FileNotFoundError:
+            document.close()
+            self._show_error_idle(get_ui_string(self.strings, "val_ocr_assets_missing"))
+            return None, None, False
+
+        return self._create_ocr_document(input_file, document, tessdata_dir, language)
+
+    def _create_ocr_document(self, input_file: str, document: Document, tessdata_dir: Path, language: str) -> tuple[Document, str, bool]:
+        ocr_temp_file = self._create_temp_pdf_path()
+        document.close()
+
+        try:
+            create_searchable_ocr_pdf_in_process(
+                input_file,
+                ocr_temp_file,
+                tessdata_dir=tessdata_dir,
+                language=language,
+                dpi=int(self.app_settings.settings.get("ocr_dpi", 300)),
+                progress_callback=self.update_ocr_progress,
+                is_cancelled=lambda: not self.processing_active,
+            )
+            return Document(ocr_temp_file), ocr_temp_file, True
+        except Exception:
+            self._safe_unlink(ocr_temp_file)
+            raise
+
+    def _process_document_pages(self, document: Document, options: ProcessingOptions) -> tuple[int, int] | None:
+        total_matches = 0
+        total_skipped = 0
+        total_pages = len(document)
+
+        for page_index in range(total_pages):
+            if not self.processing_active:
+                self._set_status_idle("status_aborted")
+                return None
+
+            matches_found, skipped_matches = highlight_matching_data(
+                page=document[page_index],
+                search_str=options.search_str,
+                only_relevant=options.only_relevant,
+                filter_enabled=options.filter_enabled,
+                names=options.names,
+                highlight_mode=options.highlight_mode,
+            )
+            total_matches += matches_found
+            total_skipped += skipped_matches
+
+            watermark_pdf_page(document[page_index], self.app_settings.settings)
+            self.update_progress(page_index + 1, total_pages, total_matches, total_skipped)
+
+        return total_matches, total_skipped
+
+    def _finish_processed_document(
+        self,
+        input_file: str,
+        document: Document,
+        total_matches: int,
+        total_skipped: int,
+        ocr_used: bool,
+    ) -> Document | None:
+        output_file = self._output_file_for_processing_result(input_file, total_matches - total_skipped)
+        if not output_file:
+            return document
+
+        save_result = self._save_processed_document(document, input_file, output_file, ocr_used)
+        self._show_processing_complete(total_matches, total_skipped, save_result)
+        return None
+
+    def _output_file_for_processing_result(self, input_file: str, total_marked: int) -> str | None:
+        if total_marked == 0:
+            self._show_info_idle(get_ui_string(self.strings, "info"), get_ui_string(self.strings, "val_nothing"))
+            return None
+
+        output_file = self._ask_output_file_threadsafe(input_file)
+        if output_file and self.processing_active:
+            return output_file
+        if output_file:
+            self._set_status_idle("status_aborted")
+        else:
+            self._show_info_idle(get_ui_string(self.strings, "info"), get_ui_string(self.strings, "val_no_output"))
+        return None
+
+    def _save_processed_document(self, document: Document, input_file: str, output_file: str, ocr_used: bool) -> OcrSaveResult | None:
+        self.start_indeterminate_progress(get_ui_string(self.strings, "status_saving"))
+        if not ocr_used:
+            save_compact_pdf(document, output_file)
+            document.close()
+            return None
+
+        prepared_save_temp_file = self._create_temp_pdf_path()
+        try:
+            document.save(prepared_save_temp_file)
+            document.close()
+            return save_pdf_path_in_process(
+                prepared_save_temp_file,
+                output_file,
+                original_pdf_path=input_file,
+                ocr_used=True,
+                reduce_large_outputs=self.app_settings.settings.get("ocr_reduce_large_outputs", "True") == "True",
+                is_cancelled=lambda: not self.processing_active,
+            )
+        finally:
+            self._safe_unlink(prepared_save_temp_file)
+
+    def _show_processing_complete(self, total_matches: int, total_skipped: int, save_result: OcrSaveResult | None) -> None:
+        message = self.get_plural_string("processing_complete", total_matches).format(total_matches, total_skipped)
+        if save_result and save_result.reduction_failed:
+            message += "\n\n" + get_ui_string(self.strings, "ocr_reduction_failed").format(save_result.output_size / (1024 * 1024))
+        self._show_info_idle(get_ui_string(self.strings, "status_done"), message)
+
+    def _set_status_idle(self, status_key: str) -> None:
+        self.root.after_idle(lambda: self.status_var.set(get_ui_string(self.strings, status_key)))
+
+    def _show_error_idle(self, message: str) -> None:
+        self.root.after_idle(lambda: show_error(self, get_ui_string(self.strings, "error"), message))
+
+    def _show_info_idle(self, title: str, message: str) -> None:
+        self.root.after_idle(lambda: show_info(self, title, message))
 
     def _should_use_ocr(self, input_file: str, document: Document) -> bool:
         if self.app_settings.settings.get("ocr_enabled", "True") != "True":
