@@ -57,7 +57,7 @@ You can also browse all versions on the [releases page](https://github.com/jonal
 1. Click **Browse** and choose a heat-sheet PDF.
 2. Enter a club name or other search term.
 3. Leave **Mark only relevant lines** enabled when you only want rows that match the expected heat-sheet layout.
-4. Click **Start** and save the generated highlighted PDF.
+4. Click **Start** and save the generated highlighted PDF. If the PDF is scanned, confirm the OCR prompt and choose the OCR language.
 
 The app saves a new PDF with a `_highlighted` suffix at the location you choose.
 
@@ -69,6 +69,7 @@ The app saves a new PDF with a `_highlighted` suffix at the location you choose.
   - **Differential Colors:** highlight matching names in blue and other matches in yellow
 - Import names from CSV or text files. Comma-separated and newline-separated lists are parsed automatically.
 - Preview and place watermarks with preset or custom colors, size controls, and nudgeable positioning
+- Detect scanned PDFs and run bundled German or English OCR before highlighting
 - Use system, light, or dark theme. System mode follows Windows appearance changes.
 - Track processing progress while the PDF is being generated
 - Keep language, search, filter, watermark, and window preferences between sessions
@@ -127,3 +128,5 @@ Development setup, translations, builds, releases, checksum verification, and De
 ## License
 
 This project is licensed under the GNU General Public License v3.0. See [LICENSE](LICENSE).
+
+Bundled Tesseract `tessdata_best` OCR language files for German and English are distributed under Apache-2.0; see [assets/ocr](assets/ocr).

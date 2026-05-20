@@ -97,3 +97,7 @@ def test_get_bundle_dir_for_cx_freeze(tmp_path):
     executable = tmp_path / "installed" / "heat_sheet_pdf_highlighter.exe"
 
     assert _get_bundle_dir(frozen=True, meipass=None, executable=executable) == executable.parent
+
+
+def test_ocr_tessdata_path_lives_under_assets():
+    assert Paths.ocr_tessdata_dir == Paths.bundle_dir / "assets" / "ocr" / "tessdata"

@@ -2,9 +2,11 @@
 Main application entry point and coordination
 """
 
+import multiprocessing
 import os
 import time
 from tkinter import Tk
+
 from .gui.main_window import PDFHighlighterApp
 
 
@@ -229,4 +231,5 @@ def main():
 
 
 if __name__ == "__main__":
+    multiprocessing.freeze_support()
     main()

@@ -25,6 +25,10 @@ import sys
 import polib
 
 
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+
+
 # Note: batch parsing removed. The script now accepts --po-file and does not
 # depend on reading a batch file to determine the PO filename.
 

@@ -51,6 +51,33 @@ def build_strings(_: Callable[[str], str]) -> Dict[str, str]:
         "title": _("Heat sheet highlighter"),
     }
 
+    # ---- OCR ----
+    ocr_strings = {
+        "ocr_prompt_title": _("OCR Required"),
+        "ocr_prompt": _(
+            "This PDF looks like a scanned document, so its text is only an image.\n"
+            "To find and highlight rows, the app must first read the image text with OCR.\n"
+            "Without OCR, this document cannot be highlighted.\n"
+            "OCR can take a while and may miss or misread some words."
+        ),
+        "ocr_prompt_more_info_show": _("▶ More info"),
+        "ocr_prompt_more_info_hide": _("▼ Less info"),
+        "ocr_prompt_details": _(
+            "OCR means Optical Character Recognition. It adds a searchable text layer to scanned pages.\n"
+            "The original scan stays visible, then the app searches the added text and places highlights.\n"
+            "Results depend on scan quality, so check the output."
+        ),
+        "ocr_language_label": _("OCR language:"),
+        "ocr_language_deu": _("German (recommended)"),
+        "ocr_language_eng": _("English"),
+        "ocr_language_deu_eng": _("German + English"),
+        "ocr_reduction_failed": _("OCR output was large and reduction failed. Saved the normal OCR output ({0:.1f} MB)."),
+        "status_ocr_checking": _("Status: Checking PDF text..."),
+        "status_ocr_needed": _("Status: PDF imported. OCR will be used when processing."),
+        "status_ocr_processing": _("Status: Running OCR... {0}/{1} pages processed."),
+        "val_ocr_assets_missing": _("Bundled OCR language data is missing. Please reinstall the app."),
+    }
+
     # ---- Generic UI actions/buttons ----
     action_strings = {
         "btn_abort": _("Abort"),
@@ -112,7 +139,7 @@ def build_strings(_: Callable[[str], str]) -> Dict[str, str]:
         "status_aborted": _("Status: Aborted by user."),
         "status_aborted_processing": _("Status: Processing aborted."),
         "status_done": _("Finished"),
-        "status_saving": _("Status: Saving PDF.. Please wait..."),
+        "status_saving": _("Status: Saving and compacting PDF... Please wait..."),
     }
 
     # ---- Validation and user-facing errors ----
@@ -179,6 +206,7 @@ def build_strings(_: Callable[[str], str]) -> Dict[str, str]:
     # Merge (order preserved; keys sorted within each dict)
     strings = (
         general_strings
+        | ocr_strings
         | action_strings
         | file_strings
         | nav_strings

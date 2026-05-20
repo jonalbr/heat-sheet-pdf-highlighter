@@ -46,6 +46,8 @@ uv run python build_windows_installer.py
 - Keep visible GUI strings centralized in `src/gui/ui_strings.py`.
 - Use `AppSettings` for persisted settings and keep existing settings-key conventions intact.
 - Do not update Tkinter widgets directly from worker threads. Use the existing Tk scheduling patterns instead.
+- OCR is CPU-heavy and runs in spawned worker processes. Keep Tk dialogs and widget updates on the main thread, keep OCR/save worker entry points top-level and picklable for Windows spawn, and keep the worker paths free of GUI imports.
+- see [docs/OCR_BENCHMARKS.md](docs/OCR_BENCHMARKS.md) for current OCR timing and memory notes.
 - Keep changes small and explicit, especially around updater, installer, release, and localization behavior.
 
 Where changes usually belong:
@@ -140,6 +142,8 @@ Expected build outputs:
 - `heat_sheet_pdf_highlighter_installer.exe.sha256`
 
 Optional code-signing settings can also be supplied through environment variables, but they are not required for a local build.
+
+The frozen app bundles `assets/ocr/tessdata/deu.traineddata` and `eng.traineddata` through the existing cx_Freeze asset include. `multiprocessing.freeze_support()` is called from the app entrypoints so the OCR worker process can start correctly from the frozen Windows executable installed by Inno Setup.
 
 ## Release helper
 

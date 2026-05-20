@@ -58,6 +58,11 @@ class AppSettings:
             "watermark_position": "top",
             "watermark_x_ratio": WATERMARK_DEFAULT_X_RATIO,
             "watermark_y_ratio": WATERMARK_DEFAULT_Y_RATIO,
+            "ocr_enabled": "True",
+            "ocr_language": "deu",
+            "ocr_dpi": 300,
+            "ocr_reduce_large_outputs": "True",
+            "ocr_settings_version": 3,
         }
         self.settings: Dict = self.load_settings()
         # Apply optional environment override for language (e.g., forced 'en' in screenshot mode)
@@ -121,6 +126,11 @@ class AppSettings:
             "watermark_position": lambda v: v if v in ["top", "bottom", "custom"] else "top",
             "watermark_x_ratio": lambda v: float(v) if _is_valid_ratio(v) else WATERMARK_DEFAULT_X_RATIO,
             "watermark_y_ratio": lambda v: float(v) if _is_valid_ratio(v) else WATERMARK_DEFAULT_Y_RATIO,
+            "ocr_enabled": lambda v: v if v in ["True", "False"] else "True",
+            "ocr_language": lambda v: v if v in ["deu", "eng", "deu+eng"] else "deu",
+            "ocr_dpi": lambda v: int(v) if str(v).isdigit() and 72 <= int(v) <= 600 else 300,
+            "ocr_reduce_large_outputs": lambda v: v if v in ["True", "False"] else "True",
+            "ocr_settings_version": lambda v: 3,
         }
         return validators[key](value) if key in validators else None
 
@@ -134,6 +144,7 @@ class AppSettings:
                 settings_dict["update_channel"] = "rc" if beta_val == "True" else "stable"
             elif isinstance(beta_val, bool):
                 settings_dict["update_channel"] = "rc" if beta_val else "stable"
+        self._migrate_ocr_defaults(settings_dict)
         validated = {}
 
         # Validate known keys first
@@ -148,3 +159,11 @@ class AppSettings:
         self.settings = validated
         self.save_settings()
         return validated  # Ensure a Dict is always returned
+
+    def _migrate_ocr_defaults(self, settings_dict: Dict) -> None:
+        if settings_dict.get("ocr_settings_version") == 3:
+            return
+        if settings_dict.get("ocr_language") == "deu+eng":
+            settings_dict["ocr_language"] = "deu"
+        settings_dict["ocr_reduce_large_outputs"] = "True"
+        settings_dict["ocr_settings_version"] = 3

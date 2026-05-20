@@ -17,6 +17,7 @@ modules using the logging subsystem have a handler available.
 """
 
 import argparse
+import multiprocessing
 import os
 import sys
 
@@ -25,6 +26,8 @@ from src.utils.logging import configure_basic_logging, parse_log_level
 
 
 if __name__ == "__main__":
+    multiprocessing.freeze_support()
+
     # Pass CLI args (except the program name)
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--log-level", dest="log_level", default=None, help="Logging level name or numeric value")

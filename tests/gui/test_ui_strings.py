@@ -21,6 +21,28 @@ def test_download_starting_status_string_exists():
     assert get_ui_string(s, "upd_starting") == "Starting download..."
 
 
+def test_saving_status_mentions_compacting():
+    s = build_strings(lambda x: x)
+    assert get_ui_string(s, "status_saving") == "Status: Saving and compacting PDF... Please wait..."
+
+
+def test_ocr_strings_exist():
+    s = build_strings(lambda x: x)
+    assert get_ui_string(s, "ocr_prompt_title") == "OCR Required"
+    assert "scanned" in get_ui_string(s, "ocr_prompt")
+    assert "cannot be highlighted" in get_ui_string(s, "ocr_prompt")
+    assert get_ui_string(s, "ocr_prompt_more_info_show") == "▶ More info"
+    assert get_ui_string(s, "ocr_prompt_more_info_hide") == "▼ Less info"
+    assert "Optical Character Recognition" in get_ui_string(s, "ocr_prompt_details")
+    assert "if names or clubs are important" not in get_ui_string(s, "ocr_prompt_details")
+    assert get_ui_string(s, "ocr_language_label") == "OCR language:"
+    assert get_ui_string(s, "ocr_language_deu") == "German (recommended)"
+    assert get_ui_string(s, "ocr_language_eng") == "English"
+    assert get_ui_string(s, "ocr_language_deu_eng") == "German + English"
+    assert "{0}/{1}" in get_ui_string(s, "status_ocr_processing")
+    assert "pages processed" in get_ui_string(s, "status_ocr_processing")
+
+
 def test_generic_dialog_button_strings_exist():
     s = build_strings(lambda x: x)
 
@@ -47,6 +69,16 @@ def test_generic_dialog_button_strings_are_translated_in_german_catalog():
         "btn_retry": "Erneut versuchen",
         "btn_cancel": "Abbrechen",
     }
+
+
+def test_ocr_strings_are_translated_in_german_catalog():
+    gettext_de, _ = setup_translation("de")
+    s = build_strings(gettext_de)
+
+    assert "Ohne OCR" in get_ui_string(s, "ocr_prompt")
+    assert get_ui_string(s, "ocr_prompt_more_info_show") == "▶ Mehr Infos"
+    assert get_ui_string(s, "ocr_prompt_more_info_hide") == "▼ Weniger Infos"
+    assert "Texterkennung" in get_ui_string(s, "ocr_prompt_details")
 
 
 def test_get_ui_string_with_default():

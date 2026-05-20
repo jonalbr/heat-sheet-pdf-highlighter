@@ -24,7 +24,17 @@ def test_defaults_loaded_when_file_missing(settings_file):
         "highlight_mode",
         "theme_mode",
         "language",
+        "ocr_enabled",
+        "ocr_language",
+        "ocr_dpi",
+        "ocr_reduce_large_outputs",
+        "ocr_settings_version",
     }
+    assert app.settings["ocr_enabled"] == "True"
+    assert app.settings["ocr_language"] == "deu"
+    assert app.settings["ocr_dpi"] == 300
+    assert app.settings["ocr_reduce_large_outputs"] == "True"
+    assert app.settings["ocr_settings_version"] == 3
 
 
 def test_save_and_reload_persists_changes(settings_file):
@@ -112,6 +122,11 @@ def test_validator_coercions(settings_file):
             "watermark_position": "left",
             "watermark_x_ratio": 2,
             "watermark_y_ratio": -1,
+            "ocr_enabled": "maybe",
+            "ocr_language": "invalid",
+            "ocr_dpi": 20,
+            "ocr_reduce_large_outputs": "maybe",
+            "ocr_settings_version": "bad",
         }
     )
     app.validate_settings()
@@ -134,6 +149,33 @@ def test_validator_coercions(settings_file):
     assert s["watermark_position"] == "top"
     assert s["watermark_x_ratio"] == 0.5
     assert s["watermark_y_ratio"] == 0.05
+    assert s["ocr_enabled"] == "True"
+    assert s["ocr_language"] == "deu"
+    assert s["ocr_dpi"] == 300
+    assert s["ocr_reduce_large_outputs"] == "True"
+    assert s["ocr_settings_version"] == 3
+
+
+def test_migration_from_initial_ocr_defaults(settings_file):
+    settings_file.write_text(
+        json.dumps(
+            {
+                "version": VERSION_STR,
+                "ocr_language": "deu+eng",
+                "ocr_reduce_large_outputs": "True",
+            }
+        )
+    )
+
+    app = AppSettings(settings_file)
+
+    assert app.settings["ocr_language"] == "deu"
+    assert app.settings["ocr_reduce_large_outputs"] == "True"
+    assert app.settings["ocr_settings_version"] == 3
+
+    app.update_setting("ocr_language", "deu+eng")
+    app2 = AppSettings(settings_file)
+    assert app2.settings["ocr_language"] == "deu+eng"
 
 
 def test_custom_watermark_position_persists(settings_file):
