@@ -1,6 +1,6 @@
 [project]
 name = "heat-sheet-pdf-highlighter"
-version = "2.0.0"
+version = "2.1.0"
 description = "Tkinter desktop application for highlighting heat-sheet PDFs."
 readme = "README.md"
 requires-python = ">=3.14,<3.15"
