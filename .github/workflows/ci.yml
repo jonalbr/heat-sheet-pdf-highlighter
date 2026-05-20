@@ -237,20 +237,73 @@ jobs:
             'Other'         = @()
           }
 
-          $emoji = @{
-            'Features'     = '✨'
-            'Fixes'        = '🐛'
-            'Performance'  = '🚀'
-            'Docs'         = '📝'
-            'Refactor'     = '♻️'
-            'Tests'        = '✅'
-            'Build'        = '📦'
-            'CI'           = '🔧'
-            'Style'        = '🎨'
-            'Dependencies' = '⬆️'
-            'Reverts'      = '🔙'
-            'Other'        = '•'
+          function Convert-ToHighlight {
+            param([string]$Text)
+
+            $clean = $Text.Trim().TrimEnd('.')
+            if ([string]::IsNullOrWhiteSpace($clean)) { return $null }
+
+            $lower = $clean.ToLowerInvariant()
+            if ($lower -match '\bdark\b' -and $lower -match '\blight\b' -and $lower -match '\bmode\b') {
+              return 'Dark and light mode are now supported.'
+            }
+            if ($lower -match '\btitle bar\b' -and $lower -match '\btheme\b') {
+              return 'Windows title bars now follow the selected app theme.'
+            }
+            if ($lower -match '\bwatermark' -and $lower -match '(custom|position|placement|color)') {
+              return 'Watermarks now support custom colors and flexible placement.'
+            }
+
+            $clean = $clean -replace '^(add|adds|added|enhance|enhances|enhanced|implement|implements|implemented|refine|refines|refined|update|updates|updated)\s+', ''
+            $clean = $clean.Trim()
+            if ([string]::IsNullOrWhiteSpace($clean)) { return $null }
+
+            if ($clean.Length -eq 1) {
+              return $clean.ToUpperInvariant() + '.'
+            }
+            return $clean.Substring(0, 1).ToUpperInvariant() + $clean.Substring(1) + '.'
           }
+
+          function Test-InternalReleaseNote {
+            param(
+              [string]$Category,
+              [string]$LowerText
+            )
+
+            if (@('Features', 'Fixes', 'Performance') -notcontains $Category) { return $true }
+
+            $internalPatterns = @(
+              '\bci\b',
+              '\bworkflow\b',
+              '\brelease process\b',
+              '\bversion\b',
+              '\breadme\b',
+              '\bfunding\b',
+              '\bscreenshot\b',
+              '\bbundle directory\b',
+              '\btests?\b',
+              '\bbuild\b',
+              '\blocalization scripts?\b',
+              '\bdevtools?\b',
+              '\bdependency\b',
+              '\bdependencies\b',
+              '\bbump\b',
+              '\buv\b',
+              '\bpython 3\.14\b',
+              '\bcache modules?\b',
+              '\bupdater\.py\b',
+              '\bstatus string\b'
+            )
+            foreach ($pattern in $internalPatterns) {
+              if ($LowerText -match $pattern) { return $true }
+            }
+
+            return $false
+          }
+
+          $highlights = @()
+          $highlightSeen = @{}
+          $detailSeen = @{}
 
           foreach ($c in $rawCommits) {
             $c = $c.Trim()
@@ -278,13 +331,48 @@ jobs:
             elseif ($lower -match '^(revert)') { $target = 'Reverts' }
             elseif ($lower -match '(dependabot|^deps?:|\bbump\b)') { $target = 'Dependencies' }
 
+            if ($target -in @('Features', 'Fixes')) {
+              if ($lower -match '\bci\b|\bworkflow\b') { $target = 'CI' }
+              elseif ($lower -match '\breadme\b|\bcontributing\b|\bscreenshot\b') { $target = 'Docs' }
+              elseif ($lower -match '\btests?\b') { $target = 'Tests' }
+              elseif ($lower -match '\brelease process\b|\bversion\b|\bbuild\b|\bbundle directory\b|\buv\b|\bpython 3\.14\b') { $target = 'Build' }
+            }
+
             $pretty = $c -replace '^[a-zA-Z]+(\(.+?\))?!?:\s*',''
             $pretty = $pretty.TrimEnd('.')
-            $categories[$target] += "- $pretty"
+
+            $detailKey = "$target|$pretty".ToLowerInvariant()
+            if (-not $detailSeen.ContainsKey($detailKey)) {
+              $categories[$target] += "- $pretty"
+              $detailSeen[$detailKey] = $true
+            }
+
+            if (-not (Test-InternalReleaseNote -Category $target -LowerText $lower)) {
+              $highlight = Convert-ToHighlight -Text $pretty
+              if (-not [string]::IsNullOrWhiteSpace($highlight)) {
+                $highlightKey = $highlight.ToLowerInvariant()
+                if (-not $highlightSeen.ContainsKey($highlightKey)) {
+                  $highlights += "- $highlight"
+                  $highlightSeen[$highlightKey] = $true
+                }
+              }
+            }
           }
 
           $lines = @()
-          $lines += "What's Changed"
+          $lines += "# What's New"
+          $lines += ""
+          $lines += "## Highlights"
+          $lines += ""
+
+          if ($highlights.Count -gt 0) {
+            $lines += @($highlights | Select-Object -First 5)
+          } else {
+            $lines += "- This release focuses on maintenance and reliability improvements."
+          }
+
+          $lines += ""
+          $lines += "## Detailed Changes"
           $lines += ""
 
           $addedAny = $false
@@ -292,7 +380,7 @@ jobs:
             $items = $categories[$k]
             if ($items.Count -gt 0) {
               $addedAny = $true
-              $lines += "${($emoji[$k])} $k"
+              $lines += "### $k"
               $lines += $items
               $lines += ""
             }
@@ -319,13 +407,18 @@ jobs:
           $original = Get-Content $outPath -Raw
           if ([string]::IsNullOrWhiteSpace($original)) { exit 0 }
 
-          $lines = $original -split "`r`n"
+          $lines = $original -split "\r?\n"
           $footer = $lines[-1]
 
           $system = @(
-            'You are a precise release-notes editor. Improve clarity and flow without inventing changes. Keep it concise.',
-            '- Only rewrite the "What''s Changed" section lines.',
-            '- Do NOT add or remove items beyond rewriting text and grouping.',
+            'You are a precise release-notes editor for a desktop app used by non-developers. Improve clarity and flow without inventing changes.',
+            '- Preserve this Markdown structure: # What''s New, ## Highlights, ## Detailed Changes, and the existing category headings.',
+            '- Distill Highlights from the full notes, not only from the existing Highlights bullets.',
+            '- Keep Highlights short, plain-language, and user-facing: include changes a normal app user would notice or benefit from.',
+            '- Good Highlight examples: OCR for scanned/image-only PDFs, dark mode, faster PDF preview, better watermark placement, safer update downloads, clearer error messages.',
+            '- Bad Highlight examples: added tests, changed CI, improved release flow, bumped dependencies, refactored modules, updated README, changed build tooling.',
+            '- You may promote user-facing items from Detailed Changes into Highlights and merge obviously redundant bullets.',
+            '- Keep developer/process details under Detailed Changes.',
             '- Do NOT include the final line (Full Changelog) in your output.',
             '- Do NOT wrap the output in code fences or blocks.',
             '- Use short, parallel, present-tense bullet points.',
@@ -333,7 +426,7 @@ jobs:
           ) -join "`n"
 
           $user = @(
-            "Rewrite the following What's Changed bullets for clarity and concision. Keep the existing categories and bullets, but you may merge obviously redundant lines. Do not add new items. Output only Markdown for the section, without a trailing Full Changelog line.",
+            "Rewrite the following release notes for clarity and concision. Make Highlights a short user-oriented summary of what actually changed for app users, and keep technical/internal items in Detailed Changes. Output only Markdown for the release notes without a trailing Full Changelog line.",
             '',
             $original
           ) -join "`n"
@@ -364,6 +457,32 @@ jobs:
 
             $clean = [regex]::Replace($content, '(?im)^\s*Full Changelog:.*$', '')
             $clean = [regex]::Replace($clean, '(?im)^\s*```[a-zA-Z0-9_-]*\s*$', '')
+            if ($clean -notmatch '(?m)^# What''s New\s*$' -or $clean -notmatch '(?m)^## Highlights\s*$' -or $clean -notmatch '(?m)^## Detailed Changes\s*$') {
+              throw 'Model response did not preserve the required release-note headings'
+            }
+
+            $highlightMatch = [regex]::Match($clean, '(?ms)^## Highlights\s*(.*?)^## Detailed Changes\s*')
+            if (-not $highlightMatch.Success) {
+              throw 'Model response did not preserve the highlight section'
+            }
+            $highlightText = $highlightMatch.Groups[1].Value
+            $internalHighlightPatterns = @(
+              '\bci\b',
+              '\bworkflow\b',
+              '\brelease process\b',
+              '\btests?\b',
+              '\bbuild tooling\b',
+              '\bdependencies\b',
+              '\bbumped?\b',
+              '\brefactor(?:ed|ing)?\b',
+              '\breadme\b'
+            )
+            foreach ($pattern in $internalHighlightPatterns) {
+              if ($highlightText -match $pattern) {
+                throw "Model response included an internal-only highlight matching '$pattern'"
+              }
+            }
+
             $final = $clean.TrimEnd() + "`r`n`r`n" + $footer
             $final | Out-File -FilePath $outPath -Encoding utf8 -NoNewline
           }
