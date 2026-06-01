@@ -14,7 +14,7 @@ dependencies = [
     "pillow==12.2.0",
     "pymupdf==1.27.2.3",
     "requests==2.34.2",
-    "tkinterweb==4.25.2",
+    "tkinterweb==4.25.3",
 ]
 
 [dependency-groups]
@@ -23,12 +23,12 @@ dev = [
     { include-group = "build" },
 ]
 test = [
-    "coverage==7.14.0",
+    "coverage==7.14.1",
     "pytest==9.0.3",
     "pytest-cov==7.1.0",
 ]
 lint = [
-    "ruff==0.15.13",
+    "ruff==0.15.15",
 ]
 build = [
     "cx_Freeze==8.6.4",
