@@ -33,7 +33,7 @@ lint = [
 build = [
     "cx_Freeze==8.6.4",
     "polib==1.2.0",
-    "pywin32==311; sys_platform == 'win32'",
+    "pywin32==312; sys_platform == 'win32'",
 ]
 
 [tool.uv]
