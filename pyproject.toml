@@ -24,11 +24,11 @@ dev = [
 ]
 test = [
     "coverage==7.14.1",
-    "pytest==9.0.3",
+    "pytest==9.1.0",
     "pytest-cov==7.1.0",
 ]
 lint = [
-    "ruff==0.15.15",
+    "ruff==0.15.17",
 ]
 build = [
     "cx_Freeze==8.6.4",
