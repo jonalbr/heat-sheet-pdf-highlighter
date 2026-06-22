@@ -23,12 +23,12 @@ dev = [
     { include-group = "build" },
 ]
 test = [
-    "coverage==7.14.1",
-    "pytest==9.0.3",
+    "coverage==7.14.2",
+    "pytest==9.1.1",
     "pytest-cov==7.1.0",
 ]
 lint = [
-    "ruff==0.15.15",
+    "ruff==0.15.18",
 ]
 build = [
     "cx_Freeze==8.6.4",
