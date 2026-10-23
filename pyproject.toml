@@ -11,7 +11,7 @@ authors = [
 ]
 dependencies = [
     "markdown2==2.5.5",
-    "pillow==12.3.0",
+    "pillow==13.0.0",
     "pymupdf==1.28.0",
     "requests==2.34.2",
     "tkinterweb==4.25.3",
