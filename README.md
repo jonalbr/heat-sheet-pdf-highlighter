@@ -65,8 +65,8 @@ The app saves a new PDF with a `_highlighted` suffix at the location you choose.
 
 - Highlight rows by club name or custom search term
 - Limit highlighting to specific swimmers and choose between:
-  - **Names Only:** highlight matching names in blue
-  - **Differential Colors:** highlight matching names in blue and other matches in yellow
+  - **Names Only:** highlight rows containing matching names in yellow; leave other rows unmarked
+  - **Differential Colors:** highlight rows containing matching names in blue and other matching rows in yellow
 - Import names from CSV or text files. Comma-separated and newline-separated lists are parsed automatically.
 - Preview and place watermarks with preset or custom colors, size controls, and nudgeable positioning
 - Detect scanned PDFs and run bundled German or English OCR before highlighting
@@ -100,16 +100,15 @@ Watermark dialog:
 
 ## Run from source
 
-To run from source, install Python 3.14 and [`uv`](https://docs.astral.sh/uv/), then:
+To run from source, install [`uv`](https://docs.astral.sh/uv/), then:
 
 ```powershell
 git clone https://github.com/jonalbr/heat-sheet-pdf-highlighter.git
 cd heat-sheet-pdf-highlighter
-uv sync --all-groups
+uv python install
+uv sync --locked --all-groups
 uv run python main.py
 ```
-
-This project requires Python `>=3.14,<3.15`.
 
 ## Support the Project
 

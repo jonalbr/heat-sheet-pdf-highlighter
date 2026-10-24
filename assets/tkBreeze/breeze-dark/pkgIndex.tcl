@@ -7,7 +7,7 @@
 # use tile::availableThemes and tile::setTheme 
 
 if {![file isdirectory [file join $dir breeze-dark]]} { return }
-if {![package vsatisfies [package provide Tcl] 8.6]} { return }
+if {![package vsatisfies [package provide Tcl] 8.6 9.0]} { return }
 
 package ifneeded ttk::theme::breeze-dark 0.1 \
     [list source [file join $dir breeze-dark.tcl]]

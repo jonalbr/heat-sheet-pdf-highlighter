@@ -5,7 +5,8 @@
 #  Copyright (c) 2018 Maximilian Lika
 #  Copyright (c) 2020 Bartek thindil Jasicki
 
-package require Tk 8.6.0
+# Tcl requirements without a range exclude the next major version.
+package require Tk 8.6.0 9.0
 
 namespace eval ttk::theme::breeze {
 
