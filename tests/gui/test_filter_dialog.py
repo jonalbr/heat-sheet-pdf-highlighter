@@ -11,24 +11,37 @@ from PIL import Image
 from src.config.settings import AppSettings
 from src.core.marking_preview import PreviewResult
 from src.gui import filter_dialog
+from src.gui.marking_preview import MarkingPreview
 from src.gui.ui_strings import build_strings
 from src.utils.localization import setup_translation
 
 
-class Preview:
-    def __init__(self, *args):
+class Preview(MarkingPreview):
+    """Use the real controller's cache/debounce/lifecycle without starting a process."""
+
+    def __init__(self, scheduler):
+        super().__init__(scheduler)
         self.requests = []
         self.immediate = []
-        self.on_result = args[1]
-        self.on_error = args[2]
-        self.closed = False
+        self.delays = []
 
-    def request(self, request, *, immediate=False):
+    @property
+    def closed(self):
+        return self._closed
+
+    def warm(self):
+        pass
+
+    def request(self, request, *, immediate=False, delay_ms=200):
         self.requests.append(request)
         self.immediate.append(immediate)
+        self.delays.append(delay_ms)
+        super().request(request, immediate=immediate, delay_ms=delay_ms)
 
-    def close(self):
-        self.closed = True
+    def emit(self, result):
+        self.last_request, self.last_result = self.requests[-1], result
+        if self.on_result:
+            self.on_result(result)
 
 
 @pytest.fixture
@@ -56,6 +69,7 @@ def dialog(tmp_path, monkeypatch):
     instance.open()
     yield instance
     instance.close()
+    app.marking_preview.close()
     root.destroy()
 
 
@@ -92,7 +106,8 @@ def test_cancel_discards_every_edit_and_closes_worker(dialog):
     dialog.mode.set("named_matches")
     dialog.names_entry.insert("end", ", Bob")
     dialog.close()
-    assert worker.closed
+    assert not worker.closed
+    assert worker.on_result is None
     assert dialog.app.app_settings.settings_file.read_bytes() == before
     assert dialog.app.names_var.get() == "Alice"
     assert dialog.app.marking_mode_var.get() == "distinguish_names"
@@ -129,7 +144,9 @@ def test_language_refresh_preserves_uncommitted_draft(dialog):
     dialog.app.strings = build_strings(gettext_de)
     dialog.refresh_ui_strings()
     dialog.window.withdraw()
-    assert worker.closed
+    assert not worker.closed
+    assert dialog._preview is worker
+    assert worker.on_result is not None
     assert dialog.colors["highlight_color_names"].get() == "#AABBCC"
     assert dialog.names_entry.get("1.0", "end-1c") == "Alice, Bob"
     assert dialog.app.names_var.get() == "Alice"
@@ -146,7 +163,8 @@ def test_cancel_color_picker_leaves_selection(dialog, monkeypatch):
 def test_external_window_destroy_releases_process_and_traces(dialog):
     worker = dialog._preview
     dialog.window.destroy()
-    assert worker.closed
+    assert not worker.closed
+    assert worker.on_result is None
     assert dialog.window is None
     assert dialog._external_traces == []
 
@@ -195,8 +213,25 @@ def preview_result(width=560, height=150, *, no_named_matches=False):
     return PreviewResult(png.getvalue(), 1, no_named_matches=no_named_matches)
 
 
-def test_dialog_waits_for_first_image_and_requests_it_without_typing_delay(dialog):
-    assert dialog.window.state() == "withdrawn"
+@pytest.mark.parametrize("language, caption", [
+    ("en", "Example: Select a PDF to see a live preview"),
+    ("de", "Beispiel: PDF auswählen, um eine Live-Vorschau zu sehen"),
+])
+def test_example_caption_invites_pdf_selection_only_when_no_source_is_selected(dialog, language, caption):
+    from dataclasses import replace
+
+    gettext, _ = setup_translation(language)
+    dialog.app.strings = build_strings(gettext)
+    dialog._preview.emit(replace(preview_result(), page_number=None, state="example"))
+    assert dialog.preview_label.cget("text") == caption
+    dialog.app.input_file_full_path = "unreadable.pdf"
+    dialog._preview.emit(replace(preview_result(), page_number=None, state="unavailable"))
+    assert dialog.preview_label.cget("text") == dialog._text("flt_example")
+    assert dialog.preview_note.cget("text") == dialog._text("flt_preview_unavailable")
+
+
+def test_dialog_opens_before_first_image_and_requests_it_without_typing_delay(dialog):
+    assert dialog.window.state() == "normal"
     assert dialog._preview.immediate == [True]
     dialog._preview.on_result(preview_result())
     dialog.window.update_idletasks()
@@ -204,7 +239,7 @@ def test_dialog_waits_for_first_image_and_requests_it_without_typing_delay(dialo
     assert dialog.preview_image.cget("image")
     assert dialog.window.grab_current() is dialog.window
     dialog.colors["highlight_color_default"].set("#123456")
-    assert dialog._preview.immediate[-1] is False
+    assert dialog._preview.immediate[-1] is True
 
 
 def test_preview_image_and_note_changes_do_not_resize_dialog(dialog):
@@ -223,9 +258,11 @@ def test_preview_image_and_note_changes_do_not_resize_dialog(dialog):
 
 
 def test_reopen_reuses_matching_preview_before_new_worker_result(dialog):
-    dialog._show_preview(preview_result())
+    dialog._preview.emit(preview_result())
+    worker = dialog._preview
     dialog.close()
     dialog.open()
+    assert dialog._preview is worker
     assert dialog.window.state() == "normal"
     assert dialog.preview_image.cget("image")
     assert dialog._preview.requests  # Invalidate any stale in-flight generation.
@@ -237,12 +274,13 @@ def test_reopen_invalidates_cached_image_when_source_changes(dialog, tmp_path):
     dialog.close()
     dialog.app.input_file_full_path = str(path)
     dialog.open()
-    dialog._show_preview(preview_result())
+    dialog._preview.emit(preview_result())
     dialog.close()
     path.write_bytes(b"different document")
     dialog.open()
-    assert dialog.window.state() == "withdrawn"
+    assert dialog.window.state() == "normal"
     assert not dialog.preview_image.cget("image")
+    assert dialog.preview_image.cget("text") == ""
 
 
 def test_preview_failure_reveals_usable_dialog_and_late_result_after_close_is_ignored(dialog):
@@ -250,6 +288,70 @@ def test_preview_failure_reveals_usable_dialog_and_late_result_after_close_is_ig
     preview.on_error()
     assert dialog.window.state() == "normal"
     assert dialog.preview_note.cget("text") == dialog._text("flt_preview_unavailable")
+    callback = preview.on_result
     dialog.close()
-    preview.on_result(preview_result())
+    callback(preview_result())
     assert dialog.window is None
+
+
+
+def test_two_excerpts_and_progress_do_not_change_window_geometry(dialog):
+    from src.core.marking_preview import PreviewSnippet
+
+    dialog.window.update_idletasks()
+    size = (dialog.window.winfo_width(), dialog.window.winfo_height())
+    png = preview_result(560, 40).png
+    split = PreviewResult(png, 2, snippets=(PreviewSnippet(png, 2, "named"), PreviewSnippet(png, 17, "general")))
+    dialog._preview.emit(split)
+    dialog.window.update_idletasks()
+    assert (dialog.window.winfo_width(), dialog.window.winfo_height()) == size
+    assert "2" in dialog.preview_panels[0][1].cget("text")
+    assert "17" in dialog.preview_panels[1][1].cget("text")
+    assert dialog.preview_panels[1][0].winfo_manager() == "place"
+    dialog._preview.emit(preview_result())
+    dialog.window.update_idletasks()
+    assert not dialog.preview_panels[1][0].winfo_manager()
+    assert (dialog.window.winfo_width(), dialog.window.winfo_height()) == size
+
+
+def test_search_names_and_colour_use_their_own_debounce_policy(dialog):
+    dialog.app.search_phrase_var.set("NEW CLUB")
+    assert dialog._preview.delays[-1] == 300
+    assert not dialog._preview.immediate[-1]
+    dialog.names_entry.insert("end", ", Bob")
+    dialog._names_changed()
+    assert dialog._preview.delays[-1] == 200
+    assert not dialog._preview.immediate[-1]
+    dialog.colors["highlight_color_default"].set("#123456")
+    assert dialog._preview.immediate[-1]
+    dialog.mode.set("named_matches")
+    assert dialog._preview.immediate[-1]
+
+
+def test_preparation_and_partial_search_are_quiet(dialog):
+    from dataclasses import replace
+
+    assert dialog.window.state() == "normal"
+    assert dialog._photo is None
+    assert dialog._preview.on_progress is None
+    assert dialog.preview_image.cget("text") == ""
+    assert dialog.preview_label.cget("text") == ""
+    assert dialog.preview_note.cget("text") == ""
+    dialog._preview.emit(replace(preview_result(), state="searching"))
+    assert dialog._photo is not None
+    assert dialog.preview_note.cget("text") == ""
+
+
+def test_updates_keep_previous_image_without_routine_status_text(dialog):
+    dialog._preview.emit(preview_result())
+    image = dialog.preview_image.cget("image")
+    dialog.names_entry.insert("end", ", Bob")
+    dialog._names_changed()
+    assert dialog.preview_image.cget("image") == image
+    assert dialog.preview_note.cget("text") == ""
+    dialog.app.search_phrase_var.set("NEW CLUB")
+    assert dialog.preview_image.cget("image") == image
+    assert dialog.preview_note.cget("text") == ""
+    dialog.colors["highlight_color_default"].set("#123456")
+    assert dialog.preview_image.cget("image") == image
+    assert dialog.preview_note.cget("text") == ""

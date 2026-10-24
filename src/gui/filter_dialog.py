@@ -3,7 +3,6 @@
 import csv
 from io import BytesIO
 import logging
-from pathlib import Path
 from tkinter import Button, StringVar, TclError, Text, Toplevel, colorchooser, filedialog, ttk
 from tkinter.font import Font
 
@@ -38,8 +37,7 @@ class FilterDialog:
         self._photo = None
         self._external_traces = []
         self._busy = False
-        self._last_preview = None
-        self._request_key = None
+        self._photos = []
 
     def set_busy(self, busy):
         """Keep the draft while temporarily disabling all edit/apply controls."""
@@ -128,16 +126,23 @@ class FilterDialog:
             custom = ttk.Button(frame, text=self._text("flt_custom"), command=lambda key=key: self._choose_color(key))
             custom.pack(side="left", padx=(8, 0))
             self.color_widgets[key] = (label, widgets, custom)
-            self.colors[key].trace_add("write", self._changed)
+            self.colors[key].trace_add("write", lambda *_: self._changed(immediate=True))
         preview_frame = ttk.LabelFrame(content, text=self._text("flt_preview"), padding=6)
         preview_frame.grid(row=7, column=0, columnspan=2, sticky="ew", pady=(12, 6))
-        self.preview_label = ttk.Label(preview_frame, text=self._text("flt_example"))
+        self.preview_label = ttk.Label(preview_frame, text="")
         self.preview_label.pack(anchor="w")
         self.preview_viewport = ttk.Frame(preview_frame, width=PREVIEW_WIDTH, height=PREVIEW_HEIGHT)
         self.preview_viewport.pack(pady=(4, 0))
         self.preview_viewport.pack_propagate(False)
-        self.preview_image = ttk.Label(self.preview_viewport, anchor="center")
-        self.preview_image.pack(fill="both", expand=True)
+        self.preview_panels = []
+        for _ in range(2):
+            panel = ttk.Frame(self.preview_viewport)
+            heading = ttk.Label(panel, anchor="w")
+            image = ttk.Label(panel, anchor="center")
+            image.pack(fill="both", expand=True)
+            self.preview_panels.append((panel, heading, image))
+        self.preview_panels[0][0].place(x=0, y=0, relwidth=1, height=PREVIEW_HEIGHT)
+        self.preview_image = self.preview_panels[0][2]
         note_font = Font(root=window, font=ttk.Style(window).lookup("TLabel", "font") or "TkDefaultFont")
         self.preview_note_space = ttk.Frame(preview_frame, width=PREVIEW_WIDTH, height=note_font.metrics("linespace") * 2)
         self.preview_note_space.pack(pady=(6, 0))
@@ -149,13 +154,28 @@ class FilterDialog:
         ttk.Button(footer, text=self._text("btn_apply"), command=self.apply_changes).pack(side="left")
         self.cancel_button = ttk.Button(footer, text=self._text("btn_cancel"), command=self.close)
         self.cancel_button.pack(side="right")
-        self._preview = MarkingPreview(window, self._show_preview, self._preview_failed)
-        self.mode.trace_add("write", self._changed)
-        for variable in (self.app.search_phrase_var, self.app.relevant_lines_var):
-            self._external_traces.append((variable, variable.trace_add("write", self._changed)))
+        self._preview = self._shared_preview()
+        self._preview.subscribe(self._show_preview, self._preview_failed)
+        self.mode.trace_add("write", lambda *_: self._changed(immediate=True))
+        for variable, callback in (
+            (self.app.search_phrase_var, lambda *_: self._changed(delay_ms=300)),
+            (self.app.relevant_lines_var, lambda *_: self._changed(immediate=True)),
+        ):
+            self._external_traces.append((variable, variable.trace_add("write", callback)))
         self.app.apply_theme_to_window(window)
         self.set_busy(getattr(self.app, "output_options_locked", False))
+        self._reveal()
         self._changed(immediate=True)
+
+    def _shared_preview(self):
+        """Borrow the app-owned worker; closing this dialog only detaches it."""
+        preview = getattr(self.app, "marking_preview", None)
+        if preview is None or preview._closed:
+            if preview is not None and preview.cleanup_worker is not None:
+                self.app._preview_cleanups = getattr(self.app, "_preview_cleanups", []) + [preview.cleanup_worker]
+            preview = self.app.marking_preview = MarkingPreview(self.app.root)
+            self.app.root.after_idle(preview.warm)
+        return preview
 
     def _draft(self):
         return {
@@ -207,43 +227,35 @@ class FilterDialog:
         if self.window is not None:
             self._update_controls()
 
-    def _changed(self, *_, immediate=False):
-        if self.window is None:
-            return
-        mode = self._update_controls()
-        self.preview_note.configure(text="")
-        request = PreviewRequest(
-            getattr(self.app, "input_file_full_path", None),
-            self.app.search_phrase_var.get(),
-            bool(self.app.relevant_lines_var.get()),
-            parse_names(self.names_entry.get("1.0", "end-1c")),
-            mode,
+    def capture_request(self):
+        """Capture options for either an open draft or closed-dialog prefetch."""
+        draft = self._draft() if self.window is not None else {
+            "names": self.app.names_var.get(),
+            "marking_mode": self.app.marking_mode_var.get(),
+            "highlight_color_default": self.app.highlight_color_default_var.get(),
+            "highlight_color_names": self.app.highlight_color_names_var.get(),
+        }
+        return PreviewRequest(
+            getattr(self.app, "input_file_full_path", None), self.app.search_phrase_var.get(),
+            bool(self.app.relevant_lines_var.get()), parse_names(draft["names"]), MarkingMode(draft["marking_mode"]),
             ExampleText(
                 heading=self._text("flt_example_heat").format(1, 3, "10:30"),
-                lane=self._text("flt_example_lane"),
-                swimmer=self._text("flt_example_swimmer"),
-                year=self._text("flt_example_year"),
-                club=self._text("flt_example_club"),
-                entry_time=self._text("flt_example_entry_time"),
-                lane_format=self._text("flt_example_lane_format"),
+                lane=self._text("flt_example_lane"), swimmer=self._text("flt_example_swimmer"),
+                year=self._text("flt_example_year"), club=self._text("flt_example_club"),
+                entry_time=self._text("flt_example_entry_time"), lane_format=self._text("flt_example_lane_format"),
                 time_format=self._text("flt_example_time_format"),
-            ),
-            self.colors["highlight_color_default"].get(),
-            self.colors["highlight_color_names"].get(),
+            ), draft["highlight_color_default"], draft["highlight_color_names"],
         )
-        fingerprint = None
-        if request.source_path:
-            try:
-                stat = Path(request.source_path).stat()
-                fingerprint = (stat.st_mtime_ns, stat.st_size)
-            except OSError:
-                pass
-        self._request_key = (request, fingerprint)
-        # Always invalidate obsolete in-flight results, even when displaying a
-        # cached image immediately after reopening the dialog.
-        self._preview.request(request, immediate=immediate)
-        if self._last_preview is not None and self._last_preview[0] == self._request_key:
-            self._show_preview(self._last_preview[1])
+
+    def _changed(self, *_, immediate=False, delay_ms=200):
+        if self.window is None:
+            return
+        self._update_controls()
+        self.preview_note.configure(text="")
+        if self._preview._closed:
+            self._preview = self._shared_preview()
+            self._preview.subscribe(self._show_preview, self._preview_failed)
+        self._preview.request(self.capture_request(), immediate=immediate, delay_ms=delay_ms)
 
     def _names_changed(self, *_):
         if self.names_entry.edit_modified():
@@ -287,22 +299,37 @@ class FilterDialog:
     def _show_preview(self, result):
         if self.window is None:
             return
-        with Image.open(BytesIO(result.png)) as image:
-            self._photo = ImageTk.PhotoImage(image, master=self.window)
-        self.preview_image.configure(image=self._photo)
-        self.preview_label.configure(
-            text=(
-                self._text("flt_pdf_excerpt").format(result.page_number)
-                if result.page_number is not None
-                else self._text("flt_example")
-            )
-        )
-        self.preview_note.configure(text=self._text("flt_no_names_found") if result.no_named_matches else "")
-        self._last_preview = (self._request_key, result)
-        self._reveal()
+        self._photos = []
+        snippets = result.snippets or (result,)
+        split = len(snippets) == 2
+        for i, (panel, heading, label) in enumerate(self.preview_panels):
+            if i >= len(snippets):
+                panel.place_forget()
+                continue
+            snippet = snippets[i]
+            with Image.open(BytesIO(snippet.png)) as image:
+                photo = ImageTk.PhotoImage(image, master=self.window)
+            self._photos.append(photo)
+            label.configure(image=photo, text="")
+            if split:
+                key = "flt_preview_named_page" if snippet.role == "named" else "flt_preview_other_page"
+                heading.configure(text=self._text(key).format(snippet.page_number))
+                heading.pack(side="top", anchor="w", before=label)
+            else:
+                heading.pack_forget()
+            panel.place(x=0, y=i * PREVIEW_HEIGHT // len(snippets), relwidth=1, height=PREVIEW_HEIGHT // len(snippets))
+        self._photo = self._photos[0]
+        self.preview_label.configure(text=self._text("flt_preview_excerpts") if split else (
+            self._text("flt_pdf_excerpt").format(result.page_number) if result.page_number is not None else self._text(
+                "flt_example_select_pdf" if not getattr(self.app, "input_file_full_path", None) else "flt_example")))
+        state_keys = {"single_category": "flt_preview_single",
+                      "no_text": "flt_preview_no_text", "no_matches": "flt_preview_no_matches",
+                      "unavailable": "flt_preview_unavailable"}
+        key = "flt_no_names_found" if result.no_named_matches else state_keys.get(result.state)
+        self.preview_note.configure(text=self._text(key) if key else "")
 
     def _reveal(self):
-        """Map the completely laid-out dialog after its first preview or error."""
+        """Map the fixed layout immediately, independently of PDF preparation."""
         if self.window is not None and self.window.state() == "withdrawn":
             self.window.update_idletasks()
             self.window.deiconify()
@@ -337,21 +364,16 @@ class FilterDialog:
 
     def _cleanup(self):
         if self._preview is not None:
-            self._preview.close()
-            worker = getattr(self._preview, "cleanup_worker", None)
-            if worker is not None:
-                if not hasattr(self.app, "_preview_cleanups"):
-                    self.app._preview_cleanups = []
-                self.app._preview_cleanups = [thread for thread in self.app._preview_cleanups if thread.is_alive()]
-                self.app._preview_cleanups.append(worker)
+            self._preview.detach()
             self._preview = None
         for variable, trace in self._external_traces:
             variable.trace_remove("write", trace)
         self._external_traces.clear()
         self._photo = None
+        self._photos = []
 
     def close(self):
-        """Discard draft values and release the owned preview worker."""
+        """Discard draft values and detach from the app-owned preview worker."""
         self._cleanup()
         if self.window is not None:
             try:

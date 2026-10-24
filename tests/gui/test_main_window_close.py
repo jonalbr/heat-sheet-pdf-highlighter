@@ -102,3 +102,34 @@ def test_close_tolerates_windows_that_have_already_been_destroyed(app):
     app.close()
     app._poll_work()
     assert app.root.destroyed
+
+
+
+def test_app_close_reaps_shared_worker_even_when_dialog_is_closed(app):
+    release = threading.Event()
+
+    class Service:
+        cleanup_worker = None
+        closes = 0
+
+        def close(self):
+            self.closes += 1
+            self.cleanup_worker = threading.Thread(target=lambda: release.wait(2))
+            self.cleanup_worker.start()
+
+        def set_paused(self, value):
+            pass
+
+    service = app.marking_preview = Service()
+    app.filter_dialog._preview = None
+    try:
+        app.close()
+        app.close()
+        app._poll_work()
+        assert service.closes == 1
+        assert not app.root.destroyed
+    finally:
+        release.set()
+        service.cleanup_worker.join(2)
+    app._poll_work()
+    assert app.root.destroyed

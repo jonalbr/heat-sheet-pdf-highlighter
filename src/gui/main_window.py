@@ -38,6 +38,7 @@ from ..utils.updater import UpdateChecker
 from ..version import Version
 from .dev_tools import DevToolsWindow
 from .dialogs import FilterDialog, UpdateDialogs, WatermarkDialog
+from .marking_preview import MarkingPreview
 from .message_dialog import ask_choice_ok_cancel, show_error, show_info
 from .preview import PreviewWindow
 from .ui_strings import _xgettext_dummy, build_strings, get_ui_string, plural_strings
@@ -144,6 +145,11 @@ class PDFHighlighterApp:
         # Cached detection belongs to the currently selected source.
         self.ocr_detection_path: str | None = None
         self.ocr_detection_result: bool | None = None
+        self.marking_preview = MarkingPreview(self.root)
+        self._preview_prefetch_timer = None
+        self.root.after_idle(self.marking_preview.warm)
+        self.root.after_idle(self._prefetch_preview)
+        self.search_phrase_var.trace_add("write", self._schedule_preview_prefetch)
         self.root.after(30, self._poll_work)
 
         # Check for updates AFTER UI is set up (skip when in screenshot mode to prevent race with root.destroy)
@@ -800,7 +806,7 @@ class PDFHighlighterApp:
         self.request_cancel_processing()
         self._download_cancel.set()
         self._closing_previews = []
-        preview = getattr(self.filter_dialog, "_preview", None)
+        preview = getattr(self, "marking_preview", None) or getattr(self.filter_dialog, "_preview", None)
         if preview is not None:
             # close() detaches Tk timers; its process cleanup runs outside Tk.
             preview.close()
@@ -953,6 +959,8 @@ class PDFHighlighterApp:
             file_name = Path(file_path).name
             self.pdf_file_var.set(file_name)  # Display only the file name
             self.input_file_full_path = file_path  # Store full path for processing
+            self.marking_preview.prepare(file_path)
+            self._prefetch_preview()
             self.ocr_detection_path = file_path
             self.ocr_detection_result = None
             self.status_var.set(get_ui_string(self.strings, "status_imported"))
@@ -961,6 +969,19 @@ class PDFHighlighterApp:
         else:
             self.status_var.set(get_ui_string(self.strings, "status_waiting"))
             self.root.update_idletasks()
+
+    def _schedule_preview_prefetch(self, *_):
+        if self._preview_prefetch_timer is not None:
+            self.root.after_cancel(self._preview_prefetch_timer)
+        self._preview_prefetch_timer = self.root.after(300, self._prefetch_preview)
+
+    def _prefetch_preview(self):
+        if self._preview_prefetch_timer is not None:
+            with suppress(TclError):
+                self.root.after_cancel(self._preview_prefetch_timer)
+        self._preview_prefetch_timer = None
+        if not self._closing and self.filter_dialog.window is None:
+            self.marking_preview.request(self.filter_dialog.capture_request(), immediate=True)
 
     def _detect_ocr_requirement(self, file_path: str) -> None:
         """Detect scanned PDFs in the background after file import."""
@@ -993,6 +1014,9 @@ class PDFHighlighterApp:
 
     def _set_inputs_locked(self):
         locked = self.output_options_locked
+        preview = getattr(self, "marking_preview", None)
+        if preview is not None:
+            preview.set_paused(bool(self._job))
         for name in ("browse_button", "entry_search_str", "checkbox_relevant_lines", "button_filter", "button_watermark"):
             getattr(self, name).configure(state="disabled" if locked else "normal")
         self.entry_file.configure(state="disabled" if locked else "readonly")

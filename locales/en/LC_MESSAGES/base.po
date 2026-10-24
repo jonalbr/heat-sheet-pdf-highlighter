@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-24 23:23+0200\n"
+"POT-Creation-Date: 2026-10-25 00:49+0200\n"
 "PO-Revision-Date: 2024-05-15 13:58+0200\n"
 "Last-Translator: Automatically generated\n"
 "Language-Team: none\n"
@@ -217,7 +217,7 @@ msgstr "No"
 msgid "OK"
 msgstr "OK"
 
-#: ..\src\gui\ui_strings.py:92 ..\src\gui\ui_strings.py:142
+#: ..\src\gui\ui_strings.py:92 ..\src\gui\ui_strings.py:148
 msgid "Preview"
 msgstr "Preview"
 
@@ -326,7 +326,33 @@ msgstr "Please enter at least one name for this mode."
 msgid "Preview unavailable. Close and reopen this dialog to try again."
 msgstr "Preview unavailable. Close and reopen this dialog to try again."
 
+#: ..\src\gui\ui_strings.py:135
+msgid "Only one match category was found. Showing the available example."
+msgstr "Only one match category was found. Showing the available example."
+
 #: ..\src\gui\ui_strings.py:136
+msgid "No searchable text is available. Showing a colour example."
+msgstr "No searchable text is available. Showing a colour example."
+
+#: ..\src\gui\ui_strings.py:137
+msgid "No eligible search matches were found. Showing a colour example."
+msgstr "No eligible search matches were found. Showing a colour example."
+
+#: ..\src\gui\ui_strings.py:138
+#, python-brace-format
+msgid "Listed name — page {0}"
+msgstr "Listed name — page {0}"
+
+#: ..\src\gui\ui_strings.py:139
+#, python-brace-format
+msgid "Other search hit — page {0}"
+msgstr "Other search hit — page {0}"
+
+#: ..\src\gui\ui_strings.py:140
+msgid "PDF excerpts"
+msgstr "PDF excerpts"
+
+#: ..\src\gui\ui_strings.py:142
 msgid ""
 "No names from the list found for this search. Check the names or choose "
 "another marking mode."
@@ -334,196 +360,200 @@ msgstr ""
 "No names from the list found for this search. Check the names or choose "
 "another marking mode."
 
-#: ..\src\gui\ui_strings.py:138
+#: ..\src\gui\ui_strings.py:144
 msgid "Default color"
 msgstr "Default color"
 
-#: ..\src\gui\ui_strings.py:139
+#: ..\src\gui\ui_strings.py:145
 msgid "Name color"
 msgstr "Name color"
 
-#: ..\src\gui\ui_strings.py:140
+#: ..\src\gui\ui_strings.py:146
 msgid "Custom color..."
 msgstr "Custom color..."
 
-#: ..\src\gui\ui_strings.py:141
+#: ..\src\gui\ui_strings.py:147
 msgid "Currently not used"
 msgstr "Currently not used"
 
-#: ..\src\gui\ui_strings.py:143
-msgid "Color example"
-msgstr "Color example"
+#: ..\src\gui\ui_strings.py:149
+msgid "Example"
+msgstr "Example"
 
-#: ..\src\gui\ui_strings.py:144
+#: ..\src\gui\ui_strings.py:150
+msgid "Example: Select a PDF to see a live preview"
+msgstr "Example: Select a PDF to see a live preview"
+
+#: ..\src\gui\ui_strings.py:151
 #, python-brace-format
 msgid "Heat {0}/{1} - approx. {2}"
 msgstr "Heat {0}/{1} - approx. {2}"
 
-#: ..\src\gui\ui_strings.py:145
+#: ..\src\gui\ui_strings.py:152
 msgid "Lane"
 msgstr "Lane"
 
-#: ..\src\gui\ui_strings.py:146
+#: ..\src\gui\ui_strings.py:153
 msgid "Swimmer"
 msgstr "Swimmer"
 
-#: ..\src\gui\ui_strings.py:147
+#: ..\src\gui\ui_strings.py:154
 msgid "YOB"
 msgstr "YOB"
 
-#: ..\src\gui\ui_strings.py:148
+#: ..\src\gui\ui_strings.py:155
 msgid "Club"
 msgstr "Club"
 
-#: ..\src\gui\ui_strings.py:149
+#: ..\src\gui\ui_strings.py:156
 msgid "Entry time"
 msgstr "Entry time"
 
-#: ..\src\gui\ui_strings.py:150
+#: ..\src\gui\ui_strings.py:157
 #, python-brace-format
 msgid "Lane {0}"
 msgstr "Lane {0}"
 
-#: ..\src\gui\ui_strings.py:151
+#: ..\src\gui\ui_strings.py:158
 #, python-brace-format
 msgid "{minutes}:{seconds}.{hundredths}"
 msgstr "{minutes}:{seconds}.{hundredths}"
 
-#: ..\src\gui\ui_strings.py:152
+#: ..\src\gui\ui_strings.py:159
 #, python-brace-format
 msgid "PDF excerpt - page {0}"
 msgstr "PDF excerpt - page {0}"
 
-#: ..\src\gui\ui_strings.py:153
+#: ..\src\gui\ui_strings.py:160
 msgid "Yellow"
 msgstr "Yellow"
 
-#: ..\src\gui\ui_strings.py:154
+#: ..\src\gui\ui_strings.py:161
 msgid "Turquoise"
 msgstr "Turquoise"
 
-#: ..\src\gui\ui_strings.py:155
+#: ..\src\gui\ui_strings.py:162
 msgid "Green"
 msgstr "Green"
 
-#: ..\src\gui\ui_strings.py:156
+#: ..\src\gui\ui_strings.py:163
 msgid "Orange"
 msgstr "Orange"
 
-#: ..\src\gui\ui_strings.py:157
+#: ..\src\gui\ui_strings.py:164
 msgid "Pink"
 msgstr "Pink"
 
-#: ..\src\gui\ui_strings.py:158
+#: ..\src\gui\ui_strings.py:165
 msgid "Violet"
 msgstr "Violet"
 
-#: ..\src\gui\ui_strings.py:163
+#: ..\src\gui\ui_strings.py:170
 msgid "Status: Processing PDF…"
 msgstr "Status: Processing PDF…"
 
-#: ..\src\gui\ui_strings.py:164
+#: ..\src\gui\ui_strings.py:171
 msgid "Cancelling …"
 msgstr "Cancelling …"
 
-#: ..\src\gui\ui_strings.py:165
+#: ..\src\gui\ui_strings.py:172
 msgid "Status: Cancelling …"
 msgstr "Status: Cancelling …"
 
-#: ..\src\gui\ui_strings.py:166
+#: ..\src\gui\ui_strings.py:173
 msgid "Status: Preparing PDF processing…"
 msgstr "Status: Preparing PDF processing…"
 
-#: ..\src\gui\ui_strings.py:167
+#: ..\src\gui\ui_strings.py:174
 msgid "Status: Aborted by user."
 msgstr "Status: Aborted by user."
 
-#: ..\src\gui\ui_strings.py:168
+#: ..\src\gui\ui_strings.py:175
 msgid "Status: Processing aborted."
 msgstr "Status: Processing aborted."
 
-#: ..\src\gui\ui_strings.py:169
+#: ..\src\gui\ui_strings.py:176
 msgid "Finished"
 msgstr "Finished"
 
-#: ..\src\gui\ui_strings.py:170
+#: ..\src\gui\ui_strings.py:177
 msgid "Status: Saving and compacting PDF... Please wait..."
 msgstr "Status: Saving and compacting PDF... Please wait..."
 
-#: ..\src\gui\ui_strings.py:175
+#: ..\src\gui\ui_strings.py:182
 msgid "All fields are required!"
 msgstr "All fields are required!"
 
-#: ..\src\gui\ui_strings.py:176
+#: ..\src\gui\ui_strings.py:183
 msgid "No output file selected; processing aborted after matches were found."
 msgstr "No output file selected; processing aborted after matches were found."
 
-#: ..\src\gui\ui_strings.py:177
+#: ..\src\gui\ui_strings.py:184
 msgid "Nothing to highlight; no file saved."
 msgstr "Nothing to highlight; no file saved."
 
-#: ..\src\gui\ui_strings.py:178
+#: ..\src\gui\ui_strings.py:185
 msgid "Please select a PDF first for preview."
 msgstr "Please select a PDF first for preview."
 
-#: ..\src\gui\ui_strings.py:179
+#: ..\src\gui\ui_strings.py:186
 msgid "Password-protected PDFs are not supported."
 msgstr "Password-protected PDFs are not supported."
 
-#: ..\src\gui\ui_strings.py:184
+#: ..\src\gui\ui_strings.py:191
 #, python-brace-format
 msgid "Version: {0} (New version available)"
 msgstr "Version: {0} (New version available)"
 
-#: ..\src\gui\ui_strings.py:185
+#: ..\src\gui\ui_strings.py:192
 #, python-brace-format
 msgid "Version: {0}"
 msgstr "Version: {0}"
 
-#: ..\src\gui\ui_strings.py:186
+#: ..\src\gui\ui_strings.py:193
 #, python-brace-format
 msgid "Version: {0} (Update check failed)"
 msgstr "Version: {0} (Update check failed)"
 
-#: ..\src\gui\ui_strings.py:191
+#: ..\src\gui\ui_strings.py:198
 msgid "Check for Updates"
 msgstr "Check for Updates"
 
-#: ..\src\gui\ui_strings.py:192
+#: ..\src\gui\ui_strings.py:199
 msgid "Install Update"
 msgstr "Install Update"
 
-#: ..\src\gui\ui_strings.py:197
+#: ..\src\gui\ui_strings.py:204
 msgid "Update Available"
 msgstr "Update Available"
 
-#: ..\src\gui\ui_strings.py:198
+#: ..\src\gui\ui_strings.py:205
 msgid "Download cancelled."
 msgstr "Download cancelled."
 
-#: ..\src\gui\ui_strings.py:199
+#: ..\src\gui\ui_strings.py:206
 #, python-brace-format
 msgid "Failed to check for updates: {0}"
 msgstr "Failed to check for updates: {0}"
 
-#: ..\src\gui\ui_strings.py:200
+#: ..\src\gui\ui_strings.py:207
 #, python-brace-format
 msgid "Failed to download the installer: {0}"
 msgstr "Failed to download the installer: {0}"
 
-#: ..\src\gui\ui_strings.py:201
+#: ..\src\gui\ui_strings.py:208
 msgid "Update Error"
 msgstr "Update Error"
 
-#: ..\src\gui\ui_strings.py:202
+#: ..\src\gui\ui_strings.py:209
 msgid "Update Information"
 msgstr "Update Information"
 
-#: ..\src\gui\ui_strings.py:203
+#: ..\src\gui\ui_strings.py:210
 msgid "You are already using the latest version."
 msgstr "You are already using the latest version."
 
-#: ..\src\gui\ui_strings.py:205
+#: ..\src\gui\ui_strings.py:212
 msgid ""
 "Click 'yes' to not be asked again for this update. You can still check "
 "manually for updates. If there is a newer version available, you will be "
@@ -533,70 +563,70 @@ msgstr ""
 "manually for updates. If there is a newer version available, you will be "
 "asked again."
 
-#: ..\src\gui\ui_strings.py:208
+#: ..\src\gui\ui_strings.py:215
 msgid "Up to Date"
 msgstr "Up to Date"
 
-#: ..\src\gui\ui_strings.py:209
+#: ..\src\gui\ui_strings.py:216
 #, python-brace-format
 msgid "Downloading... {0:.1f} MB of {1:.1f} MB, {2:.0f} seconds remaining"
 msgstr "Downloading... {0:.1f} MB of {1:.1f} MB, {2:.0f} seconds remaining"
 
-#: ..\src\gui\ui_strings.py:210
+#: ..\src\gui\ui_strings.py:217
 msgid "Starting download..."
 msgstr "Starting download..."
 
-#: ..\src\gui\ui_strings.py:211
+#: ..\src\gui\ui_strings.py:218
 #, python-brace-format
 msgid "A new version ({0}) is available. Do you want to update?"
 msgstr "A new version ({0}) is available. Do you want to update?"
 
-#: ..\src\gui\ui_strings.py:216
+#: ..\src\gui\ui_strings.py:223
 msgid "Install"
 msgstr "Install"
 
-#: ..\src\gui\ui_strings.py:217
+#: ..\src\gui\ui_strings.py:224
 msgid "Channel"
 msgstr "Channel"
 
-#: ..\src\gui\ui_strings.py:218
+#: ..\src\gui\ui_strings.py:225
 #, python-brace-format
 msgid "Are you sure you want to install version {0}?"
 msgstr "Are you sure you want to install version {0}?"
 
-#: ..\src\gui\ui_strings.py:219
+#: ..\src\gui\ui_strings.py:226
 msgid "Are you sure you want to reset all settings to defaults?"
 msgstr "Are you sure you want to reset all settings to defaults?"
 
-#: ..\src\gui\ui_strings.py:220
+#: ..\src\gui\ui_strings.py:227
 msgid "Debug Options"
 msgstr "Debug Options"
 
-#: ..\src\gui\ui_strings.py:221
+#: ..\src\gui\ui_strings.py:228
 msgid "Install Specific Version"
 msgstr "Install Specific Version"
 
-#: ..\src\gui\ui_strings.py:222
+#: ..\src\gui\ui_strings.py:229
 msgid "Open Settings File"
 msgstr "Open Settings File"
 
-#: ..\src\gui\ui_strings.py:223
+#: ..\src\gui\ui_strings.py:230
 msgid "Release Candidates (rc)"
 msgstr "Release Candidates (rc)"
 
-#: ..\src\gui\ui_strings.py:224
+#: ..\src\gui\ui_strings.py:231
 msgid "Release Notes"
 msgstr "Release Notes"
 
-#: ..\src\gui\ui_strings.py:225
+#: ..\src\gui\ui_strings.py:232
 msgid "Reset to Defaults"
 msgstr "Reset to Defaults"
 
-#: ..\src\gui\ui_strings.py:226
+#: ..\src\gui\ui_strings.py:233
 msgid "Reset Settings"
 msgstr "Reset Settings"
 
-#: ..\src\gui\ui_strings.py:227
+#: ..\src\gui\ui_strings.py:234
 msgid ""
 "When enabled, updates require a matching .sha256 file for verification "
 "(affects all channels)"
@@ -604,30 +634,30 @@ msgstr ""
 "When enabled, updates require a matching .sha256 file for verification "
 "(affects all channels)"
 
-#: ..\src\gui\ui_strings.py:228
+#: ..\src\gui\ui_strings.py:235
 msgid "Stable"
 msgstr "Stable"
 
-#: ..\src\gui\ui_strings.py:229
+#: ..\src\gui\ui_strings.py:236
 msgid "Dev Tools"
 msgstr "Dev Tools"
 
-#: ..\src\gui\ui_strings.py:230
+#: ..\src\gui\ui_strings.py:237
 msgid "Update Channel"
 msgstr "Update Channel"
 
-#: ..\src\gui\ui_strings.py:231
+#: ..\src\gui\ui_strings.py:238
 msgid "Verify SHA256"
 msgstr "Verify SHA256"
 
-#: ..\src\gui\ui_strings.py:270
+#: ..\src\gui\ui_strings.py:277
 #, python-brace-format
 msgid "Processing complete: {0} match found. {1} skipped."
 msgid_plural "Processing complete: {0} matches found. {1} skipped."
 msgstr[0] "Processing complete: {0} match found. {1} skipped."
 msgstr[1] "Processing complete: {0} matches found. {1} skipped."
 
-#: ..\src\gui\ui_strings.py:271
+#: ..\src\gui\ui_strings.py:278
 #, python-brace-format
 msgid "Processed: {0}/{1} pages. {2} match found. {3} skipped."
 msgid_plural "Processed: {0}/{1} pages. {2} matches found. {3} skipped."

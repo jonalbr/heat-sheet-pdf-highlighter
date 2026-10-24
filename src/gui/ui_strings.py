@@ -132,6 +132,12 @@ def build_strings(_: Callable[[str], str]) -> Dict[str, str]:
         "flt_names": _("Names"),
         "flt_names_required": _("Please enter at least one name for this mode."),
         "flt_preview_unavailable": _("Preview unavailable. Close and reopen this dialog to try again."),
+        "flt_preview_single": _("Only one match category was found. Showing the available example."),
+        "flt_preview_no_text": _("No searchable text is available. Showing a colour example."),
+        "flt_preview_no_matches": _("No eligible search matches were found. Showing a colour example."),
+        "flt_preview_named_page": _("Listed name — page {0}"),
+        "flt_preview_other_page": _("Other search hit — page {0}"),
+        "flt_preview_excerpts": _("PDF excerpts"),
         "flt_no_names_found": _(
             "No names from the list found for this search. Check the names or choose another marking mode."
         ),
@@ -140,7 +146,8 @@ def build_strings(_: Callable[[str], str]) -> Dict[str, str]:
         "flt_custom": _("Custom color..."),
         "flt_unused": _("Currently not used"),
         "flt_preview": _("Preview"),
-        "flt_example": _("Color example"),
+        "flt_example": _("Example"),
+        "flt_example_select_pdf": _("Example: Select a PDF to see a live preview"),
         "flt_example_heat": _("Heat {0}/{1} - approx. {2}"),
         "flt_example_lane": _("Lane"),
         "flt_example_swimmer": _("Swimmer"),

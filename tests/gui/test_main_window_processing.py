@@ -562,3 +562,15 @@ def test_reset_handler_rejects_busy_operation_without_prompting(app, monkeypatch
         app._job = ProcessingJob(1, "input.pdf", app._collect_processing_options())
     monkeypatch.setattr("src.gui.dev_tools.ask_ok_cancel", lambda *args: pytest.fail("Busy reset prompted"))
     DevToolsWindow(app)._reset_settings()
+
+
+
+def test_file_selection_prepares_preview_immediately_without_opening_dialog(app, monkeypatch):
+    prepared = []
+    app.marking_preview = SimpleNamespace(prepare=prepared.append)
+    app.pdf_file_var = Var()
+    app.root.update_idletasks = lambda: None
+    app._prefetch_preview = lambda: prepared.append(("query", app.input_file_full_path))
+    monkeypatch.setattr(main_window.filedialog, "askopenfilename", lambda **kwargs: "new.pdf")
+    app.browse_file()
+    assert prepared == ["new.pdf", ("query", "new.pdf")]
