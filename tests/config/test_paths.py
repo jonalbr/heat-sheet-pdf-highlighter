@@ -101,3 +101,27 @@ def test_get_bundle_dir_for_cx_freeze(tmp_path):
 
 def test_ocr_tessdata_path_lives_under_assets():
     assert Paths.ocr_tessdata_dir == Paths.bundle_dir / "assets" / "ocr" / "tessdata"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows APPDATA path")
+def test_settings_directory_access_error_returns_path(tmp_path, monkeypatch):
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    monkeypatch.delenv("HSPH_USE_DEFAULT_SETTINGS", raising=False)
+
+    def denied(*args, **kwargs):
+        raise PermissionError("mkdir denied")
+
+    monkeypatch.setattr(_Path, "mkdir", denied)
+    assert Paths.get_settings_path() == tmp_path / APP_NAME
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows APPDATA path")
+def test_ephemeral_paths_do_not_create_settings_directory(tmp_path, monkeypatch):
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    monkeypatch.setenv("HSPH_USE_DEFAULT_SETTINGS", "1")
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("Ephemeral path resolution created a directory")
+
+    monkeypatch.setattr(_Path, "mkdir", forbidden)
+    assert Paths.get_settings_path() == tmp_path / APP_NAME

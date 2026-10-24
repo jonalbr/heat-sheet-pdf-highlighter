@@ -25,6 +25,23 @@ def build_strings(_: Callable[[str], str]) -> Dict[str, str]:
 
     # ---- General app text / statuses shown broadly ----
     general_strings = {
+        "settings_notice": _("Settings"),
+        "settings_recovered": _(
+            "The settings file could not be read as valid settings. Defaults are being used. "
+            "An unchanged backup was saved to:\n{backup}"
+        ),
+        "settings_backup_failed": _(
+            "The settings file contains damaged data, but a backup could not be saved. "
+            "The original file will not be overwritten. Changes apply only to this session.\nFile: {path}"
+        ),
+        "settings_read_failed": _(
+            "The settings file could not be accessed. Defaults are being used. "
+            "The file will not be overwritten; changes apply only to this session.\nFile: {path}"
+        ),
+        "settings_write_failed": _(
+            "Settings could not be saved. Your changes apply to this session. "
+            "Saving will be retried when you change another setting.\nFile: {path}"
+        ),
         "configure_filter": _("Configure name filtering and highlight colors."),
         "configure_watermark": _("Configure the watermark options."),
         "enter_club": _("Enter the name of the club to highlight the results."),

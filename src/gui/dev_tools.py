@@ -490,7 +490,7 @@ class DevToolsWindow:
             self.reset_button.configure(state="disabled" if busy else "normal")
 
     def _reset_settings(self):
-        if getattr(self.app, "output_options_locked", False):
+        if self.app.output_options_locked or self.app.update_checker._active_download:
             return
         if not ask_ok_cancel(
             self.app,
@@ -498,14 +498,9 @@ class DevToolsWindow:
             get_ui_string(self.app.strings, "dev_confirm_reset"),
         ):
             return
-        if getattr(self.app, "output_options_locked", False):
+        if self.app.output_options_locked or self.app.update_checker._active_download:
             return
-        self.app.app_settings.reset_to_defaults()
-        # Re-apply language and refresh UI
-        self.app.on_language_change(self.app.app_settings.settings["language"])
-        # Update channel control
-        self.channel_var.set(self.app.app_settings.settings.get("update_channel", "stable"))
-        self._start_refresh_releases_async()
+        self.app.reset_settings()
 
     # --- Screenshot helper ---
     def _populate_releases_for_screenshot(self):

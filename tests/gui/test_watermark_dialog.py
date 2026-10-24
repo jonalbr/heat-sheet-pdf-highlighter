@@ -67,8 +67,9 @@ def test_busy_apply_neither_reads_nor_publishes_draft():
 def test_apply_publishes_preserved_draft_after_unlock(monkeypatch):
     settings = {}
     app = SimpleNamespace(root=object(), output_options_locked=False,
-                          app_settings=SimpleNamespace(update_setting=lambda key, value: settings.update({key: value})))
+                          app_settings=SimpleNamespace(update_settings=settings.update))
     dialog = WatermarkDialog(app)
+    dialog._draft_active = True
     draft = dict(enabled=1, text="Draft", color="#123456", size="24", position="custom", x_ratio=0.2, y_ratio=0.3)
     dialog._draft_vars = {key: SimpleNamespace(get=lambda value=value: value) for key, value in draft.items()}
     dialog._stop_nudge = lambda: None

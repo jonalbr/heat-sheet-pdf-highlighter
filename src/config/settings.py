@@ -3,7 +3,11 @@ Application settings management
 """
 
 import json
+import logging
+from dataclasses import dataclass
 from pathlib import Path
+import tempfile
+from threading import RLock
 from typing import Dict
 import os
 import re
@@ -19,7 +23,7 @@ from ..version import Version
 def _is_valid_ratio(value) -> bool:
     try:
         numeric_value = float(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return False
     return 0.0 <= numeric_value <= 1.0
 
@@ -39,9 +43,23 @@ def _validated_newest_version(value) -> str:
     return str(parsed_value) if parsed_value >= Version.from_str(VERSION_STR) else "0.0.0"
 
 
+@dataclass(frozen=True)
+class SettingsNotice:
+    """A filesystem problem to explain on the GUI thread."""
+
+    kind: str
+    path: Path
+    backup_path: Path | None = None
+    detail: str = ""
+
+
 class AppSettings:
     def __init__(self, settings_file: Path):
         self.settings_file = settings_file
+        self._lock = RLock()
+        self._write_blocked = False
+        self._notices: list[SettingsNotice] = []
+        self._reported: set[str] = set()
         # Ephemeral mode: don't read/write user settings, use defaults only
         self._ephemeral = os.getenv("HSPH_USE_DEFAULT_SETTINGS") in ("1", "true", "True")
         self.default_settings = {
@@ -88,30 +106,110 @@ class AppSettings:
         self.validate_settings()
 
     def load_settings(self) -> Dict:
-        """Load settings from a JSON file. If the file doesn't exist, return default settings."""
-        if not self._ephemeral and self.settings_file.exists():
-            settings: Dict = json.loads(self.settings_file.read_text())
+        """Recover invalid data only after preserving its exact original bytes."""
+        with self._lock:
+            if self._ephemeral:
+                return dict(self.default_settings)
+            try:
+                original = self.settings_file.read_bytes()
+            except FileNotFoundError:
+                return dict(self.default_settings)
+            except OSError as exc:
+                self._write_blocked = True
+                self._notice("read_failed", exc)
+                return dict(self.default_settings)
+            try:
+                settings = json.loads(original.decode("utf-8"))
+                if not isinstance(settings, dict):
+                    raise ValueError("Settings JSON root must be an object")
+            except (UnicodeDecodeError, ValueError, RecursionError) as exc:
+                backup = None
+                try:
+                    with tempfile.NamedTemporaryFile(
+                        "wb", dir=self.settings_file.parent,
+                        prefix=f"{self.settings_file.name}.corrupt-", suffix=".bak", delete=False,
+                    ) as stream:
+                        backup = Path(stream.name)
+                        stream.write(original)
+                        stream.flush()
+                        os.fsync(stream.fileno())
+                except OSError as backup_error:
+                    self._cleanup(backup)
+                    self._write_blocked = True
+                    self._notice("backup_failed", backup_error)
+                else:
+                    self._notice("recovered", exc, backup)
+                return dict(self.default_settings)
             return self.validate_settings(settings)
-        else:
-            # Return a copy so callers don't mutate the canonical defaults
-            return dict(self.default_settings)
 
-    def save_settings(self):
-        """Save the current settings to a JSON file."""
-        if self._ephemeral:
-            # Skip writing when using ephemeral defaults
-            return
-        self.settings_file.write_text(json.dumps(self.settings, indent=4))
+    def _notice(self, kind, error, backup_path=None):
+        logging.getLogger(__name__).warning("Settings %s (%s): %s", kind, self.settings_file, error)
+        if kind not in self._reported:
+            self._reported.add(kind)
+            self._notices.append(SettingsNotice(kind, self.settings_file, backup_path, str(error)))
 
-    def update_setting(self, key, value):
-        """Update a specific setting and save the file."""
-        self.settings[key] = value
-        self.save_settings()
+    @staticmethod
+    def _cleanup(path):
+        if path is not None:
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                logging.getLogger(__name__).exception("Could not remove temporary settings file %s", path)
 
-    def reset_to_defaults(self):
-        """Reset settings to defaults and save."""
-        self.settings = dict(self.default_settings)
-        self.save_settings()
+    def take_notices(self) -> list[SettingsNotice]:
+        """Consume pending notices without calling Tk from a worker."""
+        with self._lock:
+            notices, self._notices = self._notices, []
+            return notices
+
+    def snapshot(self) -> Dict:
+        """Return a consistent independent copy of the validated settings."""
+        with self._lock:
+            return dict(self.settings)
+
+    def save_settings(self) -> bool:
+        """Atomically persist the current state; retain session values on failure."""
+        with self._lock:
+            if self._ephemeral:
+                return True
+            if self._write_blocked:
+                return False
+            temporary = None
+            try:
+                self.settings_file.parent.mkdir(parents=True, exist_ok=True)
+                with tempfile.NamedTemporaryFile(
+                    "w", encoding="utf-8", dir=self.settings_file.parent,
+                    prefix=f"{self.settings_file.name}.", suffix=".tmp", delete=False,
+                ) as stream:
+                    temporary = Path(stream.name)
+                    json.dump(self.settings, stream, indent=4)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                os.replace(temporary, self.settings_file)
+            except OSError as exc:
+                self._notice("write_failed", exc)
+                return False
+            finally:
+                self._cleanup(temporary)
+            self._reported.discard("write_failed")
+            self._notices = [notice for notice in self._notices if notice.kind != "write_failed"]
+            return True
+
+    def update_settings(self, changes: Dict) -> bool:
+        """Validate and publish related changes under one lock, then save once."""
+        with self._lock:
+            self.settings = self.validate_settings(self.settings | changes)
+            return self.save_settings()
+
+    def update_setting(self, key, value) -> bool:
+        """Update a single setting through the same transaction as batch edits."""
+        return self.update_settings({key: value})
+
+    def reset_to_defaults(self) -> bool:
+        """Reset the session even if its defaults cannot be persisted."""
+        with self._lock:
+            self.settings = dict(self.default_settings)
+            return self.save_settings()
 
     def _validate_value(self, key: str, value):
         validators = {
@@ -144,11 +242,24 @@ class AppSettings:
             "ocr_reduce_large_outputs": lambda v: v if v in ["True", "False"] else "True",
             "ocr_settings_version": lambda v: 3,
         }
-        return validators[key](value) if key in validators else None
+        try:
+            return validators[key](value) if key in validators else None
+        except (TypeError, ValueError, OverflowError):
+            return self.default_settings[key]
 
     def validate_settings(self, settings: Dict | None = None):
-        # Get provided settings or use saved settings
-        settings_dict = settings if settings is not None else getattr(self, "settings", {}) or {}
+        """Normalize a candidate, or validate and persist the current session."""
+        with self._lock:
+            validated = self._validated_settings(
+                settings if settings is not None else getattr(self, "settings", {}),
+            )
+            if settings is None:
+                self.settings = validated
+                self.save_settings()
+            return validated
+
+    def _validated_settings(self, settings: Dict) -> Dict:
+        settings_dict = dict(settings)
         # Migrate legacy 'beta' flag if present
         if "update_channel" not in settings_dict and "beta" in settings_dict:
             beta_val = settings_dict.get("beta")
@@ -165,13 +276,7 @@ class AppSettings:
             value = settings_dict.get(key, self.default_settings[key])
             validated[key] = self._validate_value(key, value)
 
-        # Optionally keep extra keys? Currently we ignore them (drops legacy 'beta').
-        if settings is not None:
-            return validated
-
-        self.settings = validated
-        self.save_settings()
-        return validated  # Ensure a Dict is always returned
+        return validated
 
     def _migrate_marking_settings(self, settings: Dict) -> None:
         """Preserve legacy filter output while separating selection and color."""

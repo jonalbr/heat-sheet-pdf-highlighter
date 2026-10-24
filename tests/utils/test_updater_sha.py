@@ -73,6 +73,9 @@ class DummySettings:
     def update_setting(self, key, value):
         self.settings[key] = value
 
+    def update_settings(self, changes):
+        self.settings.update(changes)
+
 
 class DummyApp:
     def __init__(self):

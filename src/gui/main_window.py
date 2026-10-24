@@ -140,7 +140,9 @@ class PDFHighlighterApp:
         self._status = ("status_waiting", ())
 
         # Initialize the UI components
+        self._syncing_settings = True
         self.setup_ui()
+        self._syncing_settings = False
 
         # Cached detection belongs to the currently selected source.
         self.ocr_detection_path: str | None = None
@@ -151,6 +153,7 @@ class PDFHighlighterApp:
         self.root.after_idle(self._prefetch_preview)
         self.search_phrase_var.trace_add("write", self._schedule_preview_prefetch)
         self.root.after(30, self._poll_work)
+        self.root.after_idle(self._show_settings_notices)
 
         # Check for updates AFTER UI is set up (skip when in screenshot mode to prevent race with root.destroy)
         if os.getenv("HSPH_SCREENSHOT_MODE") not in ("1", "true", "True"):
@@ -290,16 +293,16 @@ class PDFHighlighterApp:
         Tooltip(self.theme_button, text=get_ui_string(self.strings, "theme_menu_tooltip"))
 
         # Language selection
-        lang_var = StringVar()
-        lang_var.set(self.app_settings.settings["language"])
-        lang_var.trace_add("write", lambda *args: self.app_settings.update_setting("language", lang_var.get()))
+        self.language_var = StringVar()
+        self.language_var.set(self.app_settings.settings["language"])
+        self.language_var.trace_add("write", lambda *args: self._persist_setting("language", self.language_var.get()))
 
         self.language_menu = ttk.OptionMenu(
             self.header_controls_frame,
-            lang_var,
+            self.language_var,
             self.app_settings.settings["language"],
             *LANGUAGE_OPTIONS,
-            command=lambda _: self.on_language_change(lang_var.get()),
+            command=lambda _: self.on_language_change(self.language_var.get()),
         )
         self.language_menu.config(width=4)
         self.language_menu.grid(row=0, column=1, sticky="E")
@@ -334,7 +337,7 @@ class PDFHighlighterApp:
         self.relevant_lines_var = IntVar()
         self.relevant_lines_var.set(self.app_settings.settings.get("mark_only_relevant_lines", 1))
         self.relevant_lines_var.trace_add(
-            "write", lambda *args: self.app_settings.update_setting("mark_only_relevant_lines", self.relevant_lines_var.get())
+            "write", lambda *args: self._persist_setting("mark_only_relevant_lines", self.relevant_lines_var.get())
         )
 
         self.checkbox_relevant_lines = ttk.Checkbutton(
@@ -345,17 +348,17 @@ class PDFHighlighterApp:
         # Filter variables
         self.names_var = StringVar()
         self.names_var.set(self.app_settings.settings.get("names", ""))
-        self.names_var.trace_add("write", lambda *args: self.app_settings.update_setting("names", self.names_var.get()))
+        self.names_var.trace_add("write", lambda *args: self._persist_setting("names", self.names_var.get()))
 
         self.marking_mode_var = StringVar(value=self.app_settings.settings["marking_mode"])
         self.marking_mode_var.trace_add(
-            "write", lambda *args: self.app_settings.update_setting("marking_mode", self.marking_mode_var.get())
+            "write", lambda *args: self._persist_setting("marking_mode", self.marking_mode_var.get())
         )
         self.highlight_color_default_var = StringVar(value=self.app_settings.settings["highlight_color_default"])
         self.highlight_color_names_var = StringVar(value=self.app_settings.settings["highlight_color_names"])
         for key in ("highlight_color_default", "highlight_color_names"):
             variable = getattr(self, f"{key}_var")
-            variable.trace_add("write", lambda *args, key=key, var=variable: self.app_settings.update_setting(key, var.get()))
+            variable.trace_add("write", lambda *args, key=key, var=variable: self._persist_setting(key, var.get()))
 
         # Filter and watermark buttons
         self.button_filter = ttk.Button(
@@ -479,7 +482,59 @@ class PDFHighlighterApp:
         self.update_all_widget_texts()
         self._poll_system_theme()
         # Set the initial state of the UI based on the settings
-        self.on_language_change(self.app_settings.settings["language"])
+        self.sync_settings_to_ui()
+
+    def _persist_setting(self, key, value):
+        if not getattr(self, "_syncing_settings", False):
+            self.app_settings.update_setting(key, value)
+
+    def sync_setting_variables(self, settings):
+        """Apply a full or partial settings snapshot without persistence traces."""
+        variables = {
+            "search_str": "search_phrase_var", "mark_only_relevant_lines": "relevant_lines_var",
+            "names": "names_var", "marking_mode": "marking_mode_var",
+            "highlight_color_default": "highlight_color_default_var",
+            "highlight_color_names": "highlight_color_names_var",
+            "language": "language_var", "theme_mode": "theme_mode_var",
+        }
+        previous = getattr(self, "_syncing_settings", False)
+        self._syncing_settings = True
+        try:
+            for key, attribute in variables.items():
+                if key in settings:
+                    getattr(self, attribute).set(settings[key])
+        finally:
+            self._syncing_settings = previous
+
+    def sync_settings_to_ui(self):
+        """Synchronize initialization/reset, including translated auxiliary UI."""
+        settings = self.app_settings.snapshot()
+        self.sync_setting_variables(settings)
+        self._apply_theme(settings["theme_mode"])
+        self.on_language_change(settings["language"])
+        if hasattr(self, "marking_preview"):
+            self._schedule_preview_prefetch()
+
+    def reset_settings(self):
+        """Discard drafts and synchronize defaults while preserving the source PDF."""
+        if self.output_options_locked or self.update_checker._active_download:
+            return
+        self.filter_dialog.close()
+        self.watermark_dialog.close(close_preview=True)
+        self.preview_window_handler.last_watermark_data = {}
+        self.preview_window_handler.last_origin = None
+        self.app_settings.reset_to_defaults()
+        self.sync_settings_to_ui()
+
+    def _show_settings_notices(self):
+        """Explain filesystem failures only after startup, on the Tk thread."""
+        if self._closing:
+            return
+        for notice in self.app_settings.take_notices():
+            text = get_ui_string(self.strings, f"settings_{notice.kind}").format(
+                path=notice.path, backup=notice.backup_path,
+            )
+            show_info(self, get_ui_string(self.strings, "settings_notice"), text)
 
     def update_all_widget_texts(self):
         """
@@ -776,6 +831,8 @@ class PDFHighlighterApp:
                 logging.getLogger("main_window").debug("Could not theme %s window: %s", owner_name, e)
 
     def _on_theme_mode_change(self, mode: str) -> None:
+        if getattr(self, "_syncing_settings", False):
+            return
         self.app_settings.update_setting("theme_mode", mode)
         self._apply_theme(mode)
 
@@ -971,6 +1028,8 @@ class PDFHighlighterApp:
             self.root.update_idletasks()
 
     def _schedule_preview_prefetch(self, *_):
+        if getattr(self, "_syncing_settings", False):
+            return
         if self._preview_prefetch_timer is not None:
             self.root.after_cancel(self._preview_prefetch_timer)
         self._preview_prefetch_timer = self.root.after(300, self._prefetch_preview)
@@ -1157,6 +1216,7 @@ class PDFHighlighterApp:
                 self.root.destroy()
                 return
         self.root.after(30, self._poll_work)
+        self._show_settings_notices()
 
     def process_pdf(self, job):
         """Run PDF work using only job-owned input and cancellation."""
@@ -1229,7 +1289,7 @@ class PDFHighlighterApp:
             self._post_job(job, "result", *outcome)
 
     def _collect_processing_options(self):
-        settings = self.app_settings.settings
+        settings = self.app_settings.snapshot()
         return ProcessingOptions(
             search_str=self.search_phrase_var.get(), only_relevant=bool(self.relevant_lines_var.get()),
             names=parse_names(self.names_var.get()), marking_mode=MarkingMode(self.marking_mode_var.get()),

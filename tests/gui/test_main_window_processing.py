@@ -63,7 +63,10 @@ def app(monkeypatch):
                     watermark_color="#FF0000", watermark_size=16, watermark_position="top",
                     watermark_x_ratio=0.2, watermark_y_ratio=0.3, ocr_dpi=300, ocr_language="deu",
                     ocr_reduce_large_outputs="True")
-    app.app_settings = SimpleNamespace(settings=settings, update_setting=lambda key, value: settings.update({key: value}))
+    app.app_settings = SimpleNamespace(
+        settings=settings, update_setting=lambda key, value: settings.update({key: value}),
+        snapshot=lambda: dict(settings), take_notices=lambda: [],
+    )
     for name, value in dict(search_phrase="CLUB", relevant_lines=1, marking_mode="all_matches", names="Alice, Bob",
                             highlight_color_default="#FFFFA6", highlight_color_names="#C4FAF8").items():
         setattr(app, f"{name}_var", Var(value))

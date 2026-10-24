@@ -103,6 +103,9 @@ class DummySettingsExtended:
     def update_setting(self, k: str, v: str):
         self.settings[k] = v
 
+    def update_settings(self, changes):
+        self.settings.update(changes)
+
 
 class DummyAppExtended:
     def __init__(self, overrides: dict[str, str] | None = None):

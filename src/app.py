@@ -31,10 +31,10 @@ def _setup_screenshot_state(app: PDFHighlighterApp) -> None:
     try:
         app.marking_mode_var.set(MarkingMode.DISTINGUISH_NAMES.value)
         app.names_var.set("Klara Sophie Meier, Jonas Becker-Schmidt, Leon Wagner")
-        app.app_settings.settings["watermark_enabled"] = "True"
-        app.app_settings.settings["watermark_text"] = "SGS Hamburg"
-        app.app_settings.settings["watermark_color"] = "#FF9F14"
-        app.app_settings.settings["watermark_size"] = 20
+        app.app_settings.update_settings({
+            "watermark_enabled": "True", "watermark_text": "SGS Hamburg",
+            "watermark_color": "#FF9F14", "watermark_size": 20,
+        })
     except Exception as e:
         print(f"Error setting up screenshot mode: {e}")
 

@@ -344,17 +344,16 @@ class FilterDialog:
 
     def apply_changes(self):
         """Validate the complete draft before publishing any setting."""
-        if self._busy or getattr(self.app, "output_options_locked", False):
+        if self.window is None or self._busy or getattr(self.app, "output_options_locked", False):
             return
         draft = self._draft()
         if draft["marking_mode"] != MarkingMode.ALL_MATCHES and not parse_names(draft["names"]):
             show_error(self.app, self._text("error"), self._text("flt_names_required"))
             return
         # Publish settings together so variable traces never persist a partial draft.
-        self.app.app_settings.settings.update(draft)
-        self.app.app_settings.save_settings()
-        for key, value in draft.items():
-            getattr(self.app, f"{key}_var").set(value)
+        self.app.app_settings.update_settings(draft)
+        snapshot = self.app.app_settings.snapshot()
+        self.app.sync_setting_variables({key: snapshot[key] for key in draft})
         self.close()
 
     def _on_destroy(self, event):

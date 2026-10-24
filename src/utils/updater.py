@@ -154,11 +154,13 @@ class UpdateChecker:
                 exe_url, sha_pre = self._select_release_assets(latest_pre_release)
                 download_url = exe_url or download_url
                 sha_url = sha_pre
-                self.app_settings.update_setting("newest_version_available", str(latest_version))
-                self.app_settings.update_setting("ask_for_update", "True")
+                self.app_settings.update_settings({
+                    "newest_version_available": str(latest_version), "ask_for_update": "True",
+                })
         else:
-            self.app_settings.update_setting("newest_version_available", str(latest_version))
-            self.app_settings.update_setting("ask_for_update", "True")
+            self.app_settings.update_settings({
+                "newest_version_available": str(latest_version), "ask_for_update": "True",
+            })
         return latest_version, download_url, sha_url
 
     def _get_latest_version_from_github(self, current_version: Version, force_check: bool = False, quiet: bool = False):
@@ -323,8 +325,9 @@ class UpdateChecker:
 
     def _update_settings_if_newer(self, latest_version: Version) -> None:
         if latest_version > self._stored_newest_version_or(Version()):
-            self.app_settings.update_setting("ask_for_update", "True")
-            self.app_settings.update_setting("newest_version_available", str(latest_version))
+            self.app_settings.update_settings({
+                "ask_for_update": "True", "newest_version_available": str(latest_version),
+            })
 
     def _stored_newest_version_or(self, fallback: Version) -> Version:
         stored_value = self.app_settings.settings.get("newest_version_available", str(fallback))

@@ -11,6 +11,7 @@ from PIL import Image
 from src.config.settings import AppSettings
 from src.core.marking_preview import PreviewResult
 from src.gui import filter_dialog
+from src.gui.main_window import PDFHighlighterApp
 from src.gui.marking_preview import MarkingPreview
 from src.gui.ui_strings import build_strings
 from src.utils.localization import setup_translation
@@ -64,6 +65,7 @@ def dialog(tmp_path, monkeypatch):
         relevant_lines_var=tk.IntVar(root, value=1),
         apply_theme_to_window=lambda window: None,
     )
+    app.sync_setting_variables = lambda settings: PDFHighlighterApp.sync_setting_variables(app, settings)
     monkeypatch.setattr(filter_dialog, "MarkingPreview", Preview)
     instance = filter_dialog.FilterDialog(app)
     instance.open()

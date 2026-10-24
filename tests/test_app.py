@@ -50,7 +50,7 @@ def test_setup_screenshot_state_populates_transient_settings():
     app = SimpleNamespace(
         marking_mode_var=marking_mode_var,
         names_var=names_var,
-        app_settings=SimpleNamespace(settings=settings),
+        app_settings=SimpleNamespace(settings=settings, update_settings=settings.update),
     )
 
     app_module._setup_screenshot_state(app)

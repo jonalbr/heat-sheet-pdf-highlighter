@@ -204,6 +204,7 @@ class WatermarkDialog:
         self.app = app_instance
         self.parent = self.app.root
         self.window = None
+        self._draft_active = False
         self._busy = False
 
     def set_busy(self, busy):
@@ -219,6 +220,7 @@ class WatermarkDialog:
 
     def close(self, close_preview: bool = False) -> None:
         """Close the watermark dialog and optionally close the linked preview."""
+        self._draft_active = False
         if hasattr(self, "_stop_nudge"):
             self._stop_nudge()
         if close_preview:
@@ -242,6 +244,7 @@ class WatermarkDialog:
             return
         draft = draft or {}
         self.window = Toplevel(self.parent)
+        self._draft_active = True
         dialog_window = self.window
         dialog_window.title(get_ui_string(self.app.strings, "wm_settings"))
         dialog_window.columnconfigure(1, weight=1, minsize=260)
@@ -477,7 +480,7 @@ class WatermarkDialog:
 
     def apply_changes(self):
         """Publish the local draft only when no operation owns the output options."""
-        if self._busy or getattr(self.app, "output_options_locked", False):
+        if not self._draft_active or self._busy or getattr(self.app, "output_options_locked", False):
             return
         self._stop_nudge()
         draft = self._draft()
@@ -490,8 +493,7 @@ class WatermarkDialog:
             "watermark_x_ratio": draft["x_ratio"],
             "watermark_y_ratio": draft["y_ratio"],
         }
-        for key, value in values.items():
-            self.app.app_settings.update_setting(key, value)
+        self.app.app_settings.update_settings(values)
         self.close()
 
     def refresh_ui_strings(self):
