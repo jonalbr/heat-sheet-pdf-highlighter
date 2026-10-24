@@ -71,6 +71,7 @@ def extract_strings(xgettext: Path, *, pot_file: Path = POT_FILE, source_files: 
             "--keyword=ngettext:1,2",
             "--keyword=n_:1,2",
             "--keyword=_:1",
+            "--keyword=_p:1c,2",
             "--keyword=gettext:1",
             "--keyword=self._:1",
             "--keyword=self.n_:1,2",

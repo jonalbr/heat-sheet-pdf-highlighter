@@ -5,7 +5,7 @@ Dialog windows (Filter and Watermark dialogs)
 import time
 import threading
 from functools import partial
-from tkinter import DoubleVar, IntVar, StringVar, TclError, Toplevel, colorchooser, ttk
+from tkinter import DoubleVar, IntVar, Menu, StringVar, TclError, Toplevel, colorchooser, ttk
 from tkinter import Button as tkButton
 from typing import TYPE_CHECKING, Dict, Optional
 import logging
@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from src.gui.main_window import PDFHighlighterApp
 
 from ..core.watermark import get_position_ratios
+from ..config.settings import validated_highlight_color
 from ..version import Version
 from .message_dialog import ask_ok_cancel, ask_retry_cancel, ask_yes_no_cancel, show_error, show_info
 from .ui_strings import get_ui_string
@@ -206,58 +207,111 @@ class WatermarkDialog:
         self.window = None
         self._draft_active = False
         self._busy = False
+        self._traces = []
+        self._draft_vars = {}
+        self._dependent_controls = []
+        self._stop_nudge = lambda: None
+
+    def _editable(self):
+        """Allow editing only for an enabled draft without an operation lock."""
+        return (self._draft_active and not self._busy
+                and not getattr(self.app, "output_options_locked", False)
+                and bool(self._draft_vars["enabled"].get()))
+
+    def _update_controls(self):
+        """Reapply activation after a busy state or theme change."""
+        if not self._draft_active:
+            return
+        active = self._editable()
+        if not active:
+            self._stop_nudge()
+        for control in self._dependent_controls:
+            control.configure(state="normal" if active else "disabled")
+
+    def refresh_theme(self):
+        """Preserve the local activation state after theming classic widgets."""
+        self._update_controls()
+
+    def _trace(self, variable, callback):
+        """Track each trace so all closing paths can remove its Tcl callback."""
+        self._traces.append((variable, variable.trace_add("write", callback)))
 
     def set_busy(self, busy):
         """Lock controls without publishing or discarding the local draft."""
         self._busy = busy
-        if busy and hasattr(self, "_stop_nudge"):
+        if busy:
             self._stop_nudge()
         if self.window is not None and self.window.winfo_exists():
             lock_controls(self.window, busy, (self._cancel_button,))
+            self._update_controls()
 
     def _draft(self):
         return {key: variable.get() for key, variable in self._draft_vars.items()}
 
-    def close(self, close_preview: bool = False) -> None:
-        """Close the watermark dialog and optionally close the linked preview."""
+    def _cleanup(self, close_preview=True):
+        """Detach callbacks before destroying widgets or abandoning a draft."""
         self._draft_active = False
-        if hasattr(self, "_stop_nudge"):
-            self._stop_nudge()
+        self._stop_nudge()
+        self._stop_nudge = lambda: None
+        for variable, trace in self._traces:
+            try:
+                variable.trace_remove("write", trace)
+            except TclError:
+                pass
+        self._traces.clear()
+        self._draft_vars.clear()
+        self._dependent_controls.clear()
+        self.nudge_buttons = []
+        self.text_entry = self.size_entry = self.position_menu = self.position_label = None
+        self.enable_button = self.preview_button = self.apply_button = self._cancel_button = None
         if close_preview:
-            self.app.preview_window_handler.close()
+            preview = self.app.preview_window_handler
+            preview.close()
+            preview.last_watermark_data = {}
+            preview.last_origin = None
 
-        if self.window is None:
-            return
-
-        try:
-            if self.window.winfo_exists():
-                self.window.destroy()
-        except TclError:
+    def _on_destroy(self, event):
+        """Handle direct widget destruction as well as explicit dialog closes."""
+        if event.widget is self.window:
+            self._cleanup()
             self.window = None
-            return
-        self.window = None
+
+    def close(self, close_preview: bool = True) -> None:
+        """Discard the draft and close its preview, except during translation."""
+        self._cleanup(close_preview)
+        window, self.window = self.window, None
+        try:
+            if window is not None and window.winfo_exists():
+                window.destroy()
+        except TclError:
+            pass
 
     def open(self, draft=None):
         """Open the watermark dialog, restoring uncommitted values if supplied."""
         if self.window is not None and self.window.winfo_exists():
+            self.window.deiconify()
             self.window.lift()
+            self.window.focus_set()
             return
         draft = draft or {}
         self.window = Toplevel(self.parent)
         self._draft_active = True
         dialog_window = self.window
+        dialog_window.bind("<Destroy>", self._on_destroy, add="+")
+        dialog_window.bind("<Escape>", lambda event: self.close())
         dialog_window.title(get_ui_string(self.app.strings, "wm_settings"))
         dialog_window.columnconfigure(1, weight=1, minsize=260)
         self.app.apply_theme_to_window(dialog_window)
         dialog_window.focus_set()
 
-        temp_enabled = IntVar(value=1 if self.app.app_settings.settings.get("watermark_enabled") == "True" else 0)
-        temp_text = StringVar(value=self.app.app_settings.settings.get("watermark_text"))
-        temp_color = StringVar(value=self.app.app_settings.settings.get("watermark_color"))
-        temp_size = StringVar(value=str(self.app.app_settings.settings.get("watermark_size")))
-        temp_position = StringVar(value=self.app.app_settings.settings.get("watermark_position"))
-        temp_x_ratio = DoubleVar(value=self.app.app_settings.settings.get("watermark_x_ratio"))
-        temp_y_ratio = DoubleVar(value=self.app.app_settings.settings.get("watermark_y_ratio"))
+        settings = self.app.app_settings.snapshot()
+        temp_enabled = IntVar(dialog_window, value=1 if settings["watermark_enabled"] == "True" else 0)
+        temp_text = StringVar(dialog_window, value=settings["watermark_text"])
+        temp_color = StringVar(dialog_window, value=settings["watermark_color"])
+        temp_size = StringVar(dialog_window, value=str(settings["watermark_size"]))
+        temp_position = StringVar(dialog_window, value=settings["watermark_position"])
+        temp_x_ratio = DoubleVar(dialog_window, value=settings["watermark_x_ratio"])
+        temp_y_ratio = DoubleVar(dialog_window, value=settings["watermark_y_ratio"])
 
         self._draft_vars = dict(enabled=temp_enabled, text=temp_text, color=temp_color, size=temp_size,
                                 position=temp_position, x_ratio=temp_x_ratio, y_ratio=temp_y_ratio)
@@ -267,10 +321,12 @@ class WatermarkDialog:
         ttk.Label(dialog_window, text=get_ui_string(self.app.strings, "wm_enable")).grid(row=0, column=0, sticky="W", padx=10, pady=5)
         chk = ttk.Checkbutton(dialog_window, variable=temp_enabled)
         chk.grid(row=0, column=1, sticky="W", padx=10, pady=5)
+        self.enable_button = chk
 
         ttk.Label(dialog_window, text=get_ui_string(self.app.strings, "wm_text")).grid(row=1, column=0, sticky="W", padx=10, pady=5)
         entry_text = ttk.Entry(dialog_window, textvariable=temp_text, width=30)
         entry_text.grid(row=1, column=1, padx=10, pady=5, sticky="EW")
+        self.text_entry = entry_text
 
         ttk.Label(dialog_window, text=get_ui_string(self.app.strings, "wm_color")).grid(row=2, column=0, sticky="W", padx=10, pady=5)
         current_color_frame = ttk.Frame(dialog_window)
@@ -284,12 +340,12 @@ class WatermarkDialog:
         preselect_buttons: Dict[str, tkButton] = {}
 
         current_color_swatch = tkButton(current_color_frame, width=3, height=1, relief="flat")
-        current_color_swatch._hsph_swatch_color = temp_color.get()
+        current_color_swatch._hsph_swatch_color = validated_highlight_color(temp_color.get(), "#FFA500")
         current_color_swatch._hsph_swatch_selected = False
         current_color_swatch.pack(side="left")
 
         def update_color_swatches():
-            selected_color = temp_color.get().upper()
+            selected_color = validated_highlight_color(temp_color.get(), "#FFA500")
             current_color_swatch._hsph_swatch_color = selected_color
             current_color_swatch.config(background=selected_color, activebackground=selected_color)
             for col, btn in preselect_buttons.items():
@@ -298,7 +354,8 @@ class WatermarkDialog:
                 btn.config(relief="sunken" if is_selected else "flat")
 
         def on_color_select(color):
-            temp_color.set(color)
+            if self.window is dialog_window and self._editable():
+                temp_color.set(color)
 
         for col in preset_colors:
             btn = tkButton(color_choice_frame, bg=col, width=3, height=1, relief="flat", command=lambda c=col: on_color_select(c))
@@ -308,14 +365,17 @@ class WatermarkDialog:
             preselect_buttons[col] = btn
 
         def choose_custom_color():
-            try:
-                if not dialog_window.winfo_exists():
-                    return
-            except Exception:
+            if self.window is not dialog_window or not self._editable():
                 return
-
-            _, selected_hex = colorchooser.askcolor(color=temp_color.get(), parent=dialog_window)
-            if selected_hex:
+            try:
+                _, selected_hex = colorchooser.askcolor(
+                    color=validated_highlight_color(temp_color.get(), "#FFA500"), parent=dialog_window
+                )
+            except TclError:
+                if self.window is dialog_window and self._draft_active:
+                    raise
+                return  # The parent may have closed during the native dialog's event loop.
+            if selected_hex and self.window is dialog_window and self._editable():
                 temp_color.set(selected_hex.upper())
 
         btn_custom_color = ttk.Button(
@@ -328,16 +388,30 @@ class WatermarkDialog:
         def on_color_change(*args):
             update_color_swatches()
 
-        temp_color.trace_add("write", on_color_change)
+        self._trace(temp_color, on_color_change)
         update_color_swatches()
 
         ttk.Label(dialog_window, text=get_ui_string(self.app.strings, "wm_size")).grid(row=4, column=0, sticky="W", padx=10, pady=5)
         entry_size = ttk.Spinbox(dialog_window, from_=1, to=100, textvariable=temp_size, width=5)
         entry_size.grid(row=4, column=1, padx=10, pady=5, sticky="W")
+        self.size_entry = entry_size
 
         ttk.Label(dialog_window, text=get_ui_string(self.app.strings, "wm_pos")).grid(row=5, column=0, sticky="W", padx=10, pady=5)
-        position_options = ["top", "bottom", "custom"]
-        option_position = ttk.OptionMenu(dialog_window, temp_position, temp_position.get(), *position_options)
+        position_labels = {
+            key: get_ui_string(self.app.strings, "wm_pos_" + key) for key in ("top", "bottom", "custom")
+        }
+        self.position_label = StringVar(dialog_window, value=position_labels[temp_position.get()])
+        option_position = ttk.Menubutton(dialog_window, textvariable=self.position_label)
+        position_menu = Menu(option_position, tearoff=False)
+        option_position.configure(menu=position_menu)
+
+        def select_position(position):
+            if self.window is dialog_window and self._editable():
+                temp_position.set(position)
+
+        for position, label in position_labels.items():
+            position_menu.add_command(label=label, command=partial(select_position, position))
+        self.position_menu = position_menu
         option_position.grid(row=5, column=1, padx=10, pady=5, sticky="W")
 
         ttk.Label(dialog_window, text=get_ui_string(self.app.strings, "wm_adjust")).grid(row=6, column=0, sticky="W", padx=10, pady=5)
@@ -351,7 +425,7 @@ class WatermarkDialog:
                 temp_y_ratio.set(y_ratio)
 
         def nudge_position(dx: float, dy: float):
-            if self._busy:
+            if self.window is not dialog_window or not self._editable():
                 return
             x_ratio, y_ratio = get_position_ratios(temp_position.get(), temp_x_ratio.get(), temp_y_ratio.get())
             temp_position.set("custom")
@@ -365,18 +439,24 @@ class WatermarkDialog:
         def stop_repeating_nudge(*args):
             nonlocal repeat_after_id
             if repeat_after_id is not None:
-                dialog_window.after_cancel(repeat_after_id)
+                try:
+                    dialog_window.after_cancel(repeat_after_id)
+                except TclError:
+                    pass
                 repeat_after_id = None
 
         def repeat_nudge(dx: float, dy: float):
             nonlocal repeat_after_id
+            repeat_after_id = None
+            if self.window is not dialog_window or not self._editable():
+                return
             nudge_position(dx, dy)
             repeat_after_id = dialog_window.after(60, repeat_nudge, dx, dy)
 
         def start_repeating_nudge(dx: float, dy: float, *args):
             nonlocal repeat_after_id
             stop_repeating_nudge()
-            if self._busy:
+            if self.window is not dialog_window or not self._editable():
                 return
             nudge_position(dx, dy)
             repeat_after_id = dialog_window.after(300, repeat_nudge, dx, dy)
@@ -400,10 +480,9 @@ class WatermarkDialog:
             button.pack(side="left", padx=1)
             return button
 
-        make_nudge_button("←", -1, 0)
-        make_nudge_button("↑", 0, -1)
-        make_nudge_button("↓", 0, 1)
-        make_nudge_button("→", 1, 0)
+        self.nudge_buttons = [make_nudge_button(label, dx, dy) for label, dx, dy in (
+            ("←", -1, 0), ("↑", 0, -1), ("↓", 0, 1), ("→", 1, 0),
+        )]
 
         keyboard_nudge_bindings = {
             "<Left>": ("<KeyRelease-Left>", -1, 0, False),
@@ -416,7 +495,9 @@ class WatermarkDialog:
             "<Shift-Down>": ("<KeyRelease-Down>", 0, 1, True),
         }
 
-        def start_keyboard_nudge(direction_x: int, direction_y: int, coarse: bool, *args):
+        def start_keyboard_nudge(direction_x: int, direction_y: int, coarse: bool, event):
+            if event.widget in (entry_text, entry_size):
+                return
             dx, dy = get_nudge_delta(direction_x, direction_y, coarse=coarse)
             start_repeating_nudge(dx, dy)
             return "break"
@@ -424,13 +505,24 @@ class WatermarkDialog:
         for sequence, (release_sequence, direction_x, direction_y, coarse) in keyboard_nudge_bindings.items():
             dialog_window.bind(sequence, partial(start_keyboard_nudge, direction_x, direction_y, coarse))
             dialog_window.bind(release_sequence, stop_repeating_nudge)
+        dialog_window.bind("<FocusOut>", stop_repeating_nudge, add="+")
 
         def preview(force_open=True):
+            if (self.window is not dialog_window or not self._draft_active or self._busy
+                    or getattr(self.app, "output_options_locked", False)):
+                return
+            if force_open and not self._editable():
+                return
+            values = self._validated_draft(report_error=force_open) if temp_enabled.get() else {
+                "watermark_color": "#FFA500", "watermark_size": 16,
+            }
+            if values is None:
+                return
             self.app.preview_watermark(
                 temp_enabled.get(),
                 temp_text.get(),
-                temp_color.get(),
-                int(temp_size.get()) if temp_size.get().isdigit() else 16,
+                values["watermark_color"],
+                values["watermark_size"],
                 temp_position.get(),
                 temp_x_ratio.get(),
                 temp_y_ratio.get(),
@@ -442,18 +534,23 @@ class WatermarkDialog:
         def update_preview(*args):
             preview(force_open=False)
 
-        temp_enabled.trace_add("write", update_preview)
-        temp_text.trace_add("write", update_preview)
-        temp_color.trace_add("write", update_preview)
-        temp_size.trace_add("write", update_preview)
+        def on_enabled_change(*args):
+            self._update_controls()
+            update_preview()
+
+        self._trace(temp_enabled, on_enabled_change)
+        self._trace(temp_text, update_preview)
+        self._trace(temp_color, update_preview)
+        self._trace(temp_size, update_preview)
 
         def on_position_change(*args):
+            self.position_label.set(position_labels[temp_position.get()])
             set_preset_position()
             update_preview()
 
-        temp_position.trace_add("write", on_position_change)
-        temp_x_ratio.trace_add("write", update_preview)
-        temp_y_ratio.trace_add("write", update_preview)
+        self._trace(temp_position, on_position_change)
+        self._trace(temp_x_ratio, update_preview)
+        self._trace(temp_y_ratio, update_preview)
 
         btn_preview = ttk.Button(dialog_window, text=get_ui_string(self.app.strings, "btn_preview"), command=lambda: preview(force_open=True))
         btn_preview.grid(row=7, column=0, columnspan=2, pady=10)
@@ -475,33 +572,57 @@ class WatermarkDialog:
         btn_cancel.grid(row=8, column=1, pady=10, padx=10, sticky="W")
         self._cancel_button = btn_cancel
         self._stop_nudge = stop_repeating_nudge
+        self._dependent_controls = [
+            entry_text, current_color_swatch, *preselect_buttons.values(), btn_custom_color,
+            entry_size, option_position, *self.nudge_buttons, btn_preview,
+        ]
+        self.preview_button = btn_preview
+        self.apply_button = btn_apply
         self.set_busy(getattr(self.app, "output_options_locked", False))
         self.app.apply_theme_to_window(dialog_window)
+        self._update_controls()
 
     def apply_changes(self):
         """Publish the local draft only when no operation owns the output options."""
         if not self._draft_active or self._busy or getattr(self.app, "output_options_locked", False):
             return
         self._stop_nudge()
+        values = self._validated_draft(report_error=True)
+        if values is None:
+            return
+        self.app.app_settings.update_settings(values)
+        self.close()
+
+    def _validated_draft(self, report_error=False):
+        """Validate without mutating raw edits or publishing partial settings."""
         draft = self._draft()
-        values = {
+        color = validated_highlight_color(draft["color"], "")
+        try:
+            size = int(draft["size"]) if draft["size"].isascii() and draft["size"].isdigit() else 0
+        except ValueError:
+            size = 0
+        error = "wm_invalid_color" if not color else "wm_invalid_size" if not 1 <= size <= 100 else None
+        if error:
+            if report_error:
+                show_error(self.app, get_ui_string(self.app.strings, "error"), get_ui_string(self.app.strings, error))
+            return None
+        return {
             "watermark_enabled": "True" if draft["enabled"] else "False",
             "watermark_text": draft["text"],
-            "watermark_color": draft["color"],
-            "watermark_size": int(draft["size"]) if draft["size"].isdigit() else 16,
+            "watermark_color": color,
+            "watermark_size": size,
             "watermark_position": draft["position"],
             "watermark_x_ratio": draft["x_ratio"],
             "watermark_y_ratio": draft["y_ratio"],
         }
-        self.app.app_settings.update_settings(values)
-        self.close()
 
     def refresh_ui_strings(self):
         """Rebuild translated controls while retaining the raw, uncommitted draft."""
         try:
             if self.window and self.window.winfo_exists():
                 draft = self._draft()
-                self.close()
+                self.close(close_preview=False)
                 self.open(draft)
+                self.app.preview_window_handler.last_origin = self.window
         except Exception as exc:
             logging.getLogger("dialogs").exception("Unexpected error refreshing watermark dialog: %s", exc)

@@ -35,7 +35,7 @@ def _render_watermark_layer(
     y_ratio: float,
 ) -> tuple[Image.Image | None, tuple[float, float] | None]:
     """Render the watermark as its own transparent image and return its canvas position."""
-    if not text:
+    if not text.strip():
         return None, None
 
     try:
@@ -196,13 +196,21 @@ class PreviewWindow:
     def close(self) -> None:
         """Close the preview window if it is open."""
         if self.is_open():
-            self.window.destroy()
+            window, self.window = self.window, None
+            window.destroy()
         self.window = None
         self.canvas = None
         self.page_item = None
         self.watermark_item = None
         self.page_photo = None
         self.watermark_photo = None
+        self.last_watermark_data = {}
+        self.last_origin = None
+
+    def _on_destroy(self, event):
+        """Release preview images and draft references on direct destruction."""
+        if event.widget is self.window:
+            self.close()
 
     def _create_preview_window(self, page_image: Image.Image, watermark_layer: Image.Image | None, watermark_position):
         """Create the preview window."""
@@ -220,6 +228,7 @@ class PreviewWindow:
         self.window.transient(None)
         self.window.grab_release()
         self.window.protocol("WM_DELETE_WINDOW", self.close)
+        self.window.bind("<Destroy>", self._on_destroy, add="+")
 
         self.canvas = Canvas(self.window, width=page_image.width, height=page_image.height, highlightthickness=0, borderwidth=0)
         self.canvas.pack()

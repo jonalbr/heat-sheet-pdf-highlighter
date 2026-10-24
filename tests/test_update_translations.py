@@ -99,6 +99,7 @@ def test_extract_strings_builds_expected_command(tmp_path, monkeypatch):
                 "--keyword=ngettext:1,2",
                 "--keyword=n_:1,2",
                 "--keyword=_:1",
+                "--keyword=_p:1c,2",
                 "--keyword=gettext:1",
                 "--keyword=self._:1",
                 "--keyword=self.n_:1,2",
@@ -316,3 +317,49 @@ def test_main_reports_command_error(monkeypatch, capsys):
 
     assert translations.main([]) == 7
     assert "msgfmt" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("plural", [False, True])
+def test_new_translation_entry_keeps_its_context(plural):
+    from locales import po_update_and_review as review
+
+    entry = polib.POEntry(msgctxt="watermark_position", msgid="Custom",
+                         msgid_plural="Custom positions" if plural else "")
+    added = review.handle_new_entry(entry, interactive=False)
+    assert added.msgctxt == entry.msgctxt
+    assert added.msgid_plural == entry.msgid_plural
+
+
+def test_translation_review_distinguishes_identical_words_in_different_contexts(tmp_path, monkeypatch):
+    from locales import po_update_and_review as review
+
+    english, german = polib.POFile(), polib.POFile()
+    for context in (None, "watermark_position"):
+        english.append(polib.POEntry(msgid="Custom", msgctxt=context, msgstr="Custom"))
+        german.append(polib.POEntry(msgid="Custom", msgctxt=context, msgstr="Frei alt" if context else "Weitere alt",
+                                    flags=["fuzzy"]))
+    en_path, de_path = tmp_path / "en.po", tmp_path / "de.po"
+    english.save(en_path)
+    german.save(de_path)
+    monkeypatch.setattr(review, "prompt_for_translation", lambda current, interactive: current.removesuffix(" alt"))
+    review.review_and_update_de(en_path, de_path, interactive=True)
+    result = polib.pofile(de_path)
+    assert result.find("Custom", msgctxt="watermark_position").msgstr == "Frei"
+    assert next(entry for entry in result if entry.msgctxt is None).msgstr == "Weitere"
+    assert all(not entry.flags for entry in result)
+
+
+def test_translation_review_adds_missing_context_without_reusing_color_translation(tmp_path):
+    from locales import po_update_and_review as review
+
+    english, german = polib.POFile(), polib.POFile()
+    english.append(polib.POEntry(msgid="Custom", msgctxt="watermark_position", msgstr="Custom"))
+    german.append(polib.POEntry(msgid="Custom", msgstr="Weitere"))
+    en_path, de_path = tmp_path / "en.po", tmp_path / "de.po"
+    english.save(en_path)
+    german.save(de_path)
+    review.review_and_update_de(en_path, de_path, interactive=False)
+    result = polib.pofile(de_path)
+    assert len(result) == 2
+    assert result.find("Custom", msgctxt="watermark_position").msgstr == ""
+    assert next(entry for entry in result if entry.msgctxt is None).msgstr == "Weitere"

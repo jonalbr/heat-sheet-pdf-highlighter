@@ -22,6 +22,8 @@ def get_ui_string(strings: Dict[str, str], key: str, default: str | None = None)
 
 def build_strings(_: Callable[[str], str]) -> Dict[str, str]:
     """Return a dict of translated UI strings using the provided `_`."""
+    # A position's "Custom" has a different German label from the color picker.
+    _p = getattr(getattr(_, "__self__", None), "pgettext", lambda context, text: text)
 
     # ---- General app text / statuses shown broadly ----
     general_strings = {
@@ -135,6 +137,11 @@ def build_strings(_: Callable[[str], str]) -> Dict[str, str]:
         "wm_custom_color": _("Custom"),
         "wm_enable": _("Enable Watermark"),
         "wm_pos": _("Position"),
+        "wm_pos_top": _("Top"),
+        "wm_pos_bottom": _("Bottom"),
+        "wm_pos_custom": _p("watermark_position", "Custom"),
+        "wm_invalid_color": _("Please choose a color in #RRGGBB format."),
+        "wm_invalid_size": _("Please enter a whole number from 1 to 100 for the watermark size."),
         "wm_preview_window": _("Watermark Preview"),
         "wm_settings": _("Watermark Settings"),
         "wm_size": _("Size"),
@@ -277,6 +284,10 @@ def build_strings(_: Callable[[str], str]) -> Dict[str, str]:
 
 # Plural strings - keep as raw strings for proper ngettext handling
 plural_strings = {
+    "watermarked_pages": {
+        "singular": "Watermark applied to {0} page.",
+        "plural": "Watermark applied to {0} pages.",
+    },
     "processing_complete": {
         "singular": "Processing complete: {0} match found. {1} skipped.",
         "plural": "Processing complete: {0} matches found. {1} skipped.",
@@ -291,5 +302,6 @@ plural_strings = {
 # xgettext hint - never executed, only for extraction
 def _xgettext_dummy(n_):
     # Keep the ngettext patterns in source for translation extraction tools
+    n_("Watermark applied to {0} page.", "Watermark applied to {0} pages.", 1)
     n_("Processing complete: {0} match found. {1} skipped.", "Processing complete: {0} matches found. {1} skipped.", 1)
     n_("Processed: {0}/{1} pages. {2} match found. {3} skipped.", "Processed: {0}/{1} pages. {2} matches found. {3} skipped.", 1)

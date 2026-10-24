@@ -97,6 +97,7 @@ def test_reset_synchronizes_every_setting_draft_and_next_job(app, tmp_path, monk
     app.watermark_dialog.open()
     app.filter_dialog.names_entry.insert("end", ", Uncommitted")
     app.watermark_dialog._draft_vars["text"].set("Uncommitted watermark")
+    watermark_variables = list(app.watermark_dialog._draft_vars.values())
     app.preview_window_handler.window = tk.Toplevel(app.root)
     app.preview_window_handler.last_watermark_data = {"text": "Old preview"}
     app.preview_window_handler.last_origin = app.watermark_dialog.window
@@ -129,6 +130,9 @@ def test_reset_synchronizes_every_setting_draft_and_next_job(app, tmp_path, monk
     assert app.strings["btn_start"] == "Start"
     assert app.filter_dialog.window is None
     assert app.watermark_dialog.window is None
+    assert app.watermark_dialog._draft_vars == {}
+    assert app.watermark_dialog._traces == []
+    assert all(not variable.trace_info() for variable in watermark_variables)
     assert not app.preview_window_handler.is_open()
     assert app.preview_window_handler.last_watermark_data == {}
     assert app.preview_window_handler.last_origin is None
@@ -268,3 +272,26 @@ def test_cancelled_reset_retains_open_drafts(app, monkeypatch):
     assert app.filter_dialog._draft()["names"] == "Keep draft"
     assert app.watermark_dialog._draft()["text"] == "Keep watermark draft"
     assert app.app_settings.settings_file.read_bytes() == before
+
+
+def test_app_language_theme_and_shutdown_preserve_then_discard_watermark_draft(app):
+    app.watermark_dialog.open()
+    dialog = app.watermark_dialog
+    dialog._draft_vars["enabled"].set(1)
+    dialog._draft_vars["text"].set("Uncommitted")
+    dialog._draft_vars["size"].set("unfinished")
+    draft = dialog._draft()
+    saved = dict(app._collect_processing_options().watermark)
+    for language, theme in (("de", "dark"), ("en", "light")):
+        app.on_language_change(language)
+        app._apply_theme(theme)
+        assert dialog._draft() == draft
+        assert str(dialog.size_entry["state"]) == "normal"
+        assert dict(app._collect_processing_options().watermark) == saved
+    variables = list(dialog._draft_vars.values())
+    app.close()
+    assert dialog.window is None
+    assert dialog._draft_vars == {}
+    assert not dialog._traces
+    assert all(not variable.trace_info() for variable in variables)
+    assert app.app_settings.snapshot()["watermark_text"] == saved["watermark_text"]

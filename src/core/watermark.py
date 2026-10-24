@@ -3,6 +3,7 @@ Watermark functionality
 """
 
 from typing import Dict
+import re
 
 from pymupdf import Page, Rect
 from PIL import ImageFont, ImageDraw
@@ -65,10 +66,14 @@ def add_watermark(
     position: str,
     x_ratio: float | None = None,
     y_ratio: float | None = None,
-):
+) -> bool:
     """
     Adds a watermark on the given PDF page.
     """
+    if (not isinstance(text, str) or not text.strip()
+            or isinstance(font_size, bool) or not isinstance(font_size, int) or not 1 <= font_size <= 100
+            or not isinstance(color_hex, str) or not re.fullmatch(r"#[0-9a-fA-F]{6}", color_hex)):
+        return False
     # Convert hex color to normalized RGB tuple
     r = int(color_hex[1:3], 16) / 255
     g = int(color_hex[3:5], 16) / 255
@@ -83,22 +88,28 @@ def add_watermark(
     text_height = bbox[3] - bbox[1]
     text_x, text_y = calculate_text_position(rect.width, rect.height, text_width, text_height, position, x_ratio, y_ratio)
     # Pillow measures top-left text bounds, while PyMuPDF insert_text expects a baseline point.
-    page.insert_text((rect.x0 + text_x, rect.y0 + text_y + text_height), text, fontsize=font_size, color=(r, g, b))
+    return page.insert_text(
+        (rect.x0 + text_x, rect.y0 + text_y + text_height), text, fontsize=font_size, color=(r, g, b)
+    ) > 0
 
 
-def watermark_pdf_page(page: Page, settings: Dict):
+def watermark_pdf_page(page: Page, settings: Dict) -> bool:
     """
-    Applies watermark on a PDF page using settings.
+    Return whether text was inserted; insertion errors remain processing errors.
     """
     if settings.get("watermark_enabled") == "True" and settings.get("watermark_text"):
         text = settings.get("watermark_text")
-        font_size = int(settings.get("watermark_size", 16))
+        size = settings.get("watermark_size", 16)
+        if not re.fullmatch(r"[0-9]{1,3}", str(size)):
+            return False
+        font_size = int(size)
         color_hex = settings.get("watermark_color")
         position = settings.get("watermark_position")
         x_ratio = settings.get("watermark_x_ratio", DEFAULT_X_RATIO)
         y_ratio = settings.get("watermark_y_ratio", DEFAULT_Y_RATIO)
         if text and font_size > 0 and color_hex and position in ["top", "bottom", "custom"]:
-            add_watermark(page, text=text, font_size=font_size, color_hex=color_hex, position=position, x_ratio=x_ratio, y_ratio=y_ratio)
+            return add_watermark(page, text=text, font_size=font_size, color_hex=color_hex, position=position, x_ratio=x_ratio, y_ratio=y_ratio)
+    return False
 
 
 def overlay_watermark_on_image(

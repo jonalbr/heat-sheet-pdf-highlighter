@@ -5,10 +5,12 @@ import threading
 from types import SimpleNamespace
 
 import pytest
+from pymupdf import Document as PdfDocument
 
 from src.gui import main_window
 from src.gui.main_window import GuiRequest, PDFHighlighterApp, ProcessingJob
 from src.gui.ui_strings import build_strings, plural_strings
+from src.utils.localization import setup_translation
 
 
 class Var:
@@ -139,6 +141,103 @@ def finish(app, job):
     job.worker.join(timeout=2)
     assert not job.worker.is_alive()
     app._poll_work()
+
+
+@pytest.mark.parametrize("matches,skipped,applied,export", [
+    (0, 0, (False, False), False), (2, 2, (False, False), False),
+    (1, 0, (False, False), True), (0, 0, (True, True), True),
+    (2, 2, (False, True), True), (2, 1, (True, True), True),
+])
+def test_export_decision_uses_applied_changes_and_counts_watermarked_pages(app, monkeypatch, matches, skipped, applied, export):
+    targets, saves = [], []
+    monkeypatch.setattr(main_window, "highlight_matching_data", lambda **kwargs: (matches, skipped))
+    monkeypatch.setattr(main_window, "watermark_pdf_page", lambda page, settings: applied[page])
+    monkeypatch.setattr(app, "_ask_output_file", lambda path: targets.append(path) or "out.pdf")
+    monkeypatch.setattr(main_window, "save_compact_pdf", lambda document, path: saves.append(path))
+    app.start_processing()
+    finish(app, app._job)
+    assert bool(targets) is export
+    assert bool(saves) is export
+    if export:
+        assert app.last_processing_result == ("saved", matches * 2, skipped * 2, None, sum(applied))
+        assert ("Watermark applied" in app.infos[0][1]) is any(applied)
+    else:
+        assert app.last_processing_result == ("info_key", "val_nothing")
+    assert all(document.closed for document in app.documents)
+
+
+@pytest.mark.parametrize("enabled,text,expected_pages", [
+    ("True", "Watermark only", 2), ("True", "", 0), ("True", " \t\n ", 0),
+    ("False", "Disabled watermark", 0),
+])
+def test_watermark_only_export_with_real_pdf(app, monkeypatch, tmp_path, enabled, text, expected_pages):
+    from src.core.watermark import watermark_pdf_page
+    from src.core.pdf_processor import highlight_matching_data
+
+    source, output = tmp_path / "source.pdf", tmp_path / "output.pdf"
+    with PdfDocument() as document:
+        document.new_page(width=400, height=300)
+        document.new_page(width=400, height=300)
+        document.save(source)
+    app.input_file_full_path = str(source)
+    app.app_settings.settings.update(watermark_enabled=enabled, watermark_text=text)
+    asked = []
+    monkeypatch.setattr(main_window, "Document", PdfDocument)
+    monkeypatch.setattr(main_window, "highlight_matching_data", highlight_matching_data)
+    monkeypatch.setattr(main_window, "watermark_pdf_page", watermark_pdf_page)
+    monkeypatch.setattr(main_window, "save_compact_pdf", lambda document, path: document.save(path))
+    monkeypatch.setattr(app, "_ask_output_file", lambda path: asked.append(path) or str(output))
+    app.start_processing()
+    finish(app, app._job)
+    assert output.exists() is bool(expected_pages)
+    assert bool(asked) is bool(expected_pages)
+    if expected_pages:
+        assert app.last_processing_result == ("saved", 0, 0, None, expected_pages)
+        with PdfDocument(output) as document:
+            assert all(text in page.get_text() for page in document)
+    else:
+        assert app.last_processing_result == ("info_key", "val_nothing")
+
+
+@pytest.mark.parametrize("language,count", [("en", 1), ("en", 2), ("de", 1), ("de", 2)])
+def test_watermark_page_completion_uses_translated_plural(app, monkeypatch, language, count):
+    gettext, app.n_ = setup_translation(language)
+    app.strings = build_strings(gettext)
+    monkeypatch.setattr(main_window, "highlight_matching_data", lambda **kwargs: (0, 0))
+    monkeypatch.setattr(main_window, "watermark_pdf_page", lambda page, settings: page < count)
+    app.start_processing()
+    finish(app, app._job)
+    expected = (f"Watermark applied to {count} " + ("page." if count == 1 else "pages.")) if language == "en" else (
+        f"Wasserzeichen auf {count} " + ("Seite angewendet." if count == 1 else "Seiten angewendet."))
+    assert expected in app.infos[0][1]
+
+
+def test_cancel_after_watermark_does_not_offer_export(app, monkeypatch):
+    monkeypatch.setattr(main_window, "highlight_matching_data", lambda **kwargs: (0, 0))
+
+    def watermark(page, settings):
+        app._job.cancel.set()
+        return True
+
+    monkeypatch.setattr(main_window, "watermark_pdf_page", watermark)
+    monkeypatch.setattr(app, "_ask_output_file", lambda path: pytest.fail("Offered cancelled export"))
+    app.start_processing()
+    finish(app, app._job)
+    assert app.last_processing_result == ("aborted",)
+    assert app.infos == []
+
+
+def test_watermark_insertion_failure_is_a_processing_failure(app, monkeypatch):
+    def fail(*args):
+        raise RuntimeError("watermark insertion failed")
+
+    monkeypatch.setattr(main_window, "watermark_pdf_page", fail)
+    monkeypatch.setattr(app, "_ask_output_file", lambda path: pytest.fail("Offered failed export"))
+    app.start_processing()
+    finish(app, app._job)
+    assert app.last_processing_result == ("failed", "watermark insertion failed")
+    assert app.infos == []
+    assert app.errors
 
 
 def test_snapshot_is_used_between_pages_and_worker_never_reads_tk(app, monkeypatch):
@@ -314,7 +413,10 @@ def test_ocr_confirmation_and_save_use_captured_options(app, monkeypatch):
         kwargs["progress_callback"](2, 2)
 
     monkeypatch.setattr(main_window, "create_searchable_ocr_pdf_in_process", ocr)
-    monkeypatch.setattr(main_window, "save_pdf_path_in_process", lambda *args, **kwargs: save_calls.append(kwargs))
+    saved_result = SimpleNamespace(reduction_failed=True, output_size=20 * 1024 * 1024)
+    monkeypatch.setattr(main_window, "watermark_pdf_page", lambda *args: True)
+    monkeypatch.setattr(main_window, "save_pdf_path_in_process",
+                        lambda *args, **kwargs: save_calls.append(kwargs) or saved_result)
     app.start_processing()
     job = app._job
     finish(app, job)
@@ -322,6 +424,10 @@ def test_ocr_confirmation_and_save_use_captured_options(app, monkeypatch):
     assert ocr_calls[0]["language"] == "eng"
     assert save_calls[0]["reduce_large_outputs"] is True
     assert save_calls[0]["is_cancelled"].__self__ is job.cancel
+    assert app.last_processing_result[3] is saved_result
+    assert app.last_processing_result[4] == 2
+    assert "Watermark applied to 2 pages." in app.infos[0][1]
+    assert "20.0" in app.infos[0][1]
     from pathlib import Path
     assert all(not Path(path).exists() for path in paths)
     assert all(doc.closed for doc in app.documents)

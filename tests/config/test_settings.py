@@ -147,6 +147,27 @@ def test_theme_force_env_invalid_fallback_light(settings_file, monkeypatch):
     assert app.settings["theme_mode"] == "light"
 
 
+@pytest.mark.parametrize("color,expected", [
+    ("#abcdef", "#ABCDEF"), ("#000000", "#000000"), ("#", "#FFA500"),
+    ("#123", "#FFA500"), ("#1234567", "#FFA500"), ("#gg0000", "#FFA500"),
+    ("red", "#FFA500"), (None, "#FFA500"), (["#123456"], "#FFA500"),
+])
+def test_watermark_colors_are_complete_rgb_and_normalized(settings_file, color, expected):
+    app = AppSettings(settings_file)
+    app.update_setting("watermark_color", color)
+    assert AppSettings(settings_file).snapshot()["watermark_color"] == expected
+
+
+@pytest.mark.parametrize("size,expected", [
+    (1, 1), (100, 100), ("24", 24), (0, 16), (101, 16), (-1, 16),
+    ("1.5", 16), ("", 16), ("²", 16), (None, 16), (True, 16),
+])
+def test_watermark_size_bounds_persist_consistently(settings_file, size, expected):
+    app = AppSettings(settings_file)
+    app.update_setting("watermark_size", size)
+    assert AppSettings(settings_file).snapshot()["watermark_size"] == expected
+
+
 def test_validator_coercions(settings_file):
     app = AppSettings(settings_file)
     # Directly tamper and revalidate

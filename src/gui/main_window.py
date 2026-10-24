@@ -1262,9 +1262,9 @@ class PDFHighlighterApp:
                 self._raise_if_cancelled(job)
                 document = Document(ocr_temp_file)
             self._post_job(job, "phase", "processing", "status_processing")
-            total_matches, total_skipped = self._process_document_pages(job, document, options)
+            total_matches, total_skipped, watermark_pages = self._process_document_pages(job, document, options)
             self._raise_if_cancelled(job)
-            if total_matches - total_skipped == 0:
+            if total_matches - total_skipped <= 0 and watermark_pages == 0:
                 outcome = ("info_key", "val_nothing")
                 return
             output_file = self._request_job_ui(job, lambda: self._ask_output_file(job.input_file))
@@ -1275,7 +1275,7 @@ class PDFHighlighterApp:
             self._post_job(job, "phase", "saving", "status_saving")
             save_result = self._save_processed_document(job, document, output_file, bool(ocr_temp_file), options)
             self._raise_if_cancelled(job)
-            outcome = ("saved", total_matches, total_skipped, save_result)
+            outcome = ("saved", total_matches, total_skipped, save_result, watermark_pages)
         except OcrCancelled:
             outcome = ("aborted",)
         except Exception as exc:
@@ -1306,7 +1306,7 @@ class PDFHighlighterApp:
         )
 
     def _process_document_pages(self, job, document, options):
-        total_matches = total_skipped = 0
+        total_matches = total_skipped = watermark_pages = 0
         watermark = dict(options.watermark)
         for index in range(len(document)):
             self._raise_if_cancelled(job)
@@ -1318,9 +1318,10 @@ class PDFHighlighterApp:
             total_matches += matches
             total_skipped += skipped
             self._raise_if_cancelled(job)
-            watermark_pdf_page(document[index], watermark)
+            if watermark_pdf_page(document[index], watermark):
+                watermark_pages += 1
             self._post_job(job, "pages", index + 1, len(document), total_matches, total_skipped)
-        return total_matches, total_skipped
+        return total_matches, total_skipped, watermark_pages
 
     def _save_processed_document(self, job, document, output_file, ocr_used, options):
         self._raise_if_cancelled(job)
@@ -1382,8 +1383,10 @@ class PDFHighlighterApp:
         if self._closing:
             return
         if result[0] == "saved":
-            _, matches, skipped, save_result = result
+            _, matches, skipped, save_result, watermark_pages = result
             message = self.get_plural_string("processing_complete", matches).format(matches, skipped)
+            if watermark_pages:
+                message += "\n" + self.get_plural_string("watermarked_pages", watermark_pages).format(watermark_pages)
             if save_result and save_result.reduction_failed:
                 message += "\n\n" + get_ui_string(self.strings, "ocr_reduction_failed").format(save_result.output_size / (1024 * 1024))
             show_info(self, get_ui_string(self.strings, "status_done"), message)

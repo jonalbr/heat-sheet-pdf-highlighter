@@ -85,10 +85,11 @@ def handle_new_entry(en_entry, interactive=False):
     print("\n[NEW] English:\n" + en_entry.msgid)
     if en_entry.msgid_plural:
         msgstr_plural = prompt_for_plural_translation(en_entry.msgid_plural, interactive=interactive)
-        return polib.POEntry(msgid=en_entry.msgid, msgid_plural=en_entry.msgid_plural, msgstr_plural=msgstr_plural)
+        return polib.POEntry(msgid=en_entry.msgid, msgctxt=en_entry.msgctxt,
+                             msgid_plural=en_entry.msgid_plural, msgstr_plural=msgstr_plural)
     else:
         translation = prompt_for_translation(interactive=interactive)
-        return polib.POEntry(msgid=en_entry.msgid, msgstr=translation)
+        return polib.POEntry(msgid=en_entry.msgid, msgctxt=en_entry.msgctxt, msgstr=translation)
 
 
 def handle_update_entry(en_entry, de_entry, interactive=False):
@@ -115,11 +116,11 @@ def handle_update_entry(en_entry, de_entry, interactive=False):
 def review_and_update_de(en_po_path, de_po_path, interactive=False):
     en_po = polib.pofile(en_po_path)
     de_po = polib.pofile(de_po_path)
-    de_dict = {entry.msgid: entry for entry in de_po}
+    de_dict = {(entry.msgctxt, entry.msgid): entry for entry in de_po}
     changed = False
 
     for en_entry in en_po:
-        de_entry = de_dict.get(en_entry.msgid)
+        de_entry = de_dict.get((en_entry.msgctxt, en_entry.msgid))
         if not de_entry:
             new_entry = handle_new_entry(en_entry, interactive=interactive)
             de_po.append(new_entry)
