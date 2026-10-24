@@ -22,7 +22,8 @@ from PIL import Image
 import pymupdf
 from pymupdf import Document, Page, Rect
 
-from ..models import HighlightMode
+from ..constants import HIGHLIGHT_COLOR_DEFAULT, HIGHLIGHT_COLOR_NAMES
+from ..models import MarkingMode
 from .pdf_processor import highlight_matching_data
 from .watermark import watermark_pdf_page
 
@@ -43,9 +44,10 @@ class OcrCancelled(Exception):
 class HighlightContext:
     search_str: str
     only_relevant: bool
-    filter_enabled: bool
-    names: list[str]
-    highlight_mode: HighlightMode
+    names: tuple[str, ...]
+    marking_mode: MarkingMode
+    highlight_color_default: str = HIGHLIGHT_COLOR_DEFAULT
+    highlight_color_names: str = HIGHLIGHT_COLOR_NAMES
 
 
 @dataclass(frozen=True)
@@ -312,9 +314,8 @@ def _save_pdf_process_worker(
                 highlight_context=HighlightContext(
                     search_str="",
                     only_relevant=False,
-                    filter_enabled=False,
-                    names=[],
-                    highlight_mode=HighlightMode.NAMES_DIFF_COLOR,
+                    names=(),
+                    marking_mode=MarkingMode.ALL_MATCHES,
                 ),
                 settings={},
                 reduce_large_outputs=reduce_large_outputs,
@@ -801,9 +802,10 @@ def build_reduced_searchable_pdf(
                 page=output_page,
                 search_str=highlight_context.search_str,
                 only_relevant=highlight_context.only_relevant,
-                filter_enabled=highlight_context.filter_enabled,
                 names=highlight_context.names,
-                highlight_mode=highlight_context.highlight_mode,
+                marking_mode=highlight_context.marking_mode,
+                highlight_color_default=highlight_context.highlight_color_default,
+                highlight_color_names=highlight_context.highlight_color_names,
             )
             watermark_pdf_page(output_page, settings)
 

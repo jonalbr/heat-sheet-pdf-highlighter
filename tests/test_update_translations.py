@@ -2,6 +2,7 @@ from pathlib import Path
 import subprocess
 
 import pytest
+import polib
 
 from locales import update_translations as translations
 
@@ -170,6 +171,41 @@ def test_review_translations_uses_current_python_and_optional_batch_flag(monkeyp
     ]
 
 
+def test_remove_obsolete_entries_preserves_active_ocr_and_fuzzy_messages(tmp_path):
+    try:
+        msgattrib = translations.find_gettext_tool("msgattrib", env_var="MSGATTRIB_PATH")
+    except translations.TranslationToolError:
+        pytest.skip("GNU gettext msgattrib is unavailable")
+    messages = _make_locale(tmp_path, "de", with_po=True)
+    _make_locale(tmp_path, "en", with_po=False)
+    po = polib.POFile()
+    po.metadata = {"Content-Type": "text/plain; charset=UTF-8"}
+    po.append(polib.POEntry(msgid="OCR Required", msgstr="OCR erforderlich"))
+    po.append(polib.POEntry(msgid="Current OCR prompt", msgstr="Aktueller OCR-Hinweis", flags=["fuzzy"]))
+    po.append(polib.POEntry(msgid="Retired OCR prompt", msgstr="Alter OCR-Hinweis", obsolete=True))
+    po.save(str(messages / "custom.po"))
+
+    translations.remove_obsolete_entries(msgattrib=msgattrib, locales_dir=tmp_path, po_file="custom.po")
+
+    cleaned = polib.pofile(str(messages / "custom.po"))
+    assert not cleaned.obsolete_entries()
+    assert cleaned.find("OCR Required").msgstr == "OCR erforderlich"
+    assert "fuzzy" in cleaned.find("Current OCR prompt").flags
+    assert (messages / "base.po").read_text() == 'msgid ""\nmsgstr ""\n'
+
+
+def test_checked_in_catalogs_contain_current_messages_and_no_obsolete_entries():
+    from src.gui.ui_strings import build_strings, plural_strings
+
+    expected = set(build_strings(lambda text: text).values())
+    expected.update(strings["singular"] for strings in plural_strings.values())
+    for language in ("de", "en"):
+        po = polib.pofile(str(translations.SCRIPT_DIR / language / "LC_MESSAGES" / "base.po"))
+        assert not po.obsolete_entries()
+        assert {entry.msgid for entry in po} == expected
+        assert po.find("OCR Required").translated()
+
+
 def test_compile_mo_files_skips_locales_without_requested_po(tmp_path, monkeypatch):
     _make_locale(tmp_path, "de", with_po=True)
     _make_locale(tmp_path, "en", with_po=False)
@@ -209,6 +245,11 @@ def test_update_translations_runs_full_workflow(monkeypatch):
     )
     monkeypatch.setattr(
         translations,
+        "remove_obsolete_entries",
+        lambda **kwargs: calls.append(("obsolete", kwargs["msgattrib"], kwargs["po_file"])),
+    )
+    monkeypatch.setattr(
+        translations,
         "review_translations",
         lambda **kwargs: calls.append(("review", kwargs["non_interactive"], kwargs["po_file"])),
     )
@@ -224,6 +265,7 @@ def test_update_translations_runs_full_workflow(monkeypatch):
     assert calls == [
         ("extract", Path("xgettext")),
         ("merge", Path("msginit"), Path("msgmerge"), "custom.po"),
+        ("obsolete", Path("msgattrib"), "custom.po"),
         ("review", True, "custom.po"),
         ("compile", Path("msgfmt"), "custom.po"),
         ("cleanup",),

@@ -116,6 +116,16 @@ def review_translations(*, non_interactive: bool, po_file: str = DEFAULT_PO_FILE
     run(cmd)
 
 
+def remove_obsolete_entries(
+    *, msgattrib: Path, locales_dir: Path = SCRIPT_DIR, po_file: str = DEFAULT_PO_FILE,
+) -> None:
+    """Remove retired messages after merging, before review can re-add them."""
+    for locale_dir in locale_directories(locales_dir):
+        po_path = locale_dir / "LC_MESSAGES" / po_file
+        if po_path.exists():
+            run([str(msgattrib), "--no-obsolete", "-o", str(po_path), str(po_path)])
+
+
 def compile_mo_files(*, msgfmt: Path, locales_dir: Path = SCRIPT_DIR, po_file: str = DEFAULT_PO_FILE) -> None:
     """Compile every available PO file into its MO sibling."""
     for locale_dir in locale_directories(locales_dir):
@@ -137,8 +147,10 @@ def update_translations(*, non_interactive: bool, compile_only: bool, po_file: s
         xgettext = find_gettext_tool("xgettext", env_var="XGETTEXT_PATH")
         msgmerge = find_gettext_tool("msgmerge", env_var="MSGMERGE_PATH")
         msginit = find_gettext_tool("msginit", env_var="MSGINIT_PATH")
+        msgattrib = find_gettext_tool("msgattrib", env_var="MSGATTRIB_PATH")
         extract_strings(xgettext)
         update_po_files(msginit=msginit, msgmerge=msgmerge, po_file=po_file)
+        remove_obsolete_entries(msgattrib=msgattrib, po_file=po_file)
         review_translations(non_interactive=non_interactive, po_file=po_file)
     compile_mo_files(msgfmt=msgfmt, po_file=po_file)
     remove_po_backups()

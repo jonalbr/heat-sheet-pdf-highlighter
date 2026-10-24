@@ -4,7 +4,6 @@ Main application window
 
 from contextlib import suppress
 from dataclasses import dataclass
-import re
 import os
 import logging
 import queue
@@ -30,9 +29,9 @@ from ..core.ocr import (
     save_compact_pdf,
     save_pdf_path_in_process,
 )
-from ..core.pdf_processor import highlight_matching_data
+from ..core.pdf_processor import highlight_matching_data, parse_names
 from ..core.watermark import watermark_pdf_page
-from ..models import HighlightMode
+from ..models import MarkingMode
 from ..utils.localization import setup_translation
 from ..utils.theme import ThemeColors, get_effective_theme, get_theme_colors, set_windows_title_bar_theme
 from ..utils.updater import UpdateChecker
@@ -60,9 +59,10 @@ OCR_LANGUAGE_CHOICES = (
 class ProcessingOptions:
     search_str: str
     only_relevant: bool
-    filter_enabled: bool
-    names: list[str]
-    highlight_mode: HighlightMode
+    names: tuple[str, ...]
+    marking_mode: MarkingMode
+    highlight_color_default: str
+    highlight_color_names: str
 
 
 class PDFHighlighterApp:
@@ -302,13 +302,15 @@ class PDFHighlighterApp:
         self.names_var.set(self.app_settings.settings.get("names", ""))
         self.names_var.trace_add("write", lambda *args: self.app_settings.update_setting("names", self.names_var.get()))
 
-        self.highlight_mode_var = StringVar()
-        self.highlight_mode_var.set(self.app_settings.settings.get("highlight_mode", HighlightMode.NAMES_DIFF_COLOR.name))
-        self.highlight_mode_var.trace_add("write", lambda *args: self.app_settings.update_setting("highlight_mode", self.highlight_mode_var.get()))
-
-        self.enable_filter_var = IntVar()
-        self.enable_filter_var.set(self.app_settings.settings.get("enable_filter", 0))
-        self.enable_filter_var.trace_add("write", lambda *args: self.app_settings.update_setting("enable_filter", self.enable_filter_var.get()))
+        self.marking_mode_var = StringVar(value=self.app_settings.settings["marking_mode"])
+        self.marking_mode_var.trace_add(
+            "write", lambda *args: self.app_settings.update_setting("marking_mode", self.marking_mode_var.get())
+        )
+        self.highlight_color_default_var = StringVar(value=self.app_settings.settings["highlight_color_default"])
+        self.highlight_color_names_var = StringVar(value=self.app_settings.settings["highlight_color_names"])
+        for key in ("highlight_color_default", "highlight_color_names"):
+            variable = getattr(self, f"{key}_var")
+            variable.trace_add("write", lambda *args, key=key, var=variable: self.app_settings.update_setting(key, var.get()))
 
         # Filter and watermark buttons
         self.button_filter = ttk.Button(
@@ -723,6 +725,8 @@ class PDFHighlighterApp:
             try:
                 if window.winfo_exists():
                     self.apply_theme_to_window(window)
+                    if hasattr(owner, "refresh_theme"):
+                        owner.refresh_theme()
             except Exception as e:
                 logging.getLogger("main_window").debug("Could not theme %s window: %s", owner_name, e)
 
@@ -755,6 +759,9 @@ class PDFHighlighterApp:
         except Exception as e:
             logging.getLogger("main_window").debug("Could not close preview window: %s", e)
 
+        filter_dialog = getattr(self, "filter_dialog", None)
+        if filter_dialog is not None and hasattr(filter_dialog, "close"):
+            filter_dialog.close()
         for owner_name in ("filter_dialog", "watermark_dialog", "dev_tools"):
             owner = getattr(self, owner_name, None)
             window = getattr(owner, "window", None)
@@ -955,12 +962,16 @@ class PDFHighlighterApp:
             self.finalize_processing()
             return
 
-        threading.Thread(target=self.process_pdf, args=(input_file,), daemon=True).start()
+        options = self._collect_processing_options()
+        if options.marking_mode != MarkingMode.ALL_MATCHES and not options.names:
+            show_error(self, get_ui_string(self.strings, "error"), get_ui_string(self.strings, "flt_names_required"))
+            self.finalize_processing()
+            return
+        threading.Thread(target=self.process_pdf, args=(input_file, options), daemon=True).start()
 
-    def process_pdf(self, input_file: str):
+    def process_pdf(self, input_file: str, options: ProcessingOptions):
         """Process the PDF file with highlighting and watermarks."""
         self.processing_active = True
-        options = self._collect_processing_options()
         ocr_used = False
         ocr_temp_file: str | None = None
         document = None
@@ -997,9 +1008,10 @@ class PDFHighlighterApp:
         return ProcessingOptions(
             search_str=self.search_phrase_var.get(),
             only_relevant=bool(self.relevant_lines_var.get()),
-            filter_enabled=bool(self.enable_filter_var.get()),
-            names=[name.strip() for name in re.split(r",\s*", self.names_var.get()) if name.strip()],
-            highlight_mode=HighlightMode[self.highlight_mode_var.get()],
+            names=parse_names(self.names_var.get()),
+            marking_mode=MarkingMode(self.marking_mode_var.get()),
+            highlight_color_default=self.highlight_color_default_var.get(),
+            highlight_color_names=self.highlight_color_names_var.get(),
         )
 
     def _open_source_document(self, input_file: str) -> Document | None:
@@ -1067,9 +1079,10 @@ class PDFHighlighterApp:
                 page=document[page_index],
                 search_str=options.search_str,
                 only_relevant=options.only_relevant,
-                filter_enabled=options.filter_enabled,
                 names=options.names,
-                highlight_mode=options.highlight_mode,
+                marking_mode=options.marking_mode,
+                highlight_color_default=options.highlight_color_default,
+                highlight_color_names=options.highlight_color_names,
             )
             total_matches += matches_found
             total_skipped += skipped_matches

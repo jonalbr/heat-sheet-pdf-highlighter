@@ -44,18 +44,18 @@ def test_is_screenshot_mode_reads_environment(monkeypatch, value, expected):
 
 
 def test_setup_screenshot_state_populates_transient_settings():
-    enable_filter_var = Var()
+    marking_mode_var = Var()
     names_var = Var()
     settings = {}
     app = SimpleNamespace(
-        enable_filter_var=enable_filter_var,
+        marking_mode_var=marking_mode_var,
         names_var=names_var,
         app_settings=SimpleNamespace(settings=settings),
     )
 
     app_module._setup_screenshot_state(app)
 
-    assert enable_filter_var.value == 1
+    assert marking_mode_var.value == "distinguish_names"
     assert "Klara Sophie Meier" in names_var.value
     assert settings == {
         "watermark_enabled": "True",
@@ -171,7 +171,7 @@ def test_main_screenshot_mode_captures_and_destroys_root(monkeypatch):
     def make_app(root):
         return SimpleNamespace(
             root=root,
-            enable_filter_var=Var(),
+            marking_mode_var=Var(),
             names_var=Var(),
             app_settings=SimpleNamespace(settings={}),
         )

@@ -25,7 +25,7 @@ def build_strings(_: Callable[[str], str]) -> Dict[str, str]:
 
     # ---- General app text / statuses shown broadly ----
     general_strings = {
-        "configure_filter": _("Configure highlighting lines with specific names."),
+        "configure_filter": _("Configure name filtering and highlight colors."),
         "configure_watermark": _("Configure the watermark options."),
         "enter_club": _("Enter the name of the club to highlight the results."),
         "error": _("Error"),
@@ -85,7 +85,7 @@ def build_strings(_: Callable[[str], str]) -> Dict[str, str]:
         "btn_browse": _("Browse"),
         "btn_cancel": _("Cancel"),
         "btn_clear": _("Clear"),
-        "btn_filter": _("Filter"),
+        "btn_filter": _("Filter and Colors"),
         "btn_import": _("Import"),
         "btn_no": _("No"),
         "btn_ok": _("OK"),
@@ -126,12 +126,35 @@ def build_strings(_: Callable[[str], str]) -> Dict[str, str]:
 
     # ---- Name filter dialog ----
     filter_strings = {
-        "flt_enable": _("Enable Filter"),
-        "flt_info": _("Enable highlighting lines with specific names."),
-        "flt_mode": _("Highlight Mode"),
-        "flt_mode_blue": _("Highlight lines with matched names in yellow, others are not highlighted"),
-        "flt_mode_blue_yellow": _("Highlight lines with matched names in blue, others in yellow"),
+        "flt_all": _("Without name filter - highlight all matches"),
+        "flt_distinguish": _("Highlight all matches, distinguish names"),
+        "flt_named": _("Only names from the list"),
         "flt_names": _("Names"),
+        "flt_names_required": _("Please enter at least one name for this mode."),
+        "flt_no_names_found": _(
+            "No names from the list found for this search. Check the names or choose another marking mode."
+        ),
+        "flt_color_default": _("Default color"),
+        "flt_color_names": _("Name color"),
+        "flt_custom": _("Custom color..."),
+        "flt_unused": _("Currently not used"),
+        "flt_preview": _("Preview"),
+        "flt_example": _("Color example"),
+        "flt_example_heat": _("Heat {0}/{1} - approx. {2}"),
+        "flt_example_lane": _("Lane"),
+        "flt_example_swimmer": _("Swimmer"),
+        "flt_example_year": _("YOB"),
+        "flt_example_club": _("Club"),
+        "flt_example_entry_time": _("Entry time"),
+        "flt_example_lane_format": _("Lane {0}"),
+        "flt_example_time_format": _("{minutes}:{seconds}.{hundredths}"),
+        "flt_pdf_excerpt": _("PDF excerpt - page {0}"),
+        "flt_yellow": _("Yellow"),
+        "flt_turquoise": _("Turquoise"),
+        "flt_green": _("Green"),
+        "flt_orange": _("Orange"),
+        "flt_pink": _("Pink"),
+        "flt_violet": _("Violet"),
     }
 
     # ---- Process/status lines outside of the general pool ----

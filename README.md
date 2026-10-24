@@ -64,9 +64,14 @@ The app saves a new PDF with a `_highlighted` suffix at the location you choose.
 ## Features
 
 - Highlight rows by club name or custom search term
-- Limit highlighting to specific swimmers and choose between:
-  - **Names Only:** highlight rows containing matching names in yellow; leave other rows unmarked
-  - **Differential Colors:** highlight rows containing matching names in blue and other matching rows in yellow
+- Choose a marking mode in **Filter and Colors**:
+  - **Without name filter:** highlight all matching rows in the default color
+  - **Distinguish names:** use a separate name color for matching swimmers, and the default color for other matching rows
+  - **Only names from the list:** mark matching swimmers and leave other rows unmarked
+- Choose default and name colors independently from six light presets or a custom color picker. Inactive controls are grayed out and retain their values.
+- Preview a real PDF excerpt with neighboring rows and your current filter/colors. If no suitable excerpt is available, a labeled color example works without a PDF or name list. Previewing does not run OCR or modify the input file.
+- In names-only mode, the preview shows a note when no listed name matches the current search in a readable PDF. The fallback example uses a fictional heat with lane, swimmer, year, club, and entry-time columns, localized to the app language (including the time format).
+- Apply or cancel filter/color changes together. Existing filter settings migrate automatically, preserving their original colors.
 - Import names from CSV or text files. Comma-separated and newline-separated lists are parsed automatically.
 - Preview and place watermarks with preset or custom colors, size controls, and nudgeable positioning
 - Detect scanned PDFs and run bundled German or English OCR before highlighting
@@ -78,13 +83,13 @@ The app saves a new PDF with a `_highlighted` suffix at the location you choose.
 
 ## Screenshots
 
-Filter dialog:
+Filter and colors dialog:
 
 <div align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="images/app_screenshot_filter_dark.png">
     <source media="(prefers-color-scheme: light)" srcset="images/app_screenshot_filter_light.png">
-    <img alt="Filter dialog with example names" src="images/app_screenshot_filter_light.png">
+    <img alt="Filter and colors dialog with name settings and highlight preview" src="images/app_screenshot_filter_light.png">
   </picture>
 </div>
 

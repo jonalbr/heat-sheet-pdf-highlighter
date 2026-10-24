@@ -2,9 +2,12 @@
 Enums and data models
 """
 
-from enum import IntEnum
+from enum import StrEnum
 
 
-class HighlightMode(IntEnum):
-    ONLY_NAMES = 0
-    NAMES_DIFF_COLOR = 1
+class MarkingMode(StrEnum):
+    """Choose which search matches receive the independently configured colors."""
+
+    ALL_MATCHES = "all_matches"
+    DISTINGUISH_NAMES = "distinguish_names"
+    NAMED_MATCHES = "named_matches"

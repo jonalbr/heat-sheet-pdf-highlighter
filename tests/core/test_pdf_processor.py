@@ -6,7 +6,7 @@ except ImportError:  # pragma: no cover
     pymupdf = None
 
 from src.core import pdf_processor as pp
-from src.models import HighlightMode
+from src.models import MarkingMode
 
 pytestmark = pytest.mark.skipif(pymupdf is None, reason="pymupdf not installed")
 
@@ -63,9 +63,8 @@ def test_only_names_mode_filters_out_without_names():
         page,
         "CLUB",
         only_relevant=True,
-        filter_enabled=True,
         names=["Alice"],
-        highlight_mode=HighlightMode.ONLY_NAMES,
+        marking_mode=MarkingMode.NAMED_MATCHES,
     )
     assert matches == 1 and skipped == 1
     assert collect_highlights(page) == []
@@ -79,9 +78,8 @@ def test_only_names_mode_highlights_when_name_present():
         page,
         "CLUB",
         only_relevant=True,
-        filter_enabled=True,
         names=["Alice"],
-        highlight_mode=HighlightMode.ONLY_NAMES,
+        marking_mode=MarkingMode.NAMED_MATCHES,
     )
     assert matches == 1 and skipped == 0
     assert len(collect_highlights(page)) == 1
@@ -95,9 +93,8 @@ def test_names_diff_color_blue_when_name_present():
         page,
         "CLUB",
         only_relevant=True,
-        filter_enabled=True,
         names=["Alice"],
-        highlight_mode=HighlightMode.NAMES_DIFF_COLOR,
+        marking_mode=MarkingMode.DISTINGUISH_NAMES,
     )
     assert matches == 1 and skipped == 0
     hl = collect_highlights(page)
@@ -114,9 +111,8 @@ def test_names_diff_color_yellow_when_name_missing():
         page,
         "CLUB",
         only_relevant=True,
-        filter_enabled=True,
         names=["Alice"],
-        highlight_mode=HighlightMode.NAMES_DIFF_COLOR,
+        marking_mode=MarkingMode.DISTINGUISH_NAMES,
     )
     assert matches == 1 and skipped == 0
     hl = collect_highlights(page)
@@ -133,9 +129,8 @@ def test_names_diff_color_filter_disabled_defaults_yellow():
         page,
         "CLUB",
         only_relevant=True,
-        filter_enabled=False,
         names=["Alice"],
-        highlight_mode=HighlightMode.NAMES_DIFF_COLOR,
+        marking_mode=MarkingMode.ALL_MATCHES,
     )
     assert matches == 1 and skipped == 0
     hl = collect_highlights(page)
@@ -160,7 +155,7 @@ def test_line_text_normalization_list_and_dict(monkeypatch):
             self.colors = {}
         def set_colors(self, stroke):
             self.colors['stroke'] = stroke
-        def update(self):
+        def update(self, **kwargs):
             pass
 
     class FakePage:
@@ -196,9 +191,8 @@ def test_line_text_normalization_list_and_dict(monkeypatch):
         fake_page,
         "CLUB",
         only_relevant=True,
-        filter_enabled=True,
         names=["Alice"],
-        highlight_mode=HighlightMode.NAMES_DIFF_COLOR,
+        marking_mode=MarkingMode.DISTINGUISH_NAMES,
     )
 
     assert matches == 1
@@ -218,7 +212,7 @@ def test_line_text_normalization_dict_and_other_values(line_text):
         def set_colors(self, stroke):
             self.stroke = stroke
 
-        def update(self):
+        def update(self, **kwargs):
             pass
 
     class FakePage:

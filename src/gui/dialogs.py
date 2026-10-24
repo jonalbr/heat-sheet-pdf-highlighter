@@ -2,11 +2,9 @@
 Dialog windows (Filter and Watermark dialogs)
 """
 
-import csv
-import re
 import time
 from functools import partial
-from tkinter import WORD, DoubleVar, IntVar, StringVar, TclError, Text, Toplevel, colorchooser, filedialog, ttk
+from tkinter import DoubleVar, IntVar, StringVar, TclError, Toplevel, colorchooser, ttk
 from tkinter import Button as tkButton
 from typing import TYPE_CHECKING, Dict, Optional
 import logging
@@ -14,12 +12,11 @@ import logging
 if TYPE_CHECKING:
     from src.gui.main_window import PDFHighlighterApp
 
-from ..models import HighlightMode
 from ..core.watermark import get_position_ratios
 from ..version import Version
 from .message_dialog import ask_ok_cancel, ask_retry_cancel, ask_yes_no_cancel, show_error, show_info
 from .ui_strings import get_ui_string
-from .widgets import Tooltip
+from .filter_dialog import FilterDialog as FilterDialog
 
 
 class UpdateDialogs:
@@ -183,125 +180,6 @@ class UpdateDialogs:
     def finish_download_ui(self):
         """Finish download UI state."""
         self._ui(self.app.finish_download)
-
-
-class FilterDialog:
-    """Filter configuration dialog."""
-
-    def __init__(self, app_instance: "PDFHighlighterApp"):
-        self.app = app_instance
-        self.parent = self.app.root
-        self.window = None
-
-    def open(self):
-        """Open the filter dialog window."""
-        self.window = Toplevel(self.parent)
-        self.window.title(get_ui_string(self.app.strings, "btn_filter"))
-        self.app.apply_theme_to_window(self.window)
-        self.window.grab_set()
-        self.window.focus_set()
-
-        def apply_changes():
-            self.app.names_var.set(entry_names.get("1.0", "end-1c"))
-            self.app.highlight_mode_var.set(temp_highlight_mode_var.get())
-            self.app.enable_filter_var.set(self.app.enable_filter_var.get())
-            if self.window:
-                self.window.destroy()
-
-        def clear_text(*args):
-            entry_names.delete("1.0", "end")
-
-        def import_names(*args):
-            filename = filedialog.askopenfilename(
-                parent=self.window,
-                filetypes=[
-                    (get_ui_string(self.app.strings, "file_filter_csv"), "*.csv;*.txt"),
-                    (get_ui_string(self.app.strings, "file_filter_all"), "*.*"),
-                ],
-            )
-            if filename:
-                try:
-                    with open(filename, "r", encoding="utf-8") as file:
-                        if filename.endswith(".csv"):
-                            reader = csv.reader(file)
-                            names = next(reader)
-                        else:
-                            content = file.read()
-                            names = [name.strip() for name in re.split(r"[\n,]+", content)]
-                    entry_names.delete("1.0", "end")
-                    entry_names.insert("1.0", ", ".join(names))
-                except Exception as e:
-                    logging.getLogger("dialogs").exception("Failed to import names from %s: %s", filename, e)
-
-        def insert_comma(*args):
-            text = entry_names.get("1.0", "end-1c")
-            if not re.search(r",\s*$", text):
-                entry_names.insert("end", ", ")
-            return "break"
-
-        checkbox_filter = ttk.Checkbutton(self.window, text=get_ui_string(self.app.strings, "flt_enable"), variable=self.app.enable_filter_var)
-        checkbox_filter.grid(row=0, column=0, columnspan=2, sticky="W", padx=10, pady=5)
-        Tooltip(checkbox_filter, text=get_ui_string(self.app.strings, "flt_info"))
-
-        temp_highlight_mode_var = StringVar(value=self.app.highlight_mode_var.get())
-        label_names = ttk.Label(self.window, text=get_ui_string(self.app.strings, "flt_names"))
-        label_names.grid(row=1, column=0, sticky="W", padx=10)
-
-        entry_names = Text(self.window, height=6, width=50, wrap=WORD)
-        entry_names.insert(1.0, self.app.names_var.get())
-        entry_names.grid(row=1, column=1, sticky="WE", padx=10)
-        entry_names.bind("<Return>", insert_comma)
-
-        button_frame = ttk.Frame(self.window)
-        button_frame.grid(row=2, column=1, sticky="W", padx=10, pady=10)
-
-        button_clear = ttk.Button(button_frame, text=get_ui_string(self.app.strings, "btn_clear"), command=clear_text)
-        button_clear.grid(row=0, column=0, sticky="W", padx=10)
-
-        button_import = ttk.Button(button_frame, text=get_ui_string(self.app.strings, "btn_import"), command=import_names)
-        button_import.grid(row=0, column=1, sticky="W", padx=10)
-
-        label_highlight_mode = ttk.Label(self.window, text=get_ui_string(self.app.strings, "flt_mode"))
-        label_highlight_mode.grid(row=3, column=0, sticky="W", padx=10)
-
-        radio_highlight_only = ttk.Radiobutton(
-            self.window,
-            text=get_ui_string(self.app.strings, "flt_mode_blue"),
-            variable=temp_highlight_mode_var,
-            value=HighlightMode.ONLY_NAMES.name,
-        )
-        radio_highlight_only.grid(row=3, column=1, sticky="W", padx=10)
-
-        radio_highlight_color = ttk.Radiobutton(
-            self.window,
-            text=get_ui_string(self.app.strings, "flt_mode_blue_yellow"),
-            variable=temp_highlight_mode_var,
-            value=HighlightMode.NAMES_DIFF_COLOR.name,
-        )
-        radio_highlight_color.grid(row=4, column=1, sticky="W", padx=10)
-
-        button_frame2 = ttk.Frame(self.window)
-        button_frame2.grid(row=5, column=0, columnspan=2, sticky="WE", padx=10, pady=10)
-
-        button_apply = ttk.Button(button_frame2, text=self.app.strings["btn_apply"], command=apply_changes)
-        button_apply.pack(side="left", padx=10, expand=True)
-
-        button_abort = ttk.Button(button_frame2, text=self.app.strings["btn_cancel"], command=lambda: self.window.destroy() if self.window else None)
-        button_abort.pack(side="right", padx=10, expand=True)
-        self.app.apply_theme_to_window(self.window)
-
-    def refresh_ui_strings(self):
-        """Refresh the Filter dialog UI strings by recreating the window if open."""
-        try:
-            if self.window and self.window.winfo_exists():
-                try:
-                    self.window.destroy()
-                except Exception as e:
-                    logging.getLogger("dialogs").exception("Error destroying filter dialog: %s", e)
-                # Re-open will recreate the dialog using current translations
-                self.open()
-        except Exception as e:
-            logging.getLogger("dialogs").exception("Unexpected error refreshing filter dialog: %s", e)
 
 
 class WatermarkDialog:

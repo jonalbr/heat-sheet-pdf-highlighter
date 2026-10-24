@@ -8,6 +8,7 @@ import time
 from tkinter import Tk
 
 from .gui.main_window import PDFHighlighterApp
+from .models import MarkingMode
 
 
 def _is_screenshot_mode() -> bool:
@@ -28,7 +29,7 @@ def _setup_screenshot_state(app: PDFHighlighterApp) -> None:
     avoid impacting screenshot generation.
     """
     try:
-        app.enable_filter_var.set(1)
+        app.marking_mode_var.set(MarkingMode.DISTINGUISH_NAMES.value)
         app.names_var.set("Klara Sophie Meier, Jonas Becker-Schmidt, Leon Wagner")
         app.app_settings.settings["watermark_enabled"] = "True"
         app.app_settings.settings["watermark_text"] = "SGS Hamburg"
@@ -87,6 +88,17 @@ def _capture_and_save(root: Tk, app: PDFHighlighterApp, screenshot_path: str, ta
         time.sleep(delay)
         root.update_idletasks()
         root.update()
+
+    if target == "filter":
+        # The excerpt is rendered in a spawned process after a debounced request.
+        # Keep dispatching Tk events until the first image is ready for capture.
+        dialog = getattr(app, "filter_dialog", None)
+        deadline = time.monotonic() + 5
+        while dialog is not None and getattr(dialog, "_preview", None) is not None:
+            if getattr(dialog, "_photo", None) is not None or time.monotonic() >= deadline:
+                break
+            root.update()
+            time.sleep(0.05)
 
     if os.name != "nt":
         return

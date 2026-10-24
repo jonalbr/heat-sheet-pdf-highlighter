@@ -20,8 +20,9 @@ def test_defaults_loaded_when_file_missing(settings_file):
         "version",
         "search_str",
         "mark_only_relevant_lines",
-        "enable_filter",
-        "highlight_mode",
+        "marking_mode",
+        "highlight_color_default",
+        "highlight_color_names",
         "theme_mode",
         "language",
         "ocr_enabled",
@@ -45,6 +46,50 @@ def test_save_and_reload_persists_changes(settings_file):
     assert app2.settings["search_str"] == "NewTerm"
 
 
+@pytest.mark.parametrize("enabled", [0, 1])
+@pytest.mark.parametrize("legacy", ["ONLY_NAMES", "NAMES_DIFF_COLOR"])
+def test_legacy_marking_migration(settings_file, enabled, legacy):
+    settings_file.write_text(json.dumps({"enable_filter": enabled, "highlight_mode": legacy}))
+    app = AppSettings(settings_file)
+    expected = "all_matches" if not enabled else (
+        "named_matches" if legacy == "ONLY_NAMES" else "distinguish_names"
+    )
+    assert app.settings["marking_mode"] == expected
+    assert app.settings["highlight_color_names"] == ("#FFFFA6" if legacy == "ONLY_NAMES" else "#C4FAF8")
+    assert "enable_filter" not in app.settings
+    assert "highlight_mode" not in app.settings
+    assert AppSettings(settings_file).settings == app.settings
+
+
+def test_new_marking_values_take_precedence_and_normalize_colors(settings_file):
+    settings_file.write_text(json.dumps({
+        "enable_filter": 1, "highlight_mode": "ONLY_NAMES", "marking_mode": "distinguish_names",
+        "highlight_color_names": "#abcdef", "highlight_color_default": "#fedcba",
+    }))
+    app = AppSettings(settings_file)
+    assert app.settings["marking_mode"] == "distinguish_names"
+    assert app.settings["highlight_color_names"] == "#ABCDEF"
+    assert app.settings["highlight_color_default"] == "#FEDCBA"
+    app.validate_settings()
+    assert AppSettings(settings_file).settings == app.settings
+
+
+@pytest.mark.parametrize("color", [None, 123, "#123", "#1234567", "#GGGGGG", "red", "#abcdef\n"])
+def test_invalid_highlight_colors_fall_back(settings_file, color):
+    app = AppSettings(settings_file)
+    app.settings.update(highlight_color_default=color, highlight_color_names=color)
+    app.validate_settings()
+    assert app.settings["highlight_color_default"] == "#FFFFA6"
+    assert app.settings["highlight_color_names"] == "#C4FAF8"
+
+
+def test_legacy_only_names_preserves_explicit_new_name_color(settings_file):
+    settings_file.write_text(json.dumps({
+        "enable_filter": 1, "highlight_mode": "ONLY_NAMES", "highlight_color_names": "#abcdef",
+    }))
+    assert AppSettings(settings_file).settings["highlight_color_names"] == "#ABCDEF"
+
+
 def test_theme_mode_persists(settings_file):
     app = AppSettings(settings_file)
     app.update_setting("theme_mode", "dark")
@@ -54,9 +99,9 @@ def test_theme_mode_persists(settings_file):
 
 def test_update_setting_writes_file(settings_file):
     app = AppSettings(settings_file)
-    app.update_setting("enable_filter", 1)
+    app.update_setting("marking_mode", "named_matches")
     data = json.loads(settings_file.read_text())
-    assert data["enable_filter"] == 1
+    assert data["marking_mode"] == "named_matches"
 
 
 def test_reset_to_defaults(settings_file):
@@ -105,8 +150,9 @@ def test_validator_coercions(settings_file):
     app.settings.update(
         {
             "mark_only_relevant_lines": 5,
-            "enable_filter": 5,
-            "highlight_mode": "BAD",
+            "marking_mode": "BAD",
+            "highlight_color_default": "#123",
+            "highlight_color_names": "#gggggg",
             "language": "zz",
             "ask_for_update": "MAYBE",
             "update_available": "MAYBE",
@@ -132,8 +178,9 @@ def test_validator_coercions(settings_file):
     app.validate_settings()
     s = app.settings
     assert s["mark_only_relevant_lines"] in (0, 1)
-    assert s["enable_filter"] in (0, 1)
-    assert s["highlight_mode"] == "NAMES_DIFF_COLOR"
+    assert s["marking_mode"] == "all_matches"
+    assert s["highlight_color_default"] == "#FFFFA6"
+    assert s["highlight_color_names"] == "#C4FAF8"
     assert s["language"] == "en"
     assert s["ask_for_update"] == "True"
     assert s["update_available"] == "False"

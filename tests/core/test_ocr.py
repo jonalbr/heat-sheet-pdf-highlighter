@@ -12,7 +12,8 @@ except ImportError:  # pragma: no cover
 
 from src.core import ocr
 from src.config.paths import Paths
-from src.models import HighlightMode
+from src.core.pdf_processor import highlight_matching_data
+from src.models import MarkingMode
 
 pytestmark = pytest.mark.skipif(pymupdf is None, reason="pymupdf not installed")
 
@@ -658,9 +659,9 @@ def test_build_reduced_searchable_pdf_keeps_hidden_text_and_highlights(tmp_path)
     context = ocr.HighlightContext(
         search_str="CLUB",
         only_relevant=True,
-        filter_enabled=False,
-        names=[],
-        highlight_mode=HighlightMode.NAMES_DIFF_COLOR,
+        names=(),
+        marking_mode=MarkingMode.ALL_MATCHES,
+        highlight_color_default="#AABBCC",
     )
 
     try:
@@ -672,7 +673,9 @@ def test_build_reduced_searchable_pdf_keeps_hidden_text_and_highlights(tmp_path)
         )
         try:
             assert reduced[0].search_for("CLUB")
-            assert collect_highlights(reduced[0])
+            page = reduced[0]
+            assert collect_highlights(page)
+            assert page.first_annot.colors["stroke"] == pytest.approx([170 / 255, 187 / 255, 204 / 255])
         finally:
             reduced.close()
     finally:
@@ -694,7 +697,7 @@ def test_reduce_pdf_image_streams_preserves_text_and_highlights():
     image.save(buffer, format="PNG")
     page.insert_image(pymupdf.Rect(0, 0, 200, 200), stream=buffer.getvalue())
     page.insert_text((30, 50), "Bahn 1 Alice CLUB 00:59.99")
-    page.add_highlight_annot(page.search_for("CLUB"))
+    highlight_matching_data(page, "CLUB", highlight_color_default="#ABCDEF")
     before = page.get_images(full=True)[0][2:4]
 
     try:
@@ -706,6 +709,8 @@ def test_reduce_pdf_image_streams_preserves_text_and_highlights():
         assert after[1] < before[1]
         assert doc[0].search_for("CLUB")
         assert collect_highlights(doc[0])
+        result_page = doc[0]
+        assert result_page.first_annot.colors["stroke"] == pytest.approx([171 / 255, 205 / 255, 239 / 255])
     finally:
         doc.close()
 
@@ -848,7 +853,6 @@ def _context():
     return ocr.HighlightContext(
         search_str="CLUB",
         only_relevant=True,
-        filter_enabled=False,
         names=[],
-        highlight_mode=HighlightMode.NAMES_DIFF_COLOR,
+        marking_mode=MarkingMode.ALL_MATCHES,
     )

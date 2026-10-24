@@ -268,7 +268,7 @@ requires-dist = [
     { name = "pillow", specifier = "==13.0.0" },
     { name = "pymupdf-lite", specifier = "==2.0" },
     { name = "requests", specifier = "==2.34.2" },
-    { name = "tkinterweb", specifier = "==4.25.3" },
+    { name = "tkinterweb", specifier = "==4.25.5" },
 ]
 
 [package.metadata.requires-dev]
@@ -551,14 +551,14 @@ wheels = [
 
 [[package]]
 name = "tkinterweb"
-version = "4.25.3"
+version = "4.25.5"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "tkinterweb-tkhtml" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/c7/54/b587e73e1563398913099b71d5283a51656c43534541499a76239a9d937f/tkinterweb-4.25.3.tar.gz", hash = "sha256:5540407b77d0b6663afb88b4030c3f57766eeaa48bd1c83293a43bc59e82e3e8", size = 112943, upload-time = "2026-05-29T21:15:27.868Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/cf/0c/e2a104edfbc6a9a853fab5b4de1d9188efe1a4812b0bb8f484a890c28b3d/tkinterweb-4.25.5.tar.gz", hash = "sha256:52f62f29cbcc000774bafc46465e18fce214de24163f3cbe26735a843125673d", size = 112997, upload-time = "2026-10-20T21:44:50.811Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/7b/86/5409c1958607e719cd30cea69a21c84af327ea8faf24cbfb7805485030b7/tkinterweb-4.25.3-py3-none-any.whl", hash = "sha256:a12cef5c5b97e1a8eb49a7a1f117787dc72b855728f0f66563054a388da8f23e", size = 116894, upload-time = "2026-05-29T21:15:26.425Z" },
+    { url = "https://files.pythonhosted.org/packages/0d/76/73c8766c4e8fb6dae3ed566ddc1f3ab8bec13214f18b918aa2c748d3e895/tkinterweb-4.25.5-py3-none-any.whl", hash = "sha256:90f817a0015126e2c17b23f01ef08dc34b6aacf2455808649d97e7dae7d897cf", size = 116943, upload-time = "2026-10-20T21:44:48.984Z" },
 ]
 
 [[package]]

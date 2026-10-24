@@ -25,8 +25,9 @@ def make_processing_app():
     app.app_settings = SimpleNamespace(settings={"ocr_enabled": "False"})
     app.search_phrase_var = Var("CLUB")
     app.relevant_lines_var = Var(1)
-    app.enable_filter_var = Var(0)
-    app.highlight_mode_var = Var("ONLY_NAMES")
+    app.marking_mode_var = Var("all_matches")
+    app.highlight_color_default_var = Var("#FFFFA6")
+    app.highlight_color_names_var = Var("#C4FAF8")
     app.names_var = Var("Alice, Bob")
     app.ocr_detection_path = None
     app.ocr_detection_result = None
@@ -77,7 +78,14 @@ def test_process_pdf_highlights_watermarks_saves_and_reports(monkeypatch):
     monkeypatch.setattr(main_window, "save_compact_pdf", lambda document, output_file: saved.append((document, output_file)))
     monkeypatch.setattr(main_window, "show_info", lambda app, title, message: infos.append((title, message)))
 
-    app.process_pdf("input.pdf")
+    options = app._collect_processing_options()
+    # Worker execution must use the captured snapshot, never read Tk variables.
+    def forbidden_read():
+        raise AssertionError("Worker accessed a Tk variable")
+
+    for key in ("search_phrase", "relevant_lines", "marking_mode", "names", "highlight_color_default", "highlight_color_names"):
+        getattr(app, f"{key}_var").get = forbidden_read
+    app.process_pdf("input.pdf", options)
 
     assert [call["page"] for call in highlights] == pages
     assert [call["search_str"] for call in highlights] == ["CLUB", "CLUB"]
@@ -87,4 +95,19 @@ def test_process_pdf_highlights_watermarks_saves_and_reports(monkeypatch):
     assert documents[0].closed
     assert infos == [("Done", "Processing complete: 2 matches found. 0 skipped.")]
     assert app.saving_status == "Saving"
+    assert app.finalized
+
+
+def test_start_rejects_empty_name_mode_before_spawning(monkeypatch):
+    app = make_processing_app()
+    app.input_file_full_path = "input.pdf"
+    app.app_settings.settings["search_str"] = "CLUB"
+    app.start_abort_button = SimpleNamespace(config=lambda **kwargs: None)
+    app.marking_mode_var = Var("named_matches")
+    app.names_var = Var(" , \n ")
+    errors = []
+    monkeypatch.setattr(main_window, "show_error", lambda *args: errors.append(args))
+    monkeypatch.setattr(main_window.threading, "Thread", lambda **kwargs: (_ for _ in ()).throw(AssertionError("Spawned")))
+    app.start_processing()
+    assert errors
     assert app.finalized

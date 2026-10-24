@@ -6,8 +6,13 @@ import json
 from pathlib import Path
 from typing import Dict
 import os
+import re
 
-from ..constants import LANGUAGE_OPTIONS, VERSION_STR, WATERMARK_DEFAULT_X_RATIO, WATERMARK_DEFAULT_Y_RATIO
+from ..constants import (
+    HIGHLIGHT_COLOR_DEFAULT, HIGHLIGHT_COLOR_NAMES, LANGUAGE_OPTIONS, VERSION_STR,
+    WATERMARK_DEFAULT_X_RATIO, WATERMARK_DEFAULT_Y_RATIO,
+)
+from ..models import MarkingMode
 from ..version import Version
 
 
@@ -17,6 +22,11 @@ def _is_valid_ratio(value) -> bool:
     except (TypeError, ValueError):
         return False
     return 0.0 <= numeric_value <= 1.0
+
+
+def validated_highlight_color(value, default: str) -> str:
+    """Normalize a complete RGB hex color, falling back for malformed settings."""
+    return value.upper() if isinstance(value, str) and re.fullmatch(r"#[0-9a-fA-F]{6}", value) else default
 
 
 def _validated_newest_version(value) -> str:
@@ -38,8 +48,9 @@ class AppSettings:
             "version": VERSION_STR,
             "search_str": "SGS Hamburg",
             "mark_only_relevant_lines": 1,  # 0 or 1
-            "enable_filter": 0,  # 0 or 1
-            "highlight_mode": "NAMES_DIFF_COLOR",  # "ONLY_NAMES" or "NAMES_DIFF_COLOR"
+            "marking_mode": MarkingMode.ALL_MATCHES.value,
+            "highlight_color_default": HIGHLIGHT_COLOR_DEFAULT,
+            "highlight_color_names": HIGHLIGHT_COLOR_NAMES,
             "theme_mode": "system",  # "system", "light", or "dark"
             "language": "de",
             "ask_for_update": "True",
@@ -107,8 +118,9 @@ class AppSettings:
             "version": lambda v: VERSION_STR,
             "search_str": lambda v: v if isinstance(v, str) else "",
             "mark_only_relevant_lines": lambda v: v if v in [0, 1] else 1,
-            "enable_filter": lambda v: v if v in [0, 1] else 0,
-            "highlight_mode": lambda v: v if v in ["ONLY_NAMES", "NAMES_DIFF_COLOR"] else "NAMES_DIFF_COLOR",
+            "marking_mode": lambda v: v if v in tuple(MarkingMode) else MarkingMode.ALL_MATCHES.value,
+            "highlight_color_default": lambda v: validated_highlight_color(v, HIGHLIGHT_COLOR_DEFAULT),
+            "highlight_color_names": lambda v: validated_highlight_color(v, HIGHLIGHT_COLOR_NAMES),
             "theme_mode": lambda v: v if v in ["system", "light", "dark"] else "system",
             "language": lambda v: v if v in LANGUAGE_OPTIONS else "en",
             "ask_for_update": lambda v: v if v in ["True", "False"] else "True",
@@ -145,6 +157,7 @@ class AppSettings:
             elif isinstance(beta_val, bool):
                 settings_dict["update_channel"] = "rc" if beta_val else "stable"
         self._migrate_ocr_defaults(settings_dict)
+        self._migrate_marking_settings(settings_dict)
         validated = {}
 
         # Validate known keys first
@@ -159,6 +172,19 @@ class AppSettings:
         self.settings = validated
         self.save_settings()
         return validated  # Ensure a Dict is always returned
+
+    def _migrate_marking_settings(self, settings: Dict) -> None:
+        """Preserve legacy filter output while separating selection and color."""
+        if "marking_mode" in settings:
+            return
+        only_names = settings.get("highlight_mode") == "ONLY_NAMES"
+        settings["marking_mode"] = (
+            MarkingMode.NAMED_MATCHES.value if only_names else MarkingMode.DISTINGUISH_NAMES.value
+        ) if settings.get("enable_filter") == 1 else MarkingMode.ALL_MATCHES.value
+        if only_names:
+            settings["highlight_color_names"] = validated_highlight_color(
+                settings.get("highlight_color_names"), HIGHLIGHT_COLOR_DEFAULT,
+            )
 
     def _migrate_ocr_defaults(self, settings_dict: Dict) -> None:
         if settings_dict.get("ocr_settings_version") == 3:

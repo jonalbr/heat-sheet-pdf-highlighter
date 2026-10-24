@@ -10,6 +10,9 @@ APP_NAME = "Heat Sheet PDF Highlighter"
 # Supported languages
 LANGUAGE_OPTIONS = ["en", "de"]
 
+HIGHLIGHT_COLOR_DEFAULT = "#FFFFA6"
+HIGHLIGHT_COLOR_NAMES = "#C4FAF8"
+
 # Watermark position defaults (normalized center coordinates)
 WATERMARK_DEFAULT_X_RATIO = 0.5
 WATERMARK_DEFAULT_Y_RATIO = 0.05
