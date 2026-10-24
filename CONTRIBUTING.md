@@ -10,10 +10,10 @@ On Windows PowerShell:
 
 ```powershell
 winget install --id Astral-sh.uv -e
-uv python install 3.14
 git clone https://github.com/jonalbr/heat-sheet-pdf-highlighter.git
 cd heat-sheet-pdf-highlighter
-uv sync --all-groups
+uv python install
+uv sync --locked --all-groups
 uv run python main.py
 ```
 

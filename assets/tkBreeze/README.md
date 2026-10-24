@@ -10,6 +10,7 @@ Changes:
 * Small bugfixes
 * Changed font to the default Tk font: -font "Helvetica 10" \ -> -font TkDefaultFont \
 * Added possibility to move scrollbars with mouse wheel
+* Accept Tcl/Tk 8.6 and 9.x in theme requirements and package discovery.
 
 * Breeze Dark version which was created from the theme above by me
 

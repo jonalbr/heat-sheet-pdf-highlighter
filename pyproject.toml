@@ -11,8 +11,8 @@ authors = [
 ]
 dependencies = [
     "markdown2==2.5.5",
-    "pillow==12.3.0",
-    "pymupdf==1.28.0",
+    "pillow==13.0.0",
+    "pymupdf-lite==2.0",
     "requests==2.34.2",
     "tkinterweb==4.25.3",
 ]
@@ -23,15 +23,15 @@ dev = [
     { include-group = "build" },
 ]
 test = [
-    "coverage==7.15.0",
+    "coverage==7.17.0",
     "pytest==9.1.1",
     "pytest-cov==7.1.0",
 ]
 lint = [
-    "ruff==0.15.20",
+    "ruff==0.17.2",
 ]
 build = [
-    "cx_Freeze==8.6.4",
+    "cx-freeze==8.7.3",
     "polib==1.2.0",
     "pywin32==312; sys_platform == 'win32'",
 ]
