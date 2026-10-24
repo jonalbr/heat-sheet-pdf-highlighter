@@ -11,6 +11,24 @@ TOOLTIP_DELAY_MS = 400
 TOOLTIP_OFFSET = (14, 18)
 
 
+def lock_controls(window, locked, excluded=()):
+    """Temporarily disable controls, preserving their existing inactive states."""
+    for widget in window.winfo_children():
+        if widget in excluded:
+            continue
+        if locked:
+            if not hasattr(widget, "_operation_state"):
+                try:
+                    widget._operation_state = str(widget.cget("state"))
+                    widget.configure(state="disabled")
+                except TclError:
+                    pass
+        elif hasattr(widget, "_operation_state"):
+            widget.configure(state=widget._operation_state)
+            del widget._operation_state
+        lock_controls(widget, locked, excluded)
+
+
 def _resolve_widget_theme(widget: Widget) -> str:
     """Return the effective app theme stored on the nearest Tk root."""
     top_theme = None

@@ -111,6 +111,8 @@ def _button_label(app: "PDFHighlighterApp", key: str, default: str) -> str:
 
 
 def _run_on_tk(app: "PDFHighlighterApp", callback):
+    if getattr(app, "_closing", False):
+        return None
     if threading.current_thread() is threading.main_thread():
         return callback()
 
@@ -119,7 +121,8 @@ def _run_on_tk(app: "PDFHighlighterApp", callback):
 
     def invoke():
         try:
-            result["value"] = callback()
+            if not getattr(app, "_closing", False):
+                result["value"] = callback()
         except Exception as exc:  # pragma: no cover - defensive UI marshalling
             result["error"] = exc
         finally:
@@ -130,7 +133,9 @@ def _run_on_tk(app: "PDFHighlighterApp", callback):
     except Exception:
         return None
 
-    done.wait()
+    while not done.wait(0.05):
+        if getattr(app, "_closing", False):
+            return None
     if result["error"] is not None:
         raise result["error"]
     return result["value"]

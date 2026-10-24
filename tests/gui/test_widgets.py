@@ -85,3 +85,30 @@ def test_tooltip_reuses_existing_binding_and_updates_text():
     assert existing.text == "New"
     assert existing.delay_ms == 500
     assert set(widget.bindings) == {"<Enter>", "<Motion>", "<Leave>", "<ButtonPress>"}
+
+
+
+def test_operation_lock_restores_readonly_and_inactive_controls():
+    from src.gui.widgets import lock_controls
+
+    class Control:
+        def __init__(self, state="normal", children=()):
+            self.state = state
+            self.children = children
+
+        def winfo_children(self):
+            return self.children
+
+        def cget(self, key):
+            return self.state
+
+        def configure(self, state):
+            self.state = state
+
+    editable, readonly, inactive, cancel = (Control(state) for state in ("normal", "readonly", "disabled", "normal"))
+    root = Control(children=[editable, Control(children=[readonly, inactive]), cancel])
+    lock_controls(root, True, (cancel,))
+    lock_controls(root, True, (cancel,))
+    assert [widget.state for widget in (editable, readonly, inactive, cancel)] == ["disabled"] * 3 + ["normal"]
+    lock_controls(root, False, (cancel,))
+    assert [widget.state for widget in (editable, readonly, inactive, cancel)] == ["normal", "readonly", "disabled", "normal"]

@@ -166,9 +166,9 @@ class DevToolsWindow:
         # Reset settings
         reset_frame = ttk.LabelFrame(self.window, text=get_ui_string(self.app.strings, "dev_reset_settings"))
         reset_frame.grid(row=3, column=0, padx=12, pady=(0, 10), sticky="we")
-        ttk.Button(reset_frame, text=get_ui_string(self.app.strings, "dev_reset_defaults"), command=self._reset_settings).grid(
-            row=0, column=0, padx=8, pady=6, sticky="w"
-        )
+        self.reset_button = ttk.Button(reset_frame, text=get_ui_string(self.app.strings, "dev_reset_defaults"), command=self._reset_settings)
+        self.reset_button.grid(row=0, column=0, padx=8, pady=6, sticky="w")
+        self.set_busy(getattr(self.app, "output_options_locked", False))
 
         # Adjust grid without explicit Close button and populate releases initially
         self.window.grid_rowconfigure(3, weight=0)
@@ -484,12 +484,21 @@ class DevToolsWindow:
         # Use existing updater flow to download and run installer
         threading.Thread(target=lambda: self.app.update_checker.download_and_run_installer(exe_url, sha_url), daemon=True).start()
 
+    def set_busy(self, busy):
+        """Prevent reset from replacing settings during an owned operation."""
+        if self._is_open() and hasattr(self, "reset_button"):
+            self.reset_button.configure(state="disabled" if busy else "normal")
+
     def _reset_settings(self):
+        if getattr(self.app, "output_options_locked", False):
+            return
         if not ask_ok_cancel(
             self.app,
             get_ui_string(self.app.strings, "dev_reset_settings"),
             get_ui_string(self.app.strings, "dev_confirm_reset"),
         ):
+            return
+        if getattr(self.app, "output_options_locked", False):
             return
         self.app.app_settings.reset_to_defaults()
         # Re-apply language and refresh UI

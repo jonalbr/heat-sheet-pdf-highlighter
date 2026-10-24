@@ -9,6 +9,7 @@ import re
 import subprocess
 import tempfile
 import time
+import threading
 from typing import TYPE_CHECKING
 import logging
 
@@ -34,6 +35,7 @@ class UpdateChecker:
         self.last_sha_url: str | None = None
         self.last_version_tag: str | None = None
         # Concurrency guards
+        self._download_lock = threading.Lock()
         self._active_download: bool = False
         self._active_check: bool = False
 
@@ -278,61 +280,44 @@ class UpdateChecker:
             download_url (str): The URL to download the installer from.
             sha_url (str | None): Optional URL to the .sha256 file for checksum verification. If None, no verification is performed.
         """
-        # Concurrency guard: prevent multiple simultaneous downloads
-        if self._active_download:
-            logging.getLogger("updater").info("Download already in progress; ignoring duplicate request")
+        if self._active_download or not self._download_lock.acquire(blocking=False):
             return
         self._active_download = True
-        # Start download UI state
-        self.gui_callbacks.start_download_ui()
-
-        # setup_download_progress() publishes the first visible 0-byte status
-        # once the GET response exposes a total size.
-
-        # Create a temporary file for the installer
-        with tempfile.NamedTemporaryFile(suffix=".exe", delete=False) as temp_file:
-            installer_path = temp_file.name
-
+        installer_path = None
+        reserved = False
         try:
-            cancelled, total_size_in_bytes = self._download_with_progress(download_url, installer_path)
-        except requests.exceptions.HTTPError as e:
-            self.gui_callbacks.show_download_error(str(e))
-            self._safe_unlink(installer_path)
-            self._active_download = False
-            return
-        except Exception as e:
-            logging.getLogger("updater").exception("Unexpected error downloading installer: %s", e)
-            self._safe_unlink(installer_path)
-            self._active_download = False
-            raise
-
-        if cancelled:
-            self._safe_unlink(installer_path)
-            self._active_download = False
-            return
-
-        if total_size_in_bytes != 0:
-            current_value = self.gui_callbacks.get_progress_value()
-            if current_value != total_size_in_bytes:
-                logging.getLogger("updater").warning("Downloaded size mismatch: progress %s vs expected %s", current_value, total_size_in_bytes)
-
-        # Finish download UI state
-        self.gui_callbacks.finish_download_ui()
-
-        # Verify SHA256 if URL provided
-        if sha_url and not self._verify_sha256(installer_path, sha_url):
-            # Error already shown inside _verify_sha256
-            self._safe_unlink(installer_path)
-            self._active_download = False
-            return
-
-        # Close the application and run installer
-        try:
+            # None is retained for older non-GUI callback implementations.
+            reserved = self.gui_callbacks.start_download_ui() is not False
+            if not reserved or self.gui_callbacks.is_download_cancelled():
+                return
+            with tempfile.NamedTemporaryFile(suffix=".exe", delete=False) as temp_file:
+                installer_path = temp_file.name
+            cancelled, total_size = self._download_with_progress(download_url, installer_path)
+            if cancelled or self.gui_callbacks.is_download_cancelled():
+                return
+            if total_size and self.gui_callbacks.get_progress_value() != total_size:
+                logging.getLogger("updater").warning("Downloaded size mismatch")
+            if sha_url and not self._verify_sha256(installer_path, sha_url):
+                return
+            if self.gui_callbacks.is_download_cancelled():
+                return
             self.gui_callbacks.close_application()
             self._spawn_installer(installer_path)
+            installer_path = None  # The update batch now owns this file.
+        except requests.exceptions.HTTPError as exc:
+            self.gui_callbacks.show_download_error(str(exc))
+        except Exception:
+            logging.getLogger("updater").exception("Unexpected error downloading installer")
+            raise
         finally:
-            # Not strictly needed because app is closing, but good for tests / reuse
-            self._active_download = False
+            if installer_path is not None:
+                self._safe_unlink(installer_path)
+            try:
+                if reserved:
+                    self.gui_callbacks.finish_download_ui()
+            finally:
+                self._active_download = False
+                self._download_lock.release()
 
     # --- helper methods to reduce complexity ---
 

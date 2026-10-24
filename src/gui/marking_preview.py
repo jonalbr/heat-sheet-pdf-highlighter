@@ -2,6 +2,9 @@
 
 import logging
 import multiprocessing
+import threading
+from contextlib import suppress
+from tkinter import TclError
 
 from ..core.marking_preview import marking_preview_worker
 
@@ -9,9 +12,10 @@ from ..core.marking_preview import marking_preview_worker
 class MarkingPreview:
     """Debounce edits, coalesce pending work, and discard obsolete results."""
 
-    def __init__(self, scheduler, on_result):
+    def __init__(self, scheduler, on_result, on_error=None):
         self.scheduler = scheduler
         self.on_result = on_result
+        self.on_error = on_error
         self.generation = 0
         self._debounce = None
         self._poll_id = None
@@ -20,8 +24,9 @@ class MarkingPreview:
         self._pending = None
         self._busy = False
         self._closed = False
+        self.cleanup_worker = None
 
-    def request(self, request):
+    def request(self, request, *, immediate=False):
         """Invalidate the displayed generation immediately, then wait for typing."""
         if self._closed:
             return
@@ -29,7 +34,11 @@ class MarkingPreview:
         self._pending = None
         if self._debounce is not None:
             self.scheduler.after_cancel(self._debounce)
-        self._debounce = self.scheduler.after(200, self._ready, self.generation, request)
+        self._debounce = None
+        if immediate:
+            self._ready(self.generation, request)
+        else:
+            self._debounce = self.scheduler.after(200, self._ready, self.generation, request)
 
     def _ready(self, generation, request):
         self._debounce = None
@@ -55,7 +64,7 @@ class MarkingPreview:
             self._poll_id = self.scheduler.after(50, self._poll)
         except OSError, ValueError:
             logging.getLogger(__name__).exception("Cannot start preview worker")
-            self.close()
+            self._failed()
 
     def _poll(self):
         self._poll_id = None
@@ -71,32 +80,44 @@ class MarkingPreview:
             elif self._process.is_alive():
                 self._poll_id = self.scheduler.after(50, self._poll)
             else:
-                self.close()
+                self._failed()
         except EOFError, OSError:
             logging.getLogger(__name__).debug("Preview worker disconnected", exc_info=True)
-            self.close()
+            self._failed()
+
+    def _failed(self):
+        """Release a failed worker and let a waiting dialog become usable."""
+        self.close()
+        if self.on_error is not None:
+            self.on_error()
 
     def close(self):
         """Release callbacks, IPC handles and the process, including in-flight work."""
         self._closed = True
         for callback in (self._debounce, self._poll_id):
             if callback is not None:
-                self.scheduler.after_cancel(callback)
+                with suppress(TclError):
+                    self.scheduler.after_cancel(callback)
         self._debounce = self._poll_id = self._pending = None
-        if self._process is not None:
-            if self._process.pid is not None:
-                if not self._busy and self._connection is not None:
+        process, connection, busy = self._process, self._connection, self._busy
+        self._process = self._connection = None
+        self._busy = False
+
+        def cleanup():
+            if process is not None and process.pid is not None:
+                if not busy and connection is not None:
                     try:
-                        self._connection.send(None)
+                        connection.send(None)
                     except BrokenPipeError, OSError:
                         pass
-                    self._process.join(timeout=0.2)
-                if self._process.is_alive():
-                    self._process.terminate()
-                    self._process.join(timeout=0.5)
-                self._process.close()
-            self._process = None
-        if self._connection is not None:
-            self._connection.close()
-            self._connection = None
-        self._busy = False
+                    process.join(timeout=0.2)
+                if process.is_alive():
+                    process.terminate()
+                    process.join()
+                process.close()
+            if connection is not None:
+                connection.close()
+
+        if process is not None or connection is not None:
+            self.cleanup_worker = threading.Thread(target=cleanup, daemon=True)
+            self.cleanup_worker.start()

@@ -131,6 +131,7 @@ def build_strings(_: Callable[[str], str]) -> Dict[str, str]:
         "flt_named": _("Only names from the list"),
         "flt_names": _("Names"),
         "flt_names_required": _("Please enter at least one name for this mode."),
+        "flt_preview_unavailable": _("Preview unavailable. Close and reopen this dialog to try again."),
         "flt_no_names_found": _(
             "No names from the list found for this search. Check the names or choose another marking mode."
         ),
@@ -159,6 +160,10 @@ def build_strings(_: Callable[[str], str]) -> Dict[str, str]:
 
     # ---- Process/status lines outside of the general pool ----
     status_strings = {
+        "status_processing": _("Status: Processing PDF…"),
+        "btn_cancelling": _("Cancelling …"),
+        "status_cancelling": _("Status: Cancelling …"),
+        "status_preparing": _("Status: Preparing PDF processing…"),
         "status_aborted": _("Status: Aborted by user."),
         "status_aborted_processing": _("Status: Processing aborted."),
         "status_done": _("Finished"),

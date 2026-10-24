@@ -176,15 +176,14 @@ def create_searchable_ocr_pdf_in_process(
         while process.is_alive():
             error_message = _drain_ocr_process_messages(messages, progress_callback) or error_message
             if is_cancelled and is_cancelled():
+                # The supervisor owns page workers. Killing it here could orphan
+                # them while they still hold input files and temporary outputs.
                 cancel_event.set()
-                process.join(timeout=5)
-                if process.is_alive():
-                    process.terminate()
-                    process.join(timeout=5)
-                raise OcrCancelled()
             time.sleep(poll_interval)
 
         process.join()
+        if cancel_event.is_set() or (is_cancelled and is_cancelled()):
+            raise OcrCancelled()
         error_message = _drain_ocr_process_messages(messages, progress_callback) or error_message
         if error_message:
             raise RuntimeError(f"OCR process failed:\n{error_message}")
@@ -195,12 +194,13 @@ def create_searchable_ocr_pdf_in_process(
     finally:
         if process.is_alive():
             cancel_event.set()
-            process.terminate()
-            process.join(timeout=5)
+            while process.is_alive():
+                _drain_ocr_process_messages(messages, None)
+                process.join(timeout=OCR_PROCESS_POLL_SECONDS)
+            process.join()
+        _close_multiprocessing_queue(messages)
         with suppress(Exception):
-            messages.close()
-        with suppress(Exception):
-            messages.join_thread()
+            process.close()
 
 
 def save_pdf_path_in_process(
@@ -233,14 +233,12 @@ def save_pdf_path_in_process(
             error_message, result, done = _drain_save_process_messages(messages, result, done) or (error_message, result, done)
             if is_cancelled and is_cancelled():
                 cancel_event.set()
-                process.join(timeout=2)
-                if process.is_alive():
-                    process.terminate()
-                    process.join(timeout=5)
-                raise OcrCancelled()
+                # Let native writes finish so the child can remove its staging files.
             time.sleep(poll_interval)
 
         process.join()
+        if is_cancelled and is_cancelled():
+            raise OcrCancelled()
         error_message, result, done = _drain_save_process_messages(messages, result, done) or (error_message, result, done)
         if error_message:
             raise RuntimeError(f"Save process failed:\n{error_message}")
@@ -254,9 +252,13 @@ def save_pdf_path_in_process(
     finally:
         if process.is_alive():
             cancel_event.set()
-            process.terminate()
-            process.join(timeout=5)
+            while process.is_alive():
+                _drain_save_process_messages(messages, None, False)
+                process.join(timeout=OCR_PROCESS_POLL_SECONDS)
+            process.join()
         _close_multiprocessing_queue(messages)
+        with suppress(Exception):
+            process.close()
 
 
 def _ocr_pdf_process_worker(
@@ -434,6 +436,7 @@ def _create_searchable_ocr_pdf_parallel(
         temp_dir = Path(temp_dir_name)
         page_paths = [temp_dir / f"page-{page_number:06d}.pdf" for page_number in range(total_pages)]
 
+        started_processes = []
         try:
             for page_number, page_path in enumerate(page_paths):
                 task_queue.put((page_number, str(page_path)))
@@ -442,6 +445,7 @@ def _create_searchable_ocr_pdf_parallel(
 
             for process in processes:
                 process.start()
+                started_processes.append(process)
 
             completed_pages: set[int] = set()
             while len(completed_pages) < total_pages:
@@ -468,16 +472,18 @@ def _create_searchable_ocr_pdf_parallel(
                 process.join(timeout=5)
             if any(process.is_alive() for process in processes):
                 cancel_event.set()
-                _terminate_processes(processes)
+                _terminate_processes(started_processes)
                 raise RuntimeError("OCR worker did not stop after processing completed.")
             _raise_if_any_worker_failed(processes)
 
             return _merge_page_pdfs(page_paths)
         except Exception:
             cancel_event.set()
-            _terminate_processes(processes)
+            _terminate_processes(started_processes)
             raise
         finally:
+            with suppress(Exception):
+                task_queue.cancel_join_thread()
             _close_multiprocessing_queue(task_queue)
             _close_multiprocessing_queue(result_queue)
 
@@ -571,8 +577,7 @@ def _terminate_processes(processes: list[multiprocessing.Process]) -> None:
         if process.is_alive():
             process.terminate()
     for process in processes:
-        with suppress(Exception):
-            process.join(timeout=5)
+        process.join()
 
 
 def _close_multiprocessing_queue(worker_queue) -> None:

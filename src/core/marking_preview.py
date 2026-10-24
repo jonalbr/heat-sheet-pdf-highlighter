@@ -10,6 +10,9 @@ from ..constants import HIGHLIGHT_COLOR_DEFAULT, HIGHLIGHT_COLOR_NAMES
 from ..models import MarkingMode
 from .pdf_processor import highlight_matching_data, iter_matching_lines
 
+PREVIEW_WIDTH = 560
+PREVIEW_HEIGHT = 150
+
 
 @dataclass(frozen=True)
 class ExampleText:
@@ -174,7 +177,7 @@ class MarkingPreviewRenderer:
     @staticmethod
     def _render_page(page, clip) -> bytes:
         # Fix the viewport size while preserving the original PDF aspect ratio.
-        zoom = min(2, 560 / clip.width, 150 / clip.height)
+        zoom = min(2, PREVIEW_WIDTH / clip.width, PREVIEW_HEIGHT / clip.height)
         return page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom), clip=clip, alpha=False).tobytes("png")
 
     def _render_example(self, request: PreviewRequest, *, no_named_matches: bool = False) -> PreviewResult:

@@ -3,18 +3,20 @@
 import csv
 from io import BytesIO
 import logging
+from pathlib import Path
 from tkinter import Button, StringVar, TclError, Text, Toplevel, colorchooser, filedialog, ttk
+from tkinter.font import Font
 
 from PIL import Image, ImageTk
 
-from ..core.marking_preview import ExampleText, PreviewRequest
+from ..core.marking_preview import PREVIEW_HEIGHT, PREVIEW_WIDTH, ExampleText, PreviewRequest
 from ..core.pdf_processor import parse_names
 from ..models import MarkingMode
 from ..utils.theme import get_theme_colors
 from .marking_preview import MarkingPreview
 from .message_dialog import show_error
 from .ui_strings import get_ui_string
-from .widgets import Tooltip
+from .widgets import Tooltip, lock_controls
 
 PALETTE = (
     ("flt_yellow", "#FFFFA6"),
@@ -35,6 +37,17 @@ class FilterDialog:
         self._preview = None
         self._photo = None
         self._external_traces = []
+        self._busy = False
+        self._last_preview = None
+        self._request_key = None
+
+    def set_busy(self, busy):
+        """Keep the draft while temporarily disabling all edit/apply controls."""
+        self._busy = busy
+        if self.window is not None and self.window.winfo_exists():
+            lock_controls(self.window, busy, (self.cancel_button,))
+            if not busy:
+                self._update_controls()
 
     def _text(self, key):
         return get_ui_string(self.app.strings, key)
@@ -51,6 +64,7 @@ class FilterDialog:
             "highlight_color_names": self.app.highlight_color_names_var.get(),
         }
         self.window = window = Toplevel(self.app.root)
+        window.withdraw()
         window.title(self._text("btn_filter"))
         window.protocol("WM_DELETE_WINDOW", self.close)
         window.bind("<Destroy>", self._on_destroy, add="+")
@@ -119,21 +133,29 @@ class FilterDialog:
         preview_frame.grid(row=7, column=0, columnspan=2, sticky="ew", pady=(12, 6))
         self.preview_label = ttk.Label(preview_frame, text=self._text("flt_example"))
         self.preview_label.pack(anchor="w")
-        self.preview_image = ttk.Label(preview_frame)
-        self.preview_image.pack(pady=(4, 0))
-        self.preview_note = ttk.Label(preview_frame, text=self._text("flt_no_names_found"), wraplength=560)
+        self.preview_viewport = ttk.Frame(preview_frame, width=PREVIEW_WIDTH, height=PREVIEW_HEIGHT)
+        self.preview_viewport.pack(pady=(4, 0))
+        self.preview_viewport.pack_propagate(False)
+        self.preview_image = ttk.Label(self.preview_viewport, anchor="center")
+        self.preview_image.pack(fill="both", expand=True)
+        note_font = Font(root=window, font=ttk.Style(window).lookup("TLabel", "font") or "TkDefaultFont")
+        self.preview_note_space = ttk.Frame(preview_frame, width=PREVIEW_WIDTH, height=note_font.metrics("linespace") * 2)
+        self.preview_note_space.pack(pady=(6, 0))
+        self.preview_note_space.pack_propagate(False)
+        self.preview_note = ttk.Label(self.preview_note_space, text="", wraplength=PREVIEW_WIDTH, anchor="nw")
+        self.preview_note.pack(fill="both", expand=True)
         footer = ttk.Frame(content)
         footer.grid(row=8, column=0, columnspan=2, sticky="ew", pady=(6, 0))
         ttk.Button(footer, text=self._text("btn_apply"), command=self.apply_changes).pack(side="left")
-        ttk.Button(footer, text=self._text("btn_cancel"), command=self.close).pack(side="right")
-        self._preview = MarkingPreview(window, self._show_preview)
+        self.cancel_button = ttk.Button(footer, text=self._text("btn_cancel"), command=self.close)
+        self.cancel_button.pack(side="right")
+        self._preview = MarkingPreview(window, self._show_preview, self._preview_failed)
         self.mode.trace_add("write", self._changed)
         for variable in (self.app.search_phrase_var, self.app.relevant_lines_var):
             self._external_traces.append((variable, variable.trace_add("write", self._changed)))
         self.app.apply_theme_to_window(window)
-        self._changed()
-        window.grab_set()
-        window.focus_set()
+        self.set_busy(getattr(self.app, "output_options_locked", False))
+        self._changed(immediate=True)
 
     def _draft(self):
         return {
@@ -145,6 +167,8 @@ class FilterDialog:
     def _update_controls(self):
         """Show inactive controls without losing their configured values."""
         mode = MarkingMode(self.mode.get())
+        if self._busy:
+            return mode
         names_active = mode != MarkingMode.ALL_MATCHES
         theme = get_theme_colors(getattr(self.app, "_current_effective_theme", "light"))
         self.names_label.configure(state="normal" if names_active else "disabled")
@@ -183,32 +207,43 @@ class FilterDialog:
         if self.window is not None:
             self._update_controls()
 
-    def _changed(self, *_):
+    def _changed(self, *_, immediate=False):
         if self.window is None:
             return
         mode = self._update_controls()
-        self.preview_note.pack_forget()
-        self._preview.request(
-            PreviewRequest(
-                getattr(self.app, "input_file_full_path", None),
-                self.app.search_phrase_var.get(),
-                bool(self.app.relevant_lines_var.get()),
-                parse_names(self.names_entry.get("1.0", "end-1c")),
-                mode,
-                ExampleText(
-                    heading=self._text("flt_example_heat").format(1, 3, "10:30"),
-                    lane=self._text("flt_example_lane"),
-                    swimmer=self._text("flt_example_swimmer"),
-                    year=self._text("flt_example_year"),
-                    club=self._text("flt_example_club"),
-                    entry_time=self._text("flt_example_entry_time"),
-                    lane_format=self._text("flt_example_lane_format"),
-                    time_format=self._text("flt_example_time_format"),
-                ),
-                self.colors["highlight_color_default"].get(),
-                self.colors["highlight_color_names"].get(),
-            )
+        self.preview_note.configure(text="")
+        request = PreviewRequest(
+            getattr(self.app, "input_file_full_path", None),
+            self.app.search_phrase_var.get(),
+            bool(self.app.relevant_lines_var.get()),
+            parse_names(self.names_entry.get("1.0", "end-1c")),
+            mode,
+            ExampleText(
+                heading=self._text("flt_example_heat").format(1, 3, "10:30"),
+                lane=self._text("flt_example_lane"),
+                swimmer=self._text("flt_example_swimmer"),
+                year=self._text("flt_example_year"),
+                club=self._text("flt_example_club"),
+                entry_time=self._text("flt_example_entry_time"),
+                lane_format=self._text("flt_example_lane_format"),
+                time_format=self._text("flt_example_time_format"),
+            ),
+            self.colors["highlight_color_default"].get(),
+            self.colors["highlight_color_names"].get(),
         )
+        fingerprint = None
+        if request.source_path:
+            try:
+                stat = Path(request.source_path).stat()
+                fingerprint = (stat.st_mtime_ns, stat.st_size)
+            except OSError:
+                pass
+        self._request_key = (request, fingerprint)
+        # Always invalidate obsolete in-flight results, even when displaying a
+        # cached image immediately after reopening the dialog.
+        self._preview.request(request, immediate=immediate)
+        if self._last_preview is not None and self._last_preview[0] == self._request_key:
+            self._show_preview(self._last_preview[1])
 
     def _names_changed(self, *_):
         if self.names_entry.edit_modified():
@@ -250,6 +285,8 @@ class FilterDialog:
             self.colors[key].set(color.upper())
 
     def _show_preview(self, result):
+        if self.window is None:
+            return
         with Image.open(BytesIO(result.png)) as image:
             self._photo = ImageTk.PhotoImage(image, master=self.window)
         self.preview_image.configure(image=self._photo)
@@ -260,13 +297,28 @@ class FilterDialog:
                 else self._text("flt_example")
             )
         )
-        if result.no_named_matches:
-            self.preview_note.pack(anchor="w", fill="x", pady=(6, 0))
-        else:
-            self.preview_note.pack_forget()
+        self.preview_note.configure(text=self._text("flt_no_names_found") if result.no_named_matches else "")
+        self._last_preview = (self._request_key, result)
+        self._reveal()
+
+    def _reveal(self):
+        """Map the completely laid-out dialog after its first preview or error."""
+        if self.window is not None and self.window.state() == "withdrawn":
+            self.window.update_idletasks()
+            self.window.deiconify()
+            self.window.grab_set()
+            self.window.focus_set()
+
+    def _preview_failed(self):
+        """Keep settings usable if the preview process could not return an image."""
+        if self.window is not None:
+            self.preview_note.configure(text=self._text("flt_preview_unavailable"))
+            self._reveal()
 
     def apply_changes(self):
         """Validate the complete draft before publishing any setting."""
+        if self._busy or getattr(self.app, "output_options_locked", False):
+            return
         draft = self._draft()
         if draft["marking_mode"] != MarkingMode.ALL_MATCHES and not parse_names(draft["names"]):
             show_error(self.app, self._text("error"), self._text("flt_names_required"))
@@ -286,6 +338,12 @@ class FilterDialog:
     def _cleanup(self):
         if self._preview is not None:
             self._preview.close()
+            worker = getattr(self._preview, "cleanup_worker", None)
+            if worker is not None:
+                if not hasattr(self.app, "_preview_cleanups"):
+                    self.app._preview_cleanups = []
+                self.app._preview_cleanups = [thread for thread in self.app._preview_cleanups if thread.is_alive()]
+                self.app._preview_cleanups.append(worker)
             self._preview = None
         for variable, trace in self._external_traces:
             variable.trace_remove("write", trace)

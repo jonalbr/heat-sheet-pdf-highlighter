@@ -119,6 +119,80 @@ def test_controller_close_terminates_inflight_worker():
     start = time.monotonic()
     preview.close()
     assert time.monotonic() - start < 3
+    preview.cleanup_worker.join(timeout=5)
+    assert not preview.cleanup_worker.is_alive()
     assert all(child.pid != pid for child in multiprocessing.active_children())
     assert scheduler.callbacks == {}
     preview.close()
+
+
+
+def test_close_detaches_tk_before_waiting_for_process():
+    import threading
+
+    entered, release = threading.Event(), threading.Event()
+
+    class Process:
+        pid = 123
+        alive = True
+        closed = False
+
+        def is_alive(self):
+            return self.alive
+
+        def terminate(self):
+            self.alive = False
+
+        def join(self, timeout=None):
+            assert threading.current_thread() is not threading.main_thread()
+            entered.set()
+            assert release.wait(2)
+
+        def close(self):
+            self.closed = True
+
+    preview = MarkingPreview(Scheduler(), lambda result: None)
+    process = preview._process = Process()
+    preview._busy = True
+    try:
+        preview.close()
+        assert entered.wait(2)
+        assert preview._process is None
+        assert preview.cleanup_worker.is_alive()
+    finally:
+        release.set()
+        preview.cleanup_worker.join(2)
+    assert process.closed
+
+
+
+def test_first_request_can_submit_immediately_while_edits_are_debounced(monkeypatch):
+    scheduler = Scheduler()
+    preview = MarkingPreview(scheduler, lambda result: None)
+    submissions = []
+    monkeypatch.setattr(preview, "_submit", lambda: submissions.append(preview._pending))
+    preview.request(request(), immediate=True)
+    assert submissions[0][0] == 1
+    assert scheduler.callbacks == {}
+    preview.request(request())
+    assert len(submissions) == 1
+    scheduler.run(preview._debounce)
+    assert submissions[1][0] == 2
+    preview.close()
+
+
+def test_disconnected_worker_reports_failure_without_leaving_hidden_dialog():
+    class Connection:
+        def poll(self):
+            raise EOFError
+
+        def close(self):
+            pass
+
+    errors = []
+    preview = MarkingPreview(Scheduler(), lambda result: None, lambda: errors.append(True))
+    preview._connection = Connection()
+    preview._poll()
+    assert preview._closed
+    assert errors == [True]
+    preview.cleanup_worker.join(2)

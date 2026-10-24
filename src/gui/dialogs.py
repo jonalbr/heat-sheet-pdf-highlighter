@@ -3,6 +3,7 @@ Dialog windows (Filter and Watermark dialogs)
 """
 
 import time
+import threading
 from functools import partial
 from tkinter import DoubleVar, IntVar, StringVar, TclError, Toplevel, colorchooser, ttk
 from tkinter import Button as tkButton
@@ -17,6 +18,7 @@ from ..version import Version
 from .message_dialog import ask_ok_cancel, ask_retry_cancel, ask_yes_no_cancel, show_error, show_info
 from .ui_strings import get_ui_string
 from .filter_dialog import FilterDialog as FilterDialog
+from .widgets import lock_controls
 
 
 class UpdateDialogs:
@@ -30,10 +32,22 @@ class UpdateDialogs:
 
     # --- helper to marshal work to Tk main thread ---
     def _ui(self, fn):
-        try:
-            self.app.root.after(0, fn)
-        except Exception as e:
-            logging.getLogger("dialogs").exception("Error scheduling UI update: %s", e)
+        identifier = getattr(self, "_download_id", 0)
+        self.app._ui_messages.put((identifier, "download", (fn,)))
+
+    def _call_main(self, callback):
+        from .main_window import GuiRequest
+
+        if threading.current_thread() is threading.main_thread():
+            return callback()
+        request = GuiRequest(callback)
+        self.app._ui_messages.put((0, "download_request", (request,)))
+        while not request.ready.wait(0.05):
+            if self.app._closing:
+                return False
+        if request.error:
+            raise request.error
+        return request.value
 
     def show_up_to_date(self):
         """Show message that app is up to date."""
@@ -91,11 +105,15 @@ class UpdateDialogs:
 
     def show_download_error(self, error_message: str):
         """Show download error message."""
-        show_error(
-            self.app,
-            get_ui_string(self.app.strings, "error"),
-            get_ui_string(self.app.strings, "upd_download_failed").format(error_message),
-        )
+        def report():
+            show_error(self.app, get_ui_string(self.app.strings, "error"),
+                       get_ui_string(self.app.strings, "upd_download_failed").format(error_message))
+        if self.app.download_active:
+            self._ui(report)
+        else:
+            from .main_window import GuiRequest
+
+            self.app._ui_messages.put((0, "download_request", (GuiRequest(report),)))
 
     def setup_download_progress(self, total_size: int):
         """Setup progress bar for download and show initial label."""
@@ -104,11 +122,13 @@ class UpdateDialogs:
         if hasattr(self.app, "progress_bar"):
             def _init_progress_ui():
                 try:
+                    if self.is_download_cancelled():
+                        return
                     self.app.progress_bar["maximum"] = self._dl_total_size
                     self._reset_progressbar_value()
                     # Show initial label for download
                     if hasattr(self.app, "status_var"):
-                        self.app.status_var.set(get_ui_string(self.app.strings, "upd_progress").format(0, self._dl_total_size / (1024 * 1024), 0))
+                        self.app._set_status("upd_progress", 0, self._dl_total_size / (1024 * 1024), 0)
                 except Exception as e:
                     logging.getLogger("dialogs").exception("Error initializing progress UI: %s", e)
             self._ui(_init_progress_ui)
@@ -152,34 +172,29 @@ class UpdateDialogs:
             downloaded_MB = current_value / (1024 * 1024)
             total_MB = total / (1024 * 1024)
 
-            text = get_ui_string(self.app.strings, "upd_progress").format(downloaded_MB, total_MB, remaining_time)
-            self._ui(lambda: self.app.status_var.set(text))
+            self._ui(lambda: self.app._set_status("upd_progress", downloaded_MB, total_MB, remaining_time) if not self.is_download_cancelled() else None)
 
     def close_application(self):
-        """Close the application."""
-        if hasattr(self.app, "root"):
-            self._ui(lambda: self.app.root.destroy())
+        self._ui(self.app.close)
 
     def get_progress_value(self) -> float:
-        """Get current progress bar value."""
         return float(self._dl_downloaded_bytes)
 
     def start_download_ui(self):
-        """Start download UI state."""
-        def _start_download_ui():
-            self.app.start_download()
-            if hasattr(self.app, "status_var"):
-                self.app.status_var.set(get_ui_string(self.app.strings, "upd_starting"))
-
-        self._ui(_start_download_ui)
+        """Return whether Tk granted exclusive ownership of shared controls."""
+        def reserve():
+            accepted = self.app.start_download()
+            if accepted:
+                self._download_id = self.app._download_id
+            return accepted
+        return bool(self._call_main(reserve))
 
     def is_download_cancelled(self) -> bool:
-        """Check if download was cancelled by user."""
         return self.app.is_download_aborted()
 
     def finish_download_ui(self):
-        """Finish download UI state."""
         self._ui(self.app.finish_download)
+
 
 
 class WatermarkDialog:
@@ -189,9 +204,23 @@ class WatermarkDialog:
         self.app = app_instance
         self.parent = self.app.root
         self.window = None
+        self._busy = False
+
+    def set_busy(self, busy):
+        """Lock controls without publishing or discarding the local draft."""
+        self._busy = busy
+        if busy and hasattr(self, "_stop_nudge"):
+            self._stop_nudge()
+        if self.window is not None and self.window.winfo_exists():
+            lock_controls(self.window, busy, (self._cancel_button,))
+
+    def _draft(self):
+        return {key: variable.get() for key, variable in self._draft_vars.items()}
 
     def close(self, close_preview: bool = False) -> None:
         """Close the watermark dialog and optionally close the linked preview."""
+        if hasattr(self, "_stop_nudge"):
+            self._stop_nudge()
         if close_preview:
             self.app.preview_window_handler.close()
 
@@ -206,8 +235,12 @@ class WatermarkDialog:
             return
         self.window = None
 
-    def open(self):
-        """Open the watermark dialog window."""
+    def open(self, draft=None):
+        """Open the watermark dialog, restoring uncommitted values if supplied."""
+        if self.window is not None and self.window.winfo_exists():
+            self.window.lift()
+            return
+        draft = draft or {}
         self.window = Toplevel(self.parent)
         dialog_window = self.window
         dialog_window.title(get_ui_string(self.app.strings, "wm_settings"))
@@ -222,6 +255,11 @@ class WatermarkDialog:
         temp_position = StringVar(value=self.app.app_settings.settings.get("watermark_position"))
         temp_x_ratio = DoubleVar(value=self.app.app_settings.settings.get("watermark_x_ratio"))
         temp_y_ratio = DoubleVar(value=self.app.app_settings.settings.get("watermark_y_ratio"))
+
+        self._draft_vars = dict(enabled=temp_enabled, text=temp_text, color=temp_color, size=temp_size,
+                                position=temp_position, x_ratio=temp_x_ratio, y_ratio=temp_y_ratio)
+        for key, value in draft.items():
+            self._draft_vars[key].set(value)
 
         ttk.Label(dialog_window, text=get_ui_string(self.app.strings, "wm_enable")).grid(row=0, column=0, sticky="W", padx=10, pady=5)
         chk = ttk.Checkbutton(dialog_window, variable=temp_enabled)
@@ -310,6 +348,8 @@ class WatermarkDialog:
                 temp_y_ratio.set(y_ratio)
 
         def nudge_position(dx: float, dy: float):
+            if self._busy:
+                return
             x_ratio, y_ratio = get_position_ratios(temp_position.get(), temp_x_ratio.get(), temp_y_ratio.get())
             temp_position.set("custom")
             temp_x_ratio.set(max(0.0, min(1.0, x_ratio + dx)))
@@ -333,6 +373,8 @@ class WatermarkDialog:
         def start_repeating_nudge(dx: float, dy: float, *args):
             nonlocal repeat_after_id
             stop_repeating_nudge()
+            if self._busy:
+                return
             nudge_position(dx, dy)
             repeat_after_id = dialog_window.after(300, repeat_nudge, dx, dy)
 
@@ -413,18 +455,7 @@ class WatermarkDialog:
         btn_preview = ttk.Button(dialog_window, text=get_ui_string(self.app.strings, "btn_preview"), command=lambda: preview(force_open=True))
         btn_preview.grid(row=7, column=0, columnspan=2, pady=10)
 
-        def apply_changes():
-            stop_repeating_nudge()
-            self.app.app_settings.update_setting("watermark_enabled", "True" if temp_enabled.get() else "False")
-            self.app.app_settings.update_setting("watermark_text", temp_text.get())
-            self.app.app_settings.update_setting("watermark_color", temp_color.get())
-            self.app.app_settings.update_setting("watermark_size", int(temp_size.get()) if temp_size.get().isdigit() else 16)
-            self.app.app_settings.update_setting("watermark_position", temp_position.get())
-            self.app.app_settings.update_setting("watermark_x_ratio", temp_x_ratio.get())
-            self.app.app_settings.update_setting("watermark_y_ratio", temp_y_ratio.get())
-            self.close()
-
-        btn_apply = ttk.Button(dialog_window, text=get_ui_string(self.app.strings, "btn_apply"), command=apply_changes)
+        btn_apply = ttk.Button(dialog_window, text=get_ui_string(self.app.strings, "btn_apply"), command=self.apply_changes)
         btn_apply.grid(row=8, column=0, pady=10, padx=10, sticky="E")
 
         def cancel_changes():
@@ -439,17 +470,36 @@ class WatermarkDialog:
             command=cancel_changes,
         )
         btn_cancel.grid(row=8, column=1, pady=10, padx=10, sticky="W")
+        self._cancel_button = btn_cancel
+        self._stop_nudge = stop_repeating_nudge
+        self.set_busy(getattr(self.app, "output_options_locked", False))
         self.app.apply_theme_to_window(dialog_window)
 
+    def apply_changes(self):
+        """Publish the local draft only when no operation owns the output options."""
+        if self._busy or getattr(self.app, "output_options_locked", False):
+            return
+        self._stop_nudge()
+        draft = self._draft()
+        values = {
+            "watermark_enabled": "True" if draft["enabled"] else "False",
+            "watermark_text": draft["text"],
+            "watermark_color": draft["color"],
+            "watermark_size": int(draft["size"]) if draft["size"].isdigit() else 16,
+            "watermark_position": draft["position"],
+            "watermark_x_ratio": draft["x_ratio"],
+            "watermark_y_ratio": draft["y_ratio"],
+        }
+        for key, value in values.items():
+            self.app.app_settings.update_setting(key, value)
+        self.close()
+
     def refresh_ui_strings(self):
-        """Refresh the Watermark dialog UI strings by recreating the window if open."""
+        """Rebuild translated controls while retaining the raw, uncommitted draft."""
         try:
             if self.window and self.window.winfo_exists():
-                try:
-                    self.close(close_preview=True)
-                except Exception as e:
-                    logging.getLogger("dialogs").exception("Error destroying watermark dialog: %s", e)
-                # Re-open will recreate the dialog using current translations
-                self.open()
-        except Exception as e:
-            logging.getLogger("dialogs").exception("Unexpected error refreshing watermark dialog: %s", e)
+                draft = self._draft()
+                self.close()
+                self.open(draft)
+        except Exception as exc:
+            logging.getLogger("dialogs").exception("Unexpected error refreshing watermark dialog: %s", exc)
