@@ -11,6 +11,7 @@ from src.gui import main_window
 from src.gui.dev_tools import DevToolsWindow
 from src.gui.main_window import PDFHighlighterApp, ProcessingJob
 from src.models import MarkingMode
+from src.version import Version
 
 
 class Preview:
@@ -70,6 +71,30 @@ def app(tmp_path, monkeypatch, request):
     root.destroy()
 
 
+def test_late_update_label_callback_cannot_publish_previous_channel(app):
+    current = Version.from_str(app.app_settings.settings["version"])
+    context = app.update_checker._update_context()
+    app.on_version_update(Version.from_str("99.0.0"), current, context)
+    app.app_settings.update_setting("update_channel", "rc")
+    app.update_checker.channel_changed()
+    app.update_version_labels_text(current, current)
+    app.root.update_idletasks()
+    assert app.update_label_text == app.strings["upd_check"]
+
+
+def test_devtools_channel_change_clears_assets_and_updates_labels_on_main_thread(app):
+    app.dev_tools.open()
+    checker = app.update_checker
+    checker.last_download_url, checker.last_sha_url, checker.last_version_tag = "old.exe", "old.sha256", "99.0.0"
+    app.app_settings.update_setting("skipped_update_versions", {"stable": "99.0.0"})
+    app.dev_tools.channel_var.set("rc")
+    app.dev_tools._on_channel_changed()
+    assert checker.last_download_url is checker.last_sha_url is checker.last_version_tag is None
+    assert app.update_label_text == app.strings["upd_check"]
+    assert app.app_settings.settings["newest_version_available"] == "0.0.0"
+    assert app.app_settings.settings["skipped_update_versions"] == {"stable": "99.0.0"}
+
+
 def test_reset_synchronizes_every_setting_draft_and_next_job(app, tmp_path, monkeypatch):
     changes = {
         "search_str": "Changed", "mark_only_relevant_lines": 0, "names": "Alice",
@@ -79,6 +104,7 @@ def test_reset_synchronizes_every_setting_draft_and_next_job(app, tmp_path, monk
         "watermark_color": "#000000", "watermark_position": "custom",
         "watermark_x_ratio": 0.2, "watermark_y_ratio": 0.8, "update_channel": "rc",
         "verify_sha": "False", "ask_for_update": "False", "update_available": "True",
+        "skipped_update_versions": {"stable": "99.0.0", "rc": "99.1.0rc1"},
         "newest_version_available": "99.0.0", "update_cache_ttl_seconds": 25,
         "releases_cache_ttl_seconds": 30, "ocr_enabled": "False", "ocr_language": "eng",
         "ocr_dpi": 72, "ocr_reduce_large_outputs": "False",

@@ -265,16 +265,14 @@ def build_strings(_: Callable[[str], str]) -> Dict[str, str]:
         "upd_check_failed": _("Could not check for updates. Please try again."),
         "upd_download_failed": _("The update could not be completed. Please try again later."),
         "upd_error": _("Update Error"),
-        "upd_info": _("Update Information"),
         "upd_latest": _("You are already using the latest version."),
-        "upd_note": _(
-            "Click 'yes' to not be asked again for this update. You can still check manually for updates. "
-            "If there is a newer version available, you will be asked again."
-        ),
+        "upd_now": _("Update now"),
+        "upd_later": _("Later"),
+        "upd_skip_version": _("Do not ask again for this version"),
         "upd_ok": _("Up to Date"),
         "upd_progress": _("Downloading... {0:.1f} MB of {1:.1f} MB, {2:.0f} seconds remaining"),
         "upd_starting": _("Starting download..."),
-        "upd_prompt": _("A new version ({0}) is available. Do you want to update?"),
+        "upd_prompt": _("A new version ({0}) is available."),
     }
 
     # ---- Developer tools ----

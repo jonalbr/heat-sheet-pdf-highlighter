@@ -3,6 +3,16 @@ Enums and data models
 """
 
 from enum import StrEnum
+from dataclasses import dataclass
+from typing import Literal
+
+
+@dataclass(frozen=True)
+class UpdateDecision:
+    """One confirmed update action and its version reminder preference."""
+
+    action: Literal["update_now", "later", "cancel"]
+    skip_version: bool = False
 
 
 class MarkingMode(StrEnum):

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Optional
+from typing import Optional
 import logging
 import datetime
 import hashlib
@@ -13,6 +13,7 @@ import pytest
 import requests
 
 from src.utils.updater import UpdateChecker
+from src.models import UpdateDecision
 from src.version import Version
 
 # --- Shared dummy objects (kept minimal; specialized versions may be defined per test) ---
@@ -25,7 +26,6 @@ class DummyGUIExtended:
         self.cancel = False
         self.up_to_date_calls = 0
         self.update_available_prompts: list[Version] = []
-        self.reminder_choices: list[bool] = []
         self.errors: list[tuple[str, str]] = []
         self.download_errors: list[str] = []
         self.closed = False
@@ -33,20 +33,16 @@ class DummyGUIExtended:
         self.finished = False
 
         # Configurable scripted responses
-        self._update_available_response: Any = None  # None -> cancel, True -> yes, False -> no
-        self._reminder_choice_response: bool = False
+        self._update_available_response = UpdateDecision("cancel")
 
     # ----- GUI callback interface -----
     def show_up_to_date(self):  # Used when forced check and nothing new or treated as up to date
         self.up_to_date_calls += 1
 
-    def show_update_available(self, latest_version: Version):
+    def show_update_available(self, latest_version: Version, is_current=lambda: True):
+        assert is_current()
         self.update_available_prompts.append(latest_version)
         return self._update_available_response
-
-    def show_update_reminder_choice(self):
-        self.reminder_choices.append(self._reminder_choice_response)
-        return self._reminder_choice_response
 
     def show_update_error_retry(self, msg: str):
         self.errors.append(("retry", msg))
@@ -91,6 +87,7 @@ class DummySettingsExtended:
         base = {
             "newest_version_available": "0.0.0",
             "ask_for_update": "True",
+            "skipped_update_versions": {},
             "version": "0.0.0",
             "update_channel": "stable",
             "verify_sha": "True",
@@ -111,7 +108,7 @@ class DummyAppExtended:
     def __init__(self, overrides: dict[str, str] | None = None):
         self.update_dialogs = DummyGUIExtended()
         self.app_settings = DummySettingsExtended(overrides)
-        self.on_version_update = lambda latest, current: None
+        self.on_version_update = lambda latest, current, context=None: None
 
 
 # --- Helpers / Monkeypatch utilities ---
@@ -195,7 +192,7 @@ class DummyResponse:
 def _fake_cache_functions(monkey: dict, load_result, expect_saved: bool = False):
     calls = {"load": 0, "save": 0, "invalidate": 0}
 
-    def fake_load():
+    def fake_load(channel="stable"):
         calls["load"] += 1
         return load_result
 
@@ -226,7 +223,7 @@ def test_cache_hit_uses_cached_version():
         now = datetime.datetime.now()
         cached_version = Version.from_str("2.3.4")
 
-        def fake_load():
+        def fake_load(channel="stable"):
             return now - datetime.timedelta(seconds=10), cached_version
 
         def fake_save(*a, **k):
@@ -264,7 +261,7 @@ def test_force_check_invalidates_cache():
     original_fetch = uc._fetch_release_info
     try:
         # load should be called but ignored due to force
-        def fake_load():
+        def fake_load(channel="stable"):
             return datetime.datetime.now() - datetime.timedelta(seconds=10), Version.from_str("9.9.9")
 
         invalidated = {"done": False}
@@ -332,7 +329,7 @@ def test_active_check_guard_handles_invalid_stored_version():
 def test_prompt_cancel_path_no_download_thread():
     app = DummyAppExtended()
     gui = app.update_dialogs
-    gui._update_available_response = None  # cancel
+    gui._update_available_response = UpdateDecision("cancel")
     uc = UpdateChecker(app)  # type: ignore[arg-type]
 
     def fake_fetch(url: str):
@@ -359,7 +356,7 @@ def test_prompt_cancel_path_no_download_thread():
 def test_prompt_yes_starts_download_thread_without_sha_when_verify_false():
     app = DummyAppExtended({"verify_sha": "False"})
     gui = app.update_dialogs
-    gui._update_available_response = True  # yes
+    gui._update_available_response = UpdateDecision("update_now")
     uc = UpdateChecker(app)  # type: ignore[arg-type]
 
     # Provide release with exe & sha
@@ -393,8 +390,7 @@ def test_prompt_yes_starts_download_thread_without_sha_when_verify_false():
 def test_prompt_no_sets_reminder_flag_when_user_chooses_remind_later():
     app = DummyAppExtended()
     gui = app.update_dialogs
-    gui._update_available_response = False  # user clicked No
-    gui._reminder_choice_response = True  # user chooses don't remind again
+    gui._update_available_response = UpdateDecision("later", True)
     uc = UpdateChecker(app)  # type: ignore[arg-type]
 
     def fake_fetch(url: str):
@@ -417,7 +413,7 @@ def test_prompt_no_sets_reminder_flag_when_user_chooses_remind_later():
 def test_prompt_yes_caches_metadata():
     app = DummyAppExtended()
     gui = app.update_dialogs
-    gui._update_available_response = True
+    gui._update_available_response = UpdateDecision("update_now")
     uc = UpdateChecker(app)  # type: ignore[arg-type]
 
     def fake_fetch(url: str):
@@ -884,7 +880,7 @@ def test_list_releases_filters_non_rc_and_stable_prereleases():
     assert [release["tag"] for release in uc.list_releases("stable")] == ["1.2.3"]
 
 
-def test_handle_rc_releases_without_prereleases_updates_settings():
+def test_handle_rc_releases_without_prereleases_preserves_reminder_settings():
     app = DummyAppExtended({"update_channel": "rc"})
     uc = UpdateChecker(app)  # type: ignore[arg-type]
     uc._fetch_release_info = lambda url: []  # type: ignore[assignment]
@@ -892,7 +888,7 @@ def test_handle_rc_releases_without_prereleases_updates_settings():
     latest, download_url, sha_url = uc._handle_rc_releases(Version.from_str("1.2.3"), "exe", "sha")
 
     assert (latest, download_url, sha_url) == (Version.from_str("1.2.3"), "exe", "sha")
-    assert app.app_settings.settings["newest_version_available"] == "1.2.3"
+    assert app.app_settings.settings["newest_version_available"] == "0.0.0"
     assert app.app_settings.settings["ask_for_update"] == "True"
 
 
@@ -1024,7 +1020,7 @@ def test_should_prompt_user_force_check_shows_up_to_date():
 
 def test_prompt_yes_without_download_url_shows_error():
     app = DummyAppExtended()
-    app.update_dialogs._update_available_response = True
+    app.update_dialogs._update_available_response = UpdateDecision("update_now")
     uc = UpdateChecker(app)  # type: ignore[arg-type]
 
     uc._handle_user_prompt(Version.from_str("2.0.0"), None, None)

@@ -21,6 +21,21 @@ def test_download_starting_status_string_exists():
     assert get_ui_string(s, "upd_starting") == "Starting download..."
 
 
+def test_combined_update_dialog_strings_and_german_translations():
+    expected = {
+        "upd_now": ("Update now", "Jetzt aktualisieren"),
+        "upd_later": ("Later", "Später"),
+        "upd_skip_version": ("Do not ask again for this version", "Für diese Version nicht erneut fragen"),
+        "upd_prompt": ("A new version ({0}) is available.", "Eine neue Version ({0}) ist verfügbar."),
+    }
+    for index, language in enumerate(("en", "de")):
+        strings = build_strings(setup_translation(language)[0])
+        for key, translations in expected.items():
+            assert strings[key] == translations[index]
+        assert "upd_note" not in strings
+        assert "upd_info" not in strings
+
+
 def test_saving_status_describes_user_action():
     s = build_strings(lambda x: x)
     assert get_ui_string(s, "status_saving") == "Status: Saving PDF... Please wait..."

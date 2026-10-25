@@ -43,6 +43,20 @@ def _validated_newest_version(value) -> str:
     return str(parsed_value) if parsed_value >= Version.from_str(VERSION_STR) else "0.0.0"
 
 
+def _validated_skipped_versions(value) -> dict[str, str]:
+    """Keep a canonical, explicit skipped version for each known channel."""
+    result = {}
+    if isinstance(value, dict):
+        for channel in ("stable", "rc"):
+            try:
+                version = Version.from_str(value.get(channel))
+            except (TypeError, ValueError):
+                continue
+            if version != Version():
+                result[channel] = str(version)
+    return result
+
+
 @dataclass(frozen=True)
 class SettingsNotice:
     """A filesystem problem to explain on the GUI thread."""
@@ -72,6 +86,7 @@ class AppSettings:
             "theme_mode": "system",  # "system", "light", or "dark"
             "language": "de",
             "ask_for_update": "True",
+            "skipped_update_versions": {},
             "update_available": "False",
             "newest_version_available": "0.0.0",
             "update_channel": "stable",
@@ -165,7 +180,7 @@ class AppSettings:
     def snapshot(self) -> Dict:
         """Return a consistent independent copy of the validated settings."""
         with self._lock:
-            return dict(self.settings)
+            return self.settings | {"skipped_update_versions": dict(self.settings["skipped_update_versions"])}
 
     def save_settings(self) -> bool:
         """Atomically persist the current state; retain session values on failure."""
@@ -222,6 +237,7 @@ class AppSettings:
             "theme_mode": lambda v: v if v in ["system", "light", "dark"] else "system",
             "language": lambda v: v if v in LANGUAGE_OPTIONS else "en",
             "ask_for_update": lambda v: v if v in ["True", "False"] else "True",
+            "skipped_update_versions": _validated_skipped_versions,
             "update_available": lambda v: v if v in ["True", "False"] else "False",
             "newest_version_available": _validated_newest_version,
             "names": lambda v: v if isinstance(v, str) else "",
@@ -269,6 +285,12 @@ class AppSettings:
                 settings_dict["update_channel"] = "rc" if beta_val else "stable"
         self._migrate_ocr_defaults(settings_dict)
         self._migrate_marking_settings(settings_dict)
+        if "skipped_update_versions" not in settings_dict:
+            channel = settings_dict.get("update_channel", "stable")
+            settings_dict["skipped_update_versions"] = _validated_skipped_versions(
+                {channel: settings_dict.get("newest_version_available")}
+                if settings_dict.get("ask_for_update") == "False" and channel in ("stable", "rc") else {},
+            )
         validated = {}
 
         # Validate known keys first

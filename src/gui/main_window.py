@@ -500,6 +500,7 @@ class PDFHighlighterApp:
                     verify_sha = self.app_settings.settings.get("verify_sha", "True") == "True"
                     dl = self.update_checker.last_download_url  # type: ignore[assignment]
                     sha = self.update_checker.last_sha_url if verify_sha else None
+                    context = self.update_checker.last_update_context
                     if not dl:
                         # Fallback to forced check if somehow missing
                         import threading as _th
@@ -512,7 +513,7 @@ class PDFHighlighterApp:
                     import threading
 
                     threading.Thread(
-                        target=lambda: self.update_checker.download_and_run_installer(dl, sha),
+                        target=lambda: self.update_checker.download_discovered_installer(dl, sha, context),
                         daemon=True,
                     ).start()
                 else:
@@ -688,6 +689,7 @@ class PDFHighlighterApp:
         self.preview_window_handler.last_watermark_data = {}
         self.preview_window_handler.last_origin = None
         self.app_settings.reset_to_defaults()
+        self.update_checker.channel_changed()
         self.sync_settings_to_ui()
 
     def _show_settings_notices(self):
@@ -1097,14 +1099,19 @@ class PDFHighlighterApp:
         self.update_label.config(text=self.update_label_text)
         self.root.update_idletasks()
 
-    def on_version_update(self, latest_version, current_version):
+    def on_version_update(self, latest_version, current_version, context=None):
         """Callback for when version update info is received."""
         # Schedule on main thread since this is called from update check thread
         try:
             # If the root has been destroyed (common in screenshot mode teardown), silently ignore
             if not getattr(self.root, "tk", None):
                 return
-            self.root.after_idle(lambda: self._safe_update_version_info(latest_version, current_version))
+
+            def publish():
+                if context is None or self.update_checker.is_current_context(context):
+                    self._safe_update_version_info(latest_version, current_version)
+
+            self.root.after_idle(publish)
         except RuntimeError:
             # Root is gone; ignore
             return

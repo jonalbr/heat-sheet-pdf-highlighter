@@ -7,7 +7,7 @@ import threading
 from functools import partial
 from tkinter import DoubleVar, IntVar, Menu, StringVar, TclError, Toplevel, colorchooser, ttk
 from tkinter import Button as tkButton
-from typing import TYPE_CHECKING, Dict, Optional
+from typing import TYPE_CHECKING, Dict
 import logging
 
 if TYPE_CHECKING:
@@ -16,7 +16,8 @@ if TYPE_CHECKING:
 from ..core.watermark import get_position_ratios
 from ..config.settings import validated_highlight_color
 from ..version import Version
-from .message_dialog import ask_ok_cancel, ask_retry_cancel, ask_yes_no_cancel, show_error, show_info
+from ..models import UpdateDecision
+from .message_dialog import ask_retry_cancel, ask_update, show_error, show_info
 from .ui_strings import get_ui_string
 from .filter_dialog import FilterDialog as FilterDialog
 from .widgets import lock_controls
@@ -58,37 +59,9 @@ class UpdateDialogs:
             get_ui_string(self.app.strings, "upd_latest"),
         )
 
-    def show_update_available(self, latest_version: Version) -> Optional[bool]:
-        """
-        Show update available dialog.
-
-        Returns:
-            True if user wants to update
-            False if user doesn't want to update
-            None if user cancelled
-        """
-        return ask_yes_no_cancel(
-            self.app,
-            get_ui_string(self.app.strings, "upd_avail"),
-            get_ui_string(self.app.strings, "upd_prompt").format(latest_version),
-        )
-
-    def show_update_reminder_choice(self) -> bool:
-        """
-        Show dialog asking if user wants to be reminded again.
-
-        Returns:
-            True if user doesn't want to be reminded again
-            False if user wants to be reminded again
-        """
-        return ask_ok_cancel(
-            self.app,
-            get_ui_string(self.app.strings, "upd_info"),
-            get_ui_string(
-                self.app.strings,
-                "upd_note",
-            ),
-        )
+    def show_update_available(self, latest_version: Version, is_current=lambda: True) -> UpdateDecision:
+        """Show the update actions and reminder preference together on Tk."""
+        return ask_update(self.app, latest_version, is_current)
 
     def show_update_error_retry(self, error_message: str) -> bool:
         """

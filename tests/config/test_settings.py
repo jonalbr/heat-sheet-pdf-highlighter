@@ -49,6 +49,44 @@ def test_save_and_reload_persists_changes(settings_file):
     assert app2.settings["search_str"] == "NewTerm"
 
 
+@pytest.mark.parametrize("channel", ["stable", "rc"])
+@pytest.mark.parametrize("legacy_version", ["v99.0.0", "99.0.0-rc1", "99.0.0-beta2"])
+def test_legacy_update_suppression_migrates_once(settings_file, channel, legacy_version):
+    settings_file.write_text(json.dumps({
+        "ask_for_update": "False", "newest_version_available": legacy_version, "update_channel": channel,
+    }))
+    app = AppSettings(settings_file)
+    canonical = legacy_version.removeprefix("v").replace("-rc", "rc").replace("-beta", "rc")
+    assert app.settings["skipped_update_versions"] == {channel: canonical}
+    assert AppSettings(settings_file).settings["skipped_update_versions"] == {channel: canonical}
+    app.update_setting("skipped_update_versions", {})
+    assert AppSettings(settings_file).settings["skipped_update_versions"] == {}
+
+
+@pytest.mark.parametrize("version", [None, 123, "invalid", "0.0.0"])
+def test_invalid_legacy_suppression_does_not_disable_all_updates(settings_file, version):
+    settings_file.write_text(json.dumps({"ask_for_update": "False", "newest_version_available": version}))
+    assert AppSettings(settings_file).settings["skipped_update_versions"] == {}
+
+
+@pytest.mark.parametrize("value,expected", [
+    (None, {}), (False, {}), ([], {}), ("99.0.0", {}),
+    ({"stable": "v99.0.0", "rc": "99.1.0-rc1", "beta": "99.2.0"}, {"stable": "99.0.0", "rc": "99.1.0rc1"}),
+    ({"stable": "invalid", "rc": 123}, {}), ({"stable": "0.0.0"}, {}),
+])
+def test_explicit_skipped_versions_are_validated_without_legacy_fallback(settings_file, value, expected):
+    settings_file.write_text(json.dumps({
+        "ask_for_update": "False", "newest_version_available": "99.0.0", "skipped_update_versions": value,
+    }))
+    app = AppSettings(settings_file)
+    assert app.settings["skipped_update_versions"] == expected
+    snapshot = app.snapshot()
+    snapshot["skipped_update_versions"]["stable"] = "100.0.0"
+    assert app.settings["skipped_update_versions"] == expected
+    app.reset_to_defaults()
+    assert AppSettings(settings_file).settings["skipped_update_versions"] == {}
+
+
 @pytest.mark.parametrize("enabled", [0, 1])
 @pytest.mark.parametrize("legacy", ["ONLY_NAMES", "NAMES_DIFF_COLOR"])
 def test_legacy_marking_migration(settings_file, enabled, legacy):

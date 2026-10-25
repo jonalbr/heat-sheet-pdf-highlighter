@@ -9,6 +9,7 @@ import threading
 from typing import TYPE_CHECKING, Any
 from tkinter import BooleanVar, StringVar, TclError, Toplevel, ttk
 
+from ..models import UpdateDecision
 from .ui_strings import get_ui_string
 
 if TYPE_CHECKING:
@@ -16,6 +17,69 @@ if TYPE_CHECKING:
 
 
 ButtonSpec = tuple[str, Any]
+
+
+def ask_update(app: "PDFHighlighterApp", latest_version, is_current=lambda: True) -> UpdateDecision:
+    """Return one update decision; dismissing the dialog discards its draft."""
+    result = _run_on_tk(
+        app, lambda: _show_update_dialog(app, latest_version) if is_current() else UpdateDecision("cancel"),
+    )
+    return result if result is not None else UpdateDecision("cancel")
+
+
+def _show_update_dialog(app: "PDFHighlighterApp", latest_version) -> UpdateDecision:
+    """Build a modal update prompt with a fresh, unchecked reminder draft."""
+    parent = app.root
+    result = UpdateDecision("cancel")
+    window = Toplevel(parent)
+    window.withdraw()
+    title = get_ui_string(app.strings, "upd_avail")
+    window.title(title)
+    window.transient(parent)
+    window.resizable(False, False)
+    app.apply_theme_to_window(window)
+    skip_version = BooleanVar(window, value=False)
+
+    def close(action="cancel"):
+        nonlocal result
+        result = UpdateDecision(action, skip_version.get() if action != "cancel" else False)
+        with suppress(TclError):
+            window.grab_release()
+        window.destroy()
+
+    window.protocol("WM_DELETE_WINDOW", close)
+    frame = ttk.Frame(window, padding=(22, 18, 22, 16))
+    frame.grid(row=0, column=0, sticky="nsew")
+    ttk.Label(frame, text=title, font=("Segoe UI", 11, "bold")).grid(row=0, column=0, sticky="w")
+    ttk.Label(
+        frame, text=get_ui_string(app.strings, "upd_prompt").format(latest_version),
+        justify="left", wraplength=420,
+    ).grid(row=1, column=0, sticky="we", pady=(10, 12))
+    ttk.Checkbutton(
+        frame, text=get_ui_string(app.strings, "upd_skip_version"), variable=skip_version,
+    ).grid(row=2, column=0, sticky="w", pady=(0, 18))
+    actions = ttk.Frame(frame)
+    actions.grid(row=3, column=0, sticky="e")
+    now = ttk.Button(actions, text=get_ui_string(app.strings, "upd_now"), command=lambda: close("update_now"))
+    now.grid(row=0, column=0)
+    later = ttk.Button(actions, text=get_ui_string(app.strings, "upd_later"), command=lambda: close("later"))
+    later.grid(row=0, column=1, padx=(8, 0))
+
+    def confirm(_event):
+        focused = window.focus_get()
+        if focused in (now, later):
+            focused.invoke()
+        return "break"
+
+    window.bind("<Return>", confirm)
+    window.bind("<Escape>", lambda _event: close())
+    app.apply_theme_to_window(window)
+    _center_window(window, parent)
+    window.deiconify()
+    now.focus_set()
+    window.grab_set()
+    window.wait_window()
+    return result
 
 
 def show_info(app: "PDFHighlighterApp", title: str, message: str) -> None:
@@ -296,8 +360,8 @@ def _show_choice_dialog(
 
 def _center_window(window: Toplevel, parent) -> None:
     window.update_idletasks()
-    width = window.winfo_width()
-    height = window.winfo_height()
+    width = max(window.winfo_width(), window.winfo_reqwidth())
+    height = max(window.winfo_height(), window.winfo_reqheight())
 
     try:
         parent.update_idletasks()

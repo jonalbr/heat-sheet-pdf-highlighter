@@ -204,13 +204,17 @@ class DevToolsWindow:
 
     def _on_channel_changed(self):
         channel = self.channel_var.get()
-        self.app.app_settings.update_setting("update_channel", channel)
+        self.app.app_settings.update_settings({
+            "update_channel": channel, "newest_version_available": "0.0.0", "ask_for_update": "True",
+        })
+        self.app.update_checker.channel_changed()
+        current = self.app_update_current_version()
+        self.app.update_version_labels_text(current, current)
+        self.app.update_version_labels()
 
         def _quiet_check():
             current = self.app_update_current_version()
-            latest = self.app.update_checker.check_for_app_updates(current_version=current, force_check=True, quiet=True)
-            self.app.update_version_labels_text(latest, current)
-            self.app.update_version_labels()
+            self.app.update_checker.check_for_app_updates(current_version=current, force_check=True, quiet=True)
 
         # Avoid spawning network work in screenshot mode
         if os.getenv("HSPH_SCREENSHOT_MODE") in ("1", "true", "True"):
