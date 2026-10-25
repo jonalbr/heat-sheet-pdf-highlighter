@@ -33,6 +33,7 @@ class FakePreview:
 
 def test_close_can_also_close_preview():
     app = SimpleNamespace(root=object(), preview_window_handler=FakePreview())
+    app._render_options = lambda: None
     dialog = WatermarkDialog(app)
     dialog.window = FakeWindow()
 
@@ -45,6 +46,7 @@ def test_close_can_also_close_preview():
 
 def test_language_refresh_keeps_raw_draft_values_without_publishing(monkeypatch):
     app = SimpleNamespace(root=object(), preview_window_handler=FakePreview())
+    app._render_options = lambda: None
     dialog = WatermarkDialog(app)
     dialog.window = FakeWindow()
     draft = dict(enabled=1, text="Uncommitted", color="#123456", size="unfinished", position="custom",
@@ -77,6 +79,7 @@ def test_apply_publishes_preserved_draft_after_unlock(monkeypatch):
     settings = {}
     app = SimpleNamespace(root=object(), output_options_locked=False,
                           app_settings=SimpleNamespace(update_settings=settings.update))
+    app._render_options = lambda: None
     dialog = WatermarkDialog(app)
     dialog._draft_active = True
     draft = dict(enabled=1, text="Draft", color="#123456", size="24", position="custom", x_ratio=0.2, y_ratio=0.3)
@@ -114,6 +117,7 @@ def dialog(tmp_path, monkeypatch):
     with Document() as document:
         document.new_page(width=400, height=300)
         document.save(source)
+    app._render_options = lambda: None
     app.input_file_full_path = str(source)
     app.preview_window_handler = preview = PreviewWindow(app)
     app.preview_watermark = preview.preview_watermark
@@ -143,6 +147,37 @@ def test_reopen_focuses_the_same_window_without_reloading_draft(dialog, monkeypa
     assert focused == ["lift", "focus"]
     assert window.state() == "normal"
     assert len([child for child in dialog.parent.winfo_children() if isinstance(child, tk.Toplevel)]) == 1
+
+
+@pytest.mark.parametrize("stored_color", ["#123456", "#abcdef", "#D4776A", "#416CBE"])
+def test_palette_keeps_fixed_favorite_when_saved_or_draft_colors_change(dialog, stored_color):
+    def palette_buttons():
+        return [control for control in dialog._dependent_controls
+                if isinstance(control, tk.Button) and getattr(control, "_hsph_swatch_color", None)
+                and control.cget("command")]
+
+    dialog.close()
+    dialog.app.app_settings.update_setting("watermark_color", stored_color)
+    dialog.open()
+    colors = [button._hsph_swatch_color for button in palette_buttons()]
+    assert colors[0] == "#416CBE"
+    assert len(colors) == len(set(colors))
+
+    selected = colors[-1]
+    palette_buttons()[-1].invoke()
+    assert dialog._draft()["color"] == selected
+    assert dialog.app.app_settings.snapshot()["watermark_color"] == stored_color.upper()
+    dialog.app.strings = build_strings(setup_translation("de")[0])
+    dialog.refresh_ui_strings()
+    assert palette_buttons()[0]._hsph_swatch_color == "#416CBE"
+    assert dialog._draft()["color"] == selected
+
+    dialog.apply_changes()
+    dialog.open()
+    colors = [button._hsph_swatch_color for button in palette_buttons()]
+    assert colors[0] == "#416CBE"
+    assert dialog.app.app_settings.snapshot()["watermark_color"] == selected
+    assert len(colors) == len(set(colors))
 
 
 def test_language_and_theme_refresh_preserve_invalid_raw_draft_and_preview(dialog):

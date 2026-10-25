@@ -1,6 +1,22 @@
 from types import SimpleNamespace
 
-from src.gui.widgets import TOOLTIP_DELAY_MS, TOOLTIP_OFFSET, Tooltip
+from src.gui.widgets import TOOLTIP_DELAY_MS, TOOLTIP_OFFSET, Tooltip, scrollbar_command
+
+
+def test_scrollbar_command_ignores_empty_actions_and_keeps_queries_and_scrolling():
+    calls = []
+    def view(*args):
+        calls.append(args)
+        return (0.0, 1.0)
+    command = scrollbar_command(view)
+    assert command("") is None
+    assert command("", "0.5") is None
+    assert calls == []
+    assert command() == (0.0, 1.0)
+    command("moveto", "0.5")
+    command("scroll", "-1", "units")
+    command("scroll", "1", "pages")
+    assert calls == [(), ("moveto", "0.5"), ("scroll", "-1", "units"), ("scroll", "1", "pages")]
 
 
 class FakeWidget:

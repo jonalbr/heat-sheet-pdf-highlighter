@@ -11,6 +11,15 @@ TOOLTIP_DELAY_MS = 400
 TOOLTIP_OFFSET = (14, 18)
 
 
+def scrollbar_command(view):
+    """Ignore empty scrollbar actions, preserving queries and valid scroll commands."""
+    def command(*args):
+        if args and args[0] == "":
+            return None
+        return view(*args)
+    return command
+
+
 def lock_controls(window, locked, excluded=()):
     """Temporarily disable controls, preserving their existing inactive states."""
     for widget in window.winfo_children():

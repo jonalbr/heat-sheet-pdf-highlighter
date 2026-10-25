@@ -32,6 +32,9 @@ class Widget(dict):
 
     config = configure
 
+    def bind(self, *args):
+        pass
+
     def stop(self):
         pass
 
@@ -79,7 +82,7 @@ def app(monkeypatch, tmp_path):
         setattr(app, name, Widget())
     for name in ("filter_dialog", "watermark_dialog", "dev_tools"):
         setattr(app, name, SimpleNamespace(set_busy=lambda busy: None, close=lambda: None, window=None))
-    app.preview_window_handler = SimpleNamespace(close=lambda: None)
+    app.preview_window_handler = SimpleNamespace(close=lambda: None, refresh_ui_strings=lambda: None)
     app._job = None
     app._next_job_id = 0
     app._ui_messages = queue.Queue()

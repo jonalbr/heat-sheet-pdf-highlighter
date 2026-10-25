@@ -14,7 +14,8 @@ import threading
 import tempfile
 import time
 from pathlib import Path
-from tkinter import Button, IntVar, Menu, StringVar, TclError, Tk, filedialog, ttk
+from tkinter.font import Font
+from tkinter import Button, Canvas, IntVar, Menu, StringVar, TclError, Tk, filedialog, ttk
 
 from PIL import Image, ImageTk
 from pymupdf import Document
@@ -44,7 +45,7 @@ from .marking_preview import MarkingPreview
 from .message_dialog import ask_choice_ok_cancel, ask_ok_cancel, show_error, show_info
 from .preview import PreviewWindow
 from .ui_strings import _xgettext_dummy, build_strings, get_ui_string, plural_strings
-from .widgets import Tooltip
+from .widgets import Tooltip, scrollbar_command
 
 THEME_ICON_SIZE = (16, 16)
 UNIFORM_ACTION_BUTTON_WIDTH = 14
@@ -150,14 +151,15 @@ class PDFHighlighterApp:
         self.download_active = False
         self._status = ("status_waiting", ())
 
+        # Cached detection belongs to the currently selected source.
+        self.ocr_detection_path: str | None = None
+        self.ocr_detection_result: bool | None = None
+
         # Initialize the UI components
         self._syncing_settings = True
         self.setup_ui()
         self._syncing_settings = False
 
-        # Cached detection belongs to the currently selected source.
-        self.ocr_detection_path: str | None = None
-        self.ocr_detection_result: bool | None = None
         self.marking_preview = MarkingPreview(self.root)
         self._preview_prefetch_timer = None
         self.root.after_idle(self.marking_preview.warm)
@@ -207,18 +209,17 @@ class PDFHighlighterApp:
         Sets up the user interface for the PDFHighlighterApp.
         """
         self.root.title(get_ui_string(self.strings, "title"))
-        self.root.geometry("720x570")
-        self.root.minsize(width=650, height=550)
+        width = min(760, max(1, self.root.winfo_screenwidth() - 40))
+        height = min(650, max(1, self.root.winfo_screenheight() - 80))
+        self.root.geometry(f"{width}x{height}")
         self.root.resizable(True, True)
         self.root.protocol("WM_DELETE_WINDOW", self.close)
 
-        # Improved styling
+        # Keep named font sizes stable across theme/language changes.
+        self.ui_font = Font(root=self.root, family="Arial", size=10)
+        self.heading_font = Font(root=self.root, family="Arial", size=16, weight="bold")
         self.style = ttk.Style()
-        self.style.configure("TButton", font=("Arial", 10), borderwidth="4")  # Button styling
-        self.style.configure("TMenubutton", font=("Arial", 10), borderwidth="4")  # Theme selector styling
-        self.style.configure("TEntry", font=("Arial", 10), borderwidth="2")  # Entry widget styling
-        self.style.configure("TCheckbutton", font=("Arial", 10))  # Checkbutton styling
-        self.style.configure("Horizontal.TProgressbar", thickness=20)  # Progressbar styling
+        self.style.configure("Horizontal.TProgressbar", thickness=20)
         self._apply_theme()
         self.theme_icon_images = self._load_theme_icon_images()
 
@@ -231,7 +232,7 @@ class PDFHighlighterApp:
 
         # Load and display the logo
         logo_image = Image.open(self.paths.logo_path)
-        title_font = ("Arial", 16, "bold")
+        title_font = self.heading_font
         title_height = 50  # Set the desired height of the title
         logo_image = logo_image.resize((title_height, title_height))
         logo_photo = ImageTk.PhotoImage(logo_image)
@@ -262,7 +263,10 @@ class PDFHighlighterApp:
             style="Title.TLabel",
             anchor="w",
         )
-        self.title.grid(row=0, column=1, sticky="W", padx=(14, 10), pady=10)
+        self.title.grid(row=0, column=1, sticky="EW", padx=(14, 10), pady=10)
+
+        self.header_frame.bind("<Configure>", lambda event: self.title.configure(
+            wraplength=max(80, event.width - self.header_controls_frame.winfo_reqwidth() - 110)))
 
         # Theme selector (system/light/dark)
         self.theme_mode_var = StringVar()
@@ -318,30 +322,49 @@ class PDFHighlighterApp:
         self.language_menu.config(width=4)
         self.language_menu.grid(row=0, column=1, sticky="E")
 
+        # Scroll only the main content, keeping header and version information visible.
+        body = ttk.Frame(self.root)
+        body.grid(row=1, column=0, columnspan=3, sticky="nsew")
+        body.columnconfigure(0, weight=1)
+        body.rowconfigure(0, weight=1)
+        self.content_canvas = Canvas(body, width=1, height=1, highlightthickness=0, borderwidth=0)
+        self.content_canvas.grid(row=0, column=0, sticky="nsew")
+        self.content_scrollbar = ttk.Scrollbar(body, orient="vertical", command=scrollbar_command(self.content_canvas.yview))
+        self.content_scrollbar.grid(row=0, column=1, sticky="ns")
+        self.content_canvas.configure(yscrollcommand=self.content_scrollbar.set)
+        self.content = ttk.Frame(self.content_canvas)
+        self._content_item = self.content_canvas.create_window(0, 0, window=self.content, anchor="nw")
+        self.content.columnconfigure(1, weight=1)
+        self.content_canvas.bind("<Configure>", self._resize_content)
+        self.content.bind("<Configure>", self._content_changed)
+        # Toplevel bindings apply only to this window; dialogs retain their own scrolling.
+        self.root.bind("<MouseWheel>", self._scroll_content, add="+")
+        self.root.bind("<FocusIn>", self._reveal_control, add="+")
+
         # PDF file selection
-        self.label_pdf_file = ttk.Label(self.root, text=get_ui_string(self.strings, "pdf_file"))
+        self.label_pdf_file = ttk.Label(self.content, text=get_ui_string(self.strings, "pdf_file"))
         self.label_pdf_file.grid(row=1, column=0, sticky="E", padx=(10, 4), pady=2)
         self.pdf_file_var = StringVar()
 
-        self.entry_file = ttk.Entry(self.root, textvariable=self.pdf_file_var, state="readonly")
+        self.entry_file = ttk.Entry(self.content, textvariable=self.pdf_file_var, state="readonly")
         self.entry_file.grid(row=1, column=1, sticky="WE", padx=(2, 0))
 
         self.browse_button = ttk.Button(
-            self.root,
+            self.content,
             text=get_ui_string(self.strings, "btn_browse"),
             command=self.browse_file,
-            width=UNIFORM_ACTION_BUTTON_WIDTH,
+            width=-UNIFORM_ACTION_BUTTON_WIDTH,
         )
         self.browse_button.grid(row=1, column=2, sticky="E", padx=(3, 10))
 
         # Search string
-        self.label_search_str = ttk.Label(self.root, text=get_ui_string(self.strings, "search_term"))
+        self.label_search_str = ttk.Label(self.content, text=get_ui_string(self.strings, "search_term"))
         self.label_search_str.grid(row=2, column=0, sticky="E", padx=(10, 4), pady=2)
 
         self.search_phrase_var = StringVar()
         self.search_phrase_var.set(self.app_settings.settings["search_str"])
 
-        self.entry_search_str = ttk.Entry(self.root, textvariable=self.search_phrase_var)
+        self.entry_search_str = ttk.Entry(self.content, textvariable=self.search_phrase_var)
         self.entry_search_str.grid(row=2, column=1, sticky="WE", padx=(2, 0))
 
         # Options for highlighting
@@ -352,9 +375,9 @@ class PDFHighlighterApp:
         )
 
         self.checkbox_relevant_lines = ttk.Checkbutton(
-            self.root, text=get_ui_string(self.strings, "mark_only_relevant"), variable=self.relevant_lines_var
+            self.content, text=get_ui_string(self.strings, "mark_only_relevant"), variable=self.relevant_lines_var
         )
-        self.checkbox_relevant_lines.grid(row=3, column=0, columnspan=2, sticky="W", padx=10, pady=2)
+        self.checkbox_relevant_lines.grid(row=3, column=0, columnspan=3, sticky="W", padx=10, pady=6)
 
         # Filter variables
         self.names_var = StringVar()
@@ -372,45 +395,52 @@ class PDFHighlighterApp:
             variable.trace_add("write", lambda *args, key=key, var=variable: self._persist_setting(key, var.get()))
 
         # Filter and watermark buttons
+        self.options_actions = ttk.Frame(self.content)
+        self.options_actions.grid(row=4, column=0, columnspan=3, sticky="ew", padx=10, pady=2)
+        self.options_actions.columnconfigure(0, weight=1)
         self.button_filter = ttk.Button(
-            self.root,
+            self.options_actions,
             text=get_ui_string(self.strings, "btn_filter"),
             command=self.open_filter_window,
-            width=UNIFORM_ACTION_BUTTON_WIDTH,
+            width=-UNIFORM_ACTION_BUTTON_WIDTH,
         )
-        self.button_filter.grid(row=3, column=1, sticky="E", padx=(2, 1), pady=2)
+        self.button_filter.grid(row=0, column=0, sticky="E", padx=(0, 3), pady=2)
 
         self.button_watermark = ttk.Button(
-            self.root,
+            self.options_actions,
             text=get_ui_string(self.strings, "btn_watermark"),
             command=self.open_watermark_window,
-            width=UNIFORM_ACTION_BUTTON_WIDTH,
+            width=-UNIFORM_ACTION_BUTTON_WIDTH,
         )
-        self.button_watermark.grid(row=3, column=2, sticky="E", padx=(3, 10), pady=2)
+        self.button_watermark.grid(row=0, column=1, sticky="E", pady=2)
+
+        self.options_label = ttk.Label(self.content, wraplength=500, justify="left")
+        self.options_label.grid(row=5, column=0, columnspan=3, sticky="ew", padx=10, pady=(8, 0))
 
         # Progress bar
-        self.progress_bar = ttk.Progressbar(self.root, orient="horizontal", length=400, mode="determinate")
-        self.progress_bar.grid(row=4, column=0, columnspan=3, padx=10, pady=20, sticky="WE")
+        self.progress_bar = ttk.Progressbar(self.content, orient="horizontal", length=400, mode="determinate")
+        self.progress_bar.grid(row=6, column=0, columnspan=3, padx=10, pady=12, sticky="WE")
 
         # Status label
         self.status_var = StringVar()
         self.status_var.set(get_ui_string(self.strings, "status_waiting"))
-        self.status_label = ttk.Label(self.root, textvariable=self.status_var)
-        self.status_label.grid(row=5, column=0, columnspan=3, padx=10, pady=2)
+        self.status_label = ttk.Label(self.content, textvariable=self.status_var, wraplength=500, justify="left")
+        self.status_label.grid(row=7, column=0, columnspan=3, padx=10, pady=2, sticky="EW")
 
         # Start/Abort button
-        self.start_abort_button = ttk.Button(self.root, text=get_ui_string(self.strings, "btn_start"), command=self.start_processing)
-        self.start_abort_button.grid(row=6, column=1, pady=10)
+        self.start_abort_button = ttk.Button(self.content, text=get_ui_string(self.strings, "btn_start"), command=self.start_processing)
+        self.start_abort_button.grid(row=8, column=1, pady=10)
 
         # Persistent completion details; the path wraps with the available width.
-        self.result_frame = ttk.LabelFrame(self.root, padding=10)
-        self.result_frame.grid(row=7, column=0, columnspan=3, padx=10, pady=6, sticky="NSEW")
+        self.result_frame = ttk.LabelFrame(self.content, padding=10)
+        self.result_frame.grid(row=9, column=0, columnspan=3, padx=10, pady=6, sticky="NSEW")
         self.result_frame.columnconfigure(0, weight=1)
         self.result_label = ttk.Label(self.result_frame, justify="left", wraplength=650)
         self.result_label.grid(row=0, column=0, sticky="EW")
         self.result_label.bind("<Configure>", lambda event: self.result_label.configure(wraplength=max(100, event.width)))
         self.result_actions = ttk.Frame(self.result_frame)
-        self.result_actions.grid(row=1, column=0, sticky="W", pady=(8, 0))
+        self.result_actions.grid(row=1, column=0, sticky="EW", pady=(8, 0))
+        self.result_actions.bind("<Configure>", lambda _event: self._layout_result_actions())
         self.result_buttons = {}
         for column, (key, command) in enumerate((
             ("result_open_pdf", self.open_result_pdf), ("result_open_folder", self.open_result_folder),
@@ -423,7 +453,7 @@ class PDFHighlighterApp:
 
         # Version frame
         self.version_frame = ttk.Frame(self.root)
-        self.version_frame.grid(row=8, column=0, columnspan=3, padx=10, pady=2, sticky="WE")
+        self.version_frame.grid(row=2, column=0, columnspan=3, padx=10, pady=2, sticky="WE")
 
         # Initialize version color
         self.version_color = "#808080"
@@ -500,23 +530,126 @@ class PDFHighlighterApp:
 
         self.update_label.bind("<Button-1>", _on_update_label_click)
 
-        # Make version frame sticky to the bottom
-        self.root.grid_rowconfigure(7, weight=1)
-
-        # Set up the grid layout
-        self.root.grid_columnconfigure(0, minsize=178)  # Set a fixed minimum width for column 0
-        self.root.grid_columnconfigure(1, weight=1)  # Allow column 1 to expand and fill space
-        self.root.grid_columnconfigure(2, weight=0)  # Header controls and action buttons
+        self.root.grid_rowconfigure(1, weight=1)
+        self.root.grid_columnconfigure(0, weight=1)
 
         self._apply_theme()
         self.update_all_widget_texts()
         self._poll_system_theme()
         # Set the initial state of the UI based on the settings
         self.sync_settings_to_ui()
+        self._update_layout_metrics()
+        self._fit_initial_height(width)
+
+    def _resize_content(self, event):
+        """Allocate content by viewport width rather than by long label requests."""
+        self._layout_content_width(event.width)
+
+    def _layout_content_width(self, width):
+        """Wrap content at the allocated width, including before the first mapping."""
+        self.content_canvas.itemconfigure(self._content_item, width=width)
+        for label, margin in ((self.status_label, 24), (self.options_label, 24), (self.result_label, 48)):
+            label.configure(wraplength=max(80, width - margin))
+        self._layout_result_actions()
+
+    def _fit_initial_height(self, width):
+        """Fit startup content once; later changes preserve the user's window size."""
+        width = max(width, self.root.minsize()[0])
+        self.title.configure(wraplength=max(80, width - self.header_controls_frame.winfo_reqwidth() - 110))
+        self._layout_content_width(max(1, width - self.content_scrollbar.winfo_reqwidth()))
+        self.root.update_idletasks()
+        self._layout_result_actions()
+        self.root.update_idletasks()
+        height = (
+            self.header_frame.winfo_reqheight() + self.content.winfo_reqheight()
+            + self.version_frame.winfo_reqheight() + 4  # Version frame's grid padding.
+        )
+        height = max(self.root.minsize()[1], min(height, max(1, self.root.winfo_screenheight() - 80)))
+        self.root.geometry(f"{width}x{height}")
+
+    def _content_changed(self, _event=None):
+        self.content_canvas.configure(scrollregion=self.content_canvas.bbox("all"))
+
+    def _scroll_content(self, event):
+        """Scroll only this main window's form, leaving other toplevels independent."""
+        if event.widget.winfo_toplevel() is self.root:
+            self.content_canvas.yview_scroll(-1 if event.delta > 0 else 1, "units")
+
+    def _reveal_control(self, event):
+        """Keep keyboard-focused form controls visible inside the scrolling content."""
+        widget = event.widget
+        if not str(widget).startswith(str(self.content) + "."):
+            return
+        top = widget.winfo_rooty() - self.content.winfo_rooty()
+        bottom = top + widget.winfo_height()
+        visible_top = self.content_canvas.canvasy(0)
+        visible_bottom = visible_top + self.content_canvas.winfo_height()
+        height = max(1, self.content.winfo_height())
+        if top < visible_top:
+            self.content_canvas.yview_moveto(max(0, top - 8) / height)
+        elif bottom > visible_bottom:
+            self.content_canvas.yview_moveto((bottom + 8 - self.content_canvas.winfo_height()) / height)
+
+    def _layout_result_actions(self):
+        """Wrap the existing visible action buttons without changing their states."""
+        if not hasattr(self, "result_actions"):
+            return
+        available = max(1, self.result_actions.winfo_width())
+        row = column = used = 0
+        for button in self.result_buttons.values():
+            if not button.winfo_manager():
+                continue
+            width = button.winfo_reqwidth() + 6
+            if column and used + width > available:
+                row, column, used = row + 1, 0, 0
+            button.grid(row=row, column=column, sticky="w", pady=3)
+            column += 1
+            used += width
+
+    def _update_layout_metrics(self):
+        """Use font/control measurements for a bounded minimum, preserving user size."""
+        self.root.update_idletasks()
+        width = max(
+            max(self.label_pdf_file.winfo_reqwidth(), self.label_search_str.winfo_reqwidth())
+            + self.ui_font.measure("M" * 14) + self.browse_button.winfo_reqwidth() + 60,
+            self.button_filter.winfo_reqwidth() + self.button_watermark.winfo_reqwidth() + 60,
+            self.logo_label.winfo_reqwidth() + self.header_controls_frame.winfo_reqwidth() + self.ui_font.measure("M" * 20) + 50,
+            *(button.winfo_reqwidth() + 64 for button in self.result_buttons.values()),
+        )
+        height = self.header_frame.winfo_reqheight() + self.version_frame.winfo_reqheight() + self.ui_font.metrics("linespace") * 8
+        self.root.minsize(min(width, max(1, self.root.winfo_screenwidth() - 40)),
+                          min(height, max(1, self.root.winfo_screenheight() - 80)))
+        self.title.configure(wraplength=max(100, self.root.winfo_width() - self.header_controls_frame.winfo_reqwidth() - 100))
+        self._layout_result_actions()
+
+    def _options_text(self):
+        """Describe committed options, using the retained job while it owns an output."""
+        job = self._job or getattr(self, "_pending_save", None)
+        options = job.options if job else self._collect_processing_options()
+        def text(key):
+            return get_ui_string(self.strings, key)
+        parts = [text({MarkingMode.ALL_MATCHES: "opt_all", MarkingMode.DISTINGUISH_NAMES: "opt_distinguish",
+                       MarkingMode.NAMED_MATCHES: "opt_named"}[options.marking_mode])]
+        if options.marking_mode != MarkingMode.ALL_MATCHES:
+            parts.append(self.get_plural_string("option_names", len(options.names)).format(len(options.names)))
+        parts.append(text("opt_relevant" if options.only_relevant else "opt_any_line"))
+        watermark = dict(options.watermark)
+        watermark_key = "opt_watermark_off"
+        if watermark.get("watermark_enabled") == "True":
+            watermark_key = "opt_watermark_on" if str(watermark.get("watermark_text", "")).strip() else "opt_watermark_empty"
+        parts.append(text(watermark_key))
+        parts.append(text("opt_ocr_auto" if options.ocr_enabled else "opt_ocr_off"))
+        return text("opt_job" if job else "opt_active") + " " + " · ".join(parts)
+
+    def _render_options(self):
+        """Refresh the summary after a committed edit or job ownership change."""
+        if hasattr(self, "options_label"):
+            self.options_label.configure(text=self._options_text())
 
     def _persist_setting(self, key, value):
         if not getattr(self, "_syncing_settings", False):
             self.app_settings.update_setting(key, value)
+            self._render_options()
 
     def sync_setting_variables(self, settings):
         """Apply a full or partial settings snapshot without persistence traces."""
@@ -535,6 +668,7 @@ class PDFHighlighterApp:
                     getattr(self, attribute).set(settings[key])
         finally:
             self._syncing_settings = previous
+        self._render_options()
 
     def sync_settings_to_ui(self):
         """Synchronize initialization/reset, including translated auxiliary UI."""
@@ -589,7 +723,7 @@ class PDFHighlighterApp:
         self.update_version_labels()
 
         # Tooltips
-        Tooltip(self.entry_file, text=get_ui_string(self.strings, "select_pdf"))
+        Tooltip(self.entry_file, text=getattr(self, "input_file_full_path", "") or get_ui_string(self.strings, "select_pdf"))
         Tooltip(self.label_pdf_file, text=get_ui_string(self.strings, "select_pdf"))
         Tooltip(self.label_search_str, text=get_ui_string(self.strings, "enter_club"))
         Tooltip(self.entry_search_str, text=get_ui_string(self.strings, "enter_club"))
@@ -679,10 +813,13 @@ class PDFHighlighterApp:
             logging.getLogger("main_window").debug("Could not update Tk palette: %s", e)
 
     def _configure_ttk_styles(self, colors: ThemeColors) -> None:
-        label_font = ("Arial", 10)
-        title_font = ("Arial", 16, "bold")
+        label_font = getattr(self, "ui_font", ("Arial", 10))
+        title_font = getattr(self, "heading_font", ("Arial", 16, "bold"))
+        if hasattr(self, "ui_font"):
+            # Breeze also sets widget defaults, which override TLabel/TEntry styles.
+            self.root.option_add("*font", self.ui_font)
 
-        self.style.configure(".", background=colors.background, foreground=colors.foreground)
+        self.style.configure(".", font=label_font, background=colors.background, foreground=colors.foreground)
         self.style.configure("TFrame", background=colors.background)
         self.style.configure("TLabelframe", background=colors.background, foreground=colors.foreground)
         self.style.configure("TLabelframe.Label", background=colors.background, foreground=colors.foreground)
@@ -756,7 +893,7 @@ class PDFHighlighterApp:
         except Exception:
             return
 
-        if widget_class in {"Tk", "Toplevel", "Frame", "Labelframe"}:
+        if widget_class in {"Tk", "Toplevel", "Frame", "Labelframe", "Canvas"}:
             self._safe_configure(widget, background=colors.background, highlightbackground=colors.background)
         elif widget_class == "Button":
             swatch_color = getattr(widget, "_hsph_swatch_color", None)
@@ -1032,6 +1169,10 @@ class PDFHighlighterApp:
         except Exception as e:
             logging.getLogger("main_window").exception("Unexpected error while refreshing watermark dialog: %s", e)
 
+        self.preview_window_handler.refresh_ui_strings()
+        if hasattr(self, "content_canvas"):
+            self._update_layout_metrics()
+
     def browse_file(self):
         """
         Opens a file dialog to browse and select a PDF file.
@@ -1047,6 +1188,7 @@ class PDFHighlighterApp:
             file_name = Path(file_path).name
             self.pdf_file_var.set(file_name)  # Display only the file name
             self.input_file_full_path = file_path  # Store full path for processing
+            Tooltip(self.entry_file, text=file_path)
             self.marking_preview.prepare(file_path)
             self._prefetch_preview()
             self.ocr_detection_path = file_path
@@ -1130,6 +1272,7 @@ class PDFHighlighterApp:
         key, args = self._status
         self._set_status(key, *args)
         self._render_result()
+        self._render_options()
 
     def start_processing(self):
         """Validate and capture one job before starting its owned worker."""
@@ -1275,6 +1418,7 @@ class PDFHighlighterApp:
                     if language is not None and not job.cancel.is_set() and not self._closing:
                         self.app_settings.update_setting("ocr_language", language)
                         job.options = replace(options, ocr_language=language)
+                        self._render_options()
                         return job.options
                     return None
                 options = self._request_job_ui(job, confirm)
@@ -1626,6 +1770,8 @@ class PDFHighlighterApp:
                 button.grid()
             else:
                 button.grid_remove()
+
+        self._layout_result_actions()
 
     def _open_result(self, folder=False):
         """Dispatch a saved path through the system without shell interpolation."""

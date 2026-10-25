@@ -27,6 +27,18 @@ def build_strings(_: Callable[[str], str]) -> Dict[str, str]:
 
     # ---- General app text / statuses shown broadly ----
     general_strings = {
+        "opt_active": _("Active options:"),
+        "opt_job": _("Job options:"),
+        "opt_all": _("All matches"),
+        "opt_distinguish": _("Distinguish names"),
+        "opt_named": _("Only listed names"),
+        "opt_relevant": _("Relevant lines only"),
+        "opt_any_line": _("All lines"),
+        "opt_watermark_on": _("Watermark on"),
+        "opt_watermark_off": _("Watermark off"),
+        "opt_watermark_empty": _("Watermark has no text"),
+        "opt_ocr_auto": _("OCR on demand"),
+        "opt_ocr_off": _("OCR off"),
         "result_title": _("Result"),
         "result_empty": _("No completed processing yet."),
         "result_location": _("Saved to: {0}"),
@@ -44,6 +56,7 @@ def build_strings(_: Callable[[str], str]) -> Dict[str, str]:
         "result_overwrite": _("Replace the existing file after successful saving?\n{0}"),
         "result_open_failed": _("Could not open the saved result. You can find it at the location shown above."),
         "result_open_missing": _("The saved PDF is no longer at this location. Check whether it was moved or deleted."),
+        "preview_failed": _("The PDF preview could not be displayed. Try again or select another PDF."),
         "settings_notice": _("Settings"),
         "settings_recovered": _(
             "The settings file could not be read as valid settings. Defaults are being used. "
@@ -142,6 +155,11 @@ def build_strings(_: Callable[[str], str]) -> Dict[str, str]:
 
     # ---- Pagination / navigation bits ----
     nav_strings = {
+        "nav_page_count": _("Page {0} of {1}"),
+        "nav_go": _("Go to page"),
+        "nav_fit": _("Fit to window"),
+        "nav_invalid_page": _("Enter a page number from 1 to {0}."),
+        "nav_no_pages": _("This PDF has no pages."),
         "nav_next": _("Next Page"),
         "nav_prev": _("Previous Page"),
     }
@@ -244,8 +262,8 @@ def build_strings(_: Callable[[str], str]) -> Dict[str, str]:
     update_ui_strings = {
         "upd_avail": _("Update Available"),
         "upd_cancelled": _("Download cancelled."),
-        "upd_check_failed": _("Failed to check for updates: {0}"),
-        "upd_download_failed": _("Failed to download the installer: {0}"),
+        "upd_check_failed": _("Could not check for updates. Please try again."),
+        "upd_download_failed": _("The update could not be completed. Please try again later."),
         "upd_error": _("Update Error"),
         "upd_info": _("Update Information"),
         "upd_latest": _("You are already using the latest version."),
@@ -301,6 +319,10 @@ def build_strings(_: Callable[[str], str]) -> Dict[str, str]:
 
 # Plural strings - keep as raw strings for proper ngettext handling
 plural_strings = {
+    "option_names": {
+        "singular": "{0} name",
+        "plural": "{0} names",
+    },
     "marked_lines": {
         "singular": "{0} line newly highlighted.",
         "plural": "{0} lines newly highlighted.",
@@ -323,6 +345,7 @@ plural_strings = {
 # xgettext hint - never executed, only for extraction
 def _xgettext_dummy(n_):
     # Keep the ngettext patterns in source for translation extraction tools
+    n_("{0} name", "{0} names", 1)
     n_("{0} line newly highlighted.", "{0} lines newly highlighted.", 1)
     n_("Watermark applied to {0} page.", "Watermark applied to {0} pages.", 1)
     n_("Processing complete: {0} match found. {1} skipped.", "Processing complete: {0} matches found. {1} skipped.", 1)

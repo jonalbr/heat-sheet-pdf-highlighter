@@ -65,6 +65,7 @@ def dialog(tmp_path, monkeypatch):
         relevant_lines_var=tk.IntVar(root, value=1),
         apply_theme_to_window=lambda window: None,
     )
+    app._render_options = lambda: None
     app.sync_setting_variables = lambda settings: PDFHighlighterApp.sync_setting_variables(app, settings)
     monkeypatch.setattr(filter_dialog, "MarkingPreview", Preview)
     instance = filter_dialog.FilterDialog(app)

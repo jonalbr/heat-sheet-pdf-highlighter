@@ -223,6 +223,8 @@ def _save_capture_image(img, screenshot_path: str) -> None:
 def main():
     """Main application entry point."""
     root = Tk()
+    # Setup measures widgets with update_idletasks(); keep provisional sizes hidden.
+    root.withdraw()
 
     if _is_screenshot_mode():
         _move_offscreen(root)
@@ -231,6 +233,8 @@ def main():
 
     if _is_screenshot_mode():
         _setup_screenshot_state(app)
+
+    root.deiconify()
 
     screenshot_path = os.getenv("HSPH_SCREENSHOT_PATH")
     if screenshot_path:
