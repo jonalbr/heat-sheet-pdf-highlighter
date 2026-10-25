@@ -32,7 +32,7 @@ def collect_highlights(page):
 
 def test_no_matches_returns_zero():
     doc, page = make_doc("Nothing relevant here")
-    matches, skipped = pp.highlight_matching_data(page, "CLUB", only_relevant=True)
+    matches, skipped, lines = pp.highlight_matching_data(page, "CLUB", only_relevant=True)
     assert (matches, skipped) == (0, 0)
     doc.close()
 
@@ -40,7 +40,7 @@ def test_no_matches_returns_zero():
 def test_relevant_line_highlight_basic():
     text = "Bahn 1 LaneName CLUB 00:59.99"
     doc, page = make_doc(text)
-    matches, skipped = pp.highlight_matching_data(page, "CLUB", only_relevant=True)
+    matches, skipped, lines = pp.highlight_matching_data(page, "CLUB", only_relevant=True)
     assert matches == 1 and skipped == 0
     hl = collect_highlights(page)
     assert len(hl) == 1
@@ -50,7 +50,7 @@ def test_relevant_line_highlight_basic():
 def test_irrelevant_line_skipped():
     text = "Some random line with CLUB but no timing token"
     doc, page = make_doc(text)
-    matches, skipped = pp.highlight_matching_data(page, "CLUB", only_relevant=True)
+    matches, skipped, lines = pp.highlight_matching_data(page, "CLUB", only_relevant=True)
     assert matches == 1 and skipped == 1
     assert collect_highlights(page) == []
     doc.close()
@@ -59,7 +59,7 @@ def test_irrelevant_line_skipped():
 def test_only_names_mode_filters_out_without_names():
     text = "Bahn 2 Random Person CLUB 01:10.00"
     doc, page = make_doc(text)
-    matches, skipped = pp.highlight_matching_data(
+    matches, skipped, lines = pp.highlight_matching_data(
         page,
         "CLUB",
         only_relevant=True,
@@ -74,7 +74,7 @@ def test_only_names_mode_filters_out_without_names():
 def test_only_names_mode_highlights_when_name_present():
     text = "Bahn 2 Alice CLUB 01:10.00"
     doc, page = make_doc(text)
-    matches, skipped = pp.highlight_matching_data(
+    matches, skipped, lines = pp.highlight_matching_data(
         page,
         "CLUB",
         only_relevant=True,
@@ -89,7 +89,7 @@ def test_only_names_mode_highlights_when_name_present():
 def test_names_diff_color_blue_when_name_present():
     text = "Bahn 3 Alice CLUB 01:10.00"
     doc, page = make_doc(text)
-    matches, skipped = pp.highlight_matching_data(
+    matches, skipped, lines = pp.highlight_matching_data(
         page,
         "CLUB",
         only_relevant=True,
@@ -107,7 +107,7 @@ def test_names_diff_color_blue_when_name_present():
 def test_names_diff_color_yellow_when_name_missing():
     text = "Bahn 4 Bob CLUB 01:10.00"
     doc, page = make_doc(text)
-    matches, skipped = pp.highlight_matching_data(
+    matches, skipped, lines = pp.highlight_matching_data(
         page,
         "CLUB",
         only_relevant=True,
@@ -125,7 +125,7 @@ def test_names_diff_color_yellow_when_name_missing():
 def test_names_diff_color_filter_disabled_defaults_yellow():
     text = "Bahn 5 Alice CLUB 01:10.00"
     doc, page = make_doc(text)
-    matches, skipped = pp.highlight_matching_data(
+    matches, skipped, lines = pp.highlight_matching_data(
         page,
         "CLUB",
         only_relevant=True,
@@ -142,7 +142,7 @@ def test_names_diff_color_filter_disabled_defaults_yellow():
 def test_only_relevant_false_highlights_any_match():
     text = "Totally random CLUB token"
     doc, page = make_doc(text)
-    matches, skipped = pp.highlight_matching_data(page, "CLUB", only_relevant=False)
+    matches, skipped, lines = pp.highlight_matching_data(page, "CLUB", only_relevant=False)
     assert matches == 1 and skipped == 0
     assert len(collect_highlights(page)) == 1
     doc.close()
@@ -187,7 +187,7 @@ def test_line_text_normalization_list_and_dict(monkeypatch):
 
     calls = {"phase": 0}
 
-    matches, skipped = pp.highlight_matching_data(
+    matches, skipped, lines = pp.highlight_matching_data(
         fake_page,
         "CLUB",
         only_relevant=True,
@@ -227,7 +227,7 @@ def test_line_text_normalization_dict_and_other_values(line_text):
         def add_highlight_annot(self, rect):
             return FakeHighlight()
 
-    matches, skipped = pp.highlight_matching_data(FakePage(), "CLUB", only_relevant=True)
+    matches, skipped, lines = pp.highlight_matching_data(FakePage(), "CLUB", only_relevant=True)
 
     if isinstance(line_text, dict):
         assert (matches, skipped) == (1, 0)

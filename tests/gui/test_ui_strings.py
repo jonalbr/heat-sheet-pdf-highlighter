@@ -21,9 +21,9 @@ def test_download_starting_status_string_exists():
     assert get_ui_string(s, "upd_starting") == "Starting download..."
 
 
-def test_saving_status_mentions_compacting():
+def test_saving_status_describes_user_action():
     s = build_strings(lambda x: x)
-    assert get_ui_string(s, "status_saving") == "Status: Saving and compacting PDF... Please wait..."
+    assert get_ui_string(s, "status_saving") == "Status: Saving PDF... Please wait..."
 
 
 def test_ocr_strings_exist():
@@ -117,5 +117,5 @@ def test_xgettext_dummy_invocation():
         return singular if n == 1 else plural
 
     _xgettext_dummy(fake_ngettext)
-    assert len(captured) == 3
+    assert len(captured) == len(plural_strings)
     assert all(isinstance(t[0], str) and isinstance(t[1], str) for t in captured)

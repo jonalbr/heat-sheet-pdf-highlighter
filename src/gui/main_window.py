@@ -8,6 +8,8 @@ from dataclasses import dataclass, field, replace
 import os
 import logging
 import queue
+import subprocess
+import sys
 import threading
 import tempfile
 import time
@@ -39,7 +41,7 @@ from ..version import Version
 from .dev_tools import DevToolsWindow
 from .dialogs import FilterDialog, UpdateDialogs, WatermarkDialog
 from .marking_preview import MarkingPreview
-from .message_dialog import ask_choice_ok_cancel, show_error, show_info
+from .message_dialog import ask_choice_ok_cancel, ask_ok_cancel, show_error, show_info
 from .preview import PreviewWindow
 from .ui_strings import _xgettext_dummy, build_strings, get_ui_string, plural_strings
 from .widgets import Tooltip
@@ -94,6 +96,13 @@ class ProcessingJob:
     state: str = "preparing"
     result: tuple | None = None
     dialog_open: bool = False
+    started: bool = False
+    output_file: str = ""
+    target_signature: tuple | None = None
+    document: Document | None = None
+    ocr_temp_file: str | None = None
+    counts: tuple[int, int, int, int] = (0, 0, 0, 0)
+    committed: bool = False
 
 
 class PDFHighlighterApp:
@@ -130,6 +139,8 @@ class PDFHighlighterApp:
         self.update_checker = UpdateChecker(self)
 
         self._job = None
+        self._pending_save = None
+        self._result_job = None
         self._next_job_id = 0
         self._ui_messages = queue.Queue()
         self._closing = False
@@ -196,9 +207,9 @@ class PDFHighlighterApp:
         Sets up the user interface for the PDFHighlighterApp.
         """
         self.root.title(get_ui_string(self.strings, "title"))
-        self.root.geometry("600x350")  # Adjusted size for a better layout
-        self.root.minsize(width=600, height=350)
-        self.root.resizable(False, False)
+        self.root.geometry("720x570")
+        self.root.minsize(width=650, height=550)
+        self.root.resizable(True, True)
         self.root.protocol("WM_DELETE_WINDOW", self.close)
 
         # Improved styling
@@ -391,9 +402,28 @@ class PDFHighlighterApp:
         self.start_abort_button = ttk.Button(self.root, text=get_ui_string(self.strings, "btn_start"), command=self.start_processing)
         self.start_abort_button.grid(row=6, column=1, pady=10)
 
+        # Persistent completion details; the path wraps with the available width.
+        self.result_frame = ttk.LabelFrame(self.root, padding=10)
+        self.result_frame.grid(row=7, column=0, columnspan=3, padx=10, pady=6, sticky="NSEW")
+        self.result_frame.columnconfigure(0, weight=1)
+        self.result_label = ttk.Label(self.result_frame, justify="left", wraplength=650)
+        self.result_label.grid(row=0, column=0, sticky="EW")
+        self.result_label.bind("<Configure>", lambda event: self.result_label.configure(wraplength=max(100, event.width)))
+        self.result_actions = ttk.Frame(self.result_frame)
+        self.result_actions.grid(row=1, column=0, sticky="W", pady=(8, 0))
+        self.result_buttons = {}
+        for column, (key, command) in enumerate((
+            ("result_open_pdf", self.open_result_pdf), ("result_open_folder", self.open_result_folder),
+            ("result_retry", self.retry_save), ("result_choose", lambda: self.retry_save(choose_target=True)),
+            ("result_discard", self.discard_pending_save),
+        )):
+            button = ttk.Button(self.result_actions, command=command)
+            button.grid(row=0, column=column, padx=(0, 6))
+            self.result_buttons[key] = button
+
         # Version frame
         self.version_frame = ttk.Frame(self.root)
-        self.version_frame.grid(row=7, column=0, columnspan=3, padx=10, pady=2, sticky="WE")
+        self.version_frame.grid(row=8, column=0, columnspan=3, padx=10, pady=2, sticky="WE")
 
         # Initialize version color
         self.version_color = "#808080"
@@ -860,6 +890,7 @@ class PDFHighlighterApp:
         if self._closing:
             return
         self._closing = True
+        self.discard_pending_save()
         self.request_cancel_processing()
         self._download_cancel.set()
         self._closing_previews = []
@@ -965,7 +996,7 @@ class PDFHighlighterApp:
         self.init_translatable_strings()
         self.update_all_widget_texts()
         # In screenshot mode, keep a neutral waiting status for a cleaner image
-        if not self.output_options_locked:
+        if not self.output_options_locked and not getattr(self, "last_processing_result", None):
             self._set_status("status_waiting" if os.getenv("HSPH_SCREENSHOT_MODE") in ("1", "true", "True") else "status_language_changed")
         self._render_operation()
         self.update_version_labels_text(
@@ -1094,18 +1125,19 @@ class PDFHighlighterApp:
         self.start_abort_button.configure(
             text=get_ui_string(self.strings, "btn_cancelling" if cancelling else "btn_abort" if busy else "btn_start"),
             command=self.request_cancel_processing if job else self.abort_download if busy else self.start_processing,
-            state="disabled" if cancelling or self._closing else "normal",
+            state="disabled" if cancelling or self._closing or (getattr(self, "_pending_save", None) and not busy) else "normal",
         )
         key, args = self._status
         self._set_status(key, *args)
+        self._render_result()
 
     def start_processing(self):
         """Validate and capture one job before starting its owned worker."""
-        if self.output_options_locked or getattr(self.update_checker, "_active_download", False):
+        if self.output_options_locked or getattr(self, "_pending_save", None) or getattr(self.update_checker, "_active_download", False):
             return
         input_file = getattr(self, "input_file_full_path", None)
         options = self._collect_processing_options()
-        if not input_file or not options.search_str:
+        if not input_file or not options.search_str.strip():
             show_error(self, get_ui_string(self.strings, "error"), get_ui_string(self.strings, "val_all_required"))
             return
         if options.marking_mode != MarkingMode.ALL_MATCHES and not options.names:
@@ -1123,6 +1155,7 @@ class PDFHighlighterApp:
         try:
             job.worker.start()
         except Exception as exc:
+            logging.getLogger(__name__).exception("Could not start PDF processing worker")
             job.result = ("failed", str(exc))
             job.worker = None
             self.finalize_processing(job)
@@ -1181,7 +1214,10 @@ class PDFHighlighterApp:
                 if kind == "request":
                     args[0].ready.set()
                 continue
-            if kind == "result":
+            if kind == "started":
+                self._result_job = None
+                self._render_result()
+            elif kind == "result":
                 job.result = args
             elif kind == "request":
                 request = args[0]
@@ -1232,7 +1268,8 @@ class PDFHighlighterApp:
                 return
             options = job.options
             needs_ocr = options.needs_ocr
-            if options.ocr_enabled and (needs_ocr if needs_ocr is not None else document_needs_ocr(document)):
+            use_ocr = options.ocr_enabled and (needs_ocr if needs_ocr is not None else document_needs_ocr(document))
+            if use_ocr:
                 def confirm():
                     language = self._confirm_ocr_processing(options.ocr_language)
                     if language is not None and not job.cancel.is_set() and not self._closing:
@@ -1243,6 +1280,15 @@ class PDFHighlighterApp:
                 options = self._request_job_ui(job, confirm)
                 if options is None:
                     raise OcrCancelled()
+            output_file = self._request_job_ui(job, lambda: self._ask_output_file(job.input_file))
+            if not output_file:
+                raise OcrCancelled()
+            job.output_file = output_file
+            job.target_signature = self._target_signature(output_file)
+            self._raise_if_cancelled(job)
+            job.started = True
+            self._post_job(job, "started")
+            if use_ocr:
                 try:
                     tessdata = ensure_bundled_tessdata(self.paths.ocr_tessdata_dir, options.ocr_language)
                 except FileNotFoundError:
@@ -1262,20 +1308,25 @@ class PDFHighlighterApp:
                 self._raise_if_cancelled(job)
                 document = Document(ocr_temp_file)
             self._post_job(job, "phase", "processing", "status_processing")
-            total_matches, total_skipped, watermark_pages = self._process_document_pages(job, document, options)
+            job.counts = self._process_document_pages(job, document, options)
+            total_matches, total_skipped, watermark_pages, marked_lines = job.counts
             self._raise_if_cancelled(job)
             if total_matches - total_skipped <= 0 and watermark_pages == 0:
                 outcome = ("info_key", "val_nothing")
                 return
-            output_file = self._request_job_ui(job, lambda: self._ask_output_file(job.input_file))
-            if not output_file:
-                outcome = ("info_key", "val_no_output")
-                return
-            self._raise_if_cancelled(job)
+            job.document = document
+            job.ocr_temp_file = ocr_temp_file
             self._post_job(job, "phase", "saving", "status_saving")
-            save_result = self._save_processed_document(job, document, output_file, bool(ocr_temp_file), options)
-            self._raise_if_cancelled(job)
-            outcome = ("saved", total_matches, total_skipped, save_result, watermark_pages)
+            try:
+                save_result = self._save_processed_document(job, document, output_file, bool(ocr_temp_file), options)
+            except OcrCancelled:
+                raise
+            except Exception as exc:
+                logging.getLogger(__name__).exception("PDF saving failed; retaining calculated result")
+                outcome = ("save_failed", str(exc))
+                document = ocr_temp_file = None  # Ownership transfers to the pending job.
+                return
+            outcome = ("saved", total_matches, total_skipped, save_result, watermark_pages, marked_lines, output_file)
         except OcrCancelled:
             outcome = ("aborted",)
         except Exception as exc:
@@ -1286,6 +1337,8 @@ class PDFHighlighterApp:
                 with suppress(Exception):
                     document.close()
             self._safe_unlink(ocr_temp_file)
+            if outcome[0] != "save_failed":
+                job.document = job.ocr_temp_file = None
             self._post_job(job, "result", *outcome)
 
     def _collect_processing_options(self):
@@ -1306,40 +1359,74 @@ class PDFHighlighterApp:
         )
 
     def _process_document_pages(self, job, document, options):
-        total_matches = total_skipped = watermark_pages = 0
+        total_matches = total_skipped = watermark_pages = marked_lines = 0
         watermark = dict(options.watermark)
         for index in range(len(document)):
             self._raise_if_cancelled(job)
-            matches, skipped = highlight_matching_data(
+            matches, skipped, lines = highlight_matching_data(
                 page=document[index], search_str=options.search_str, only_relevant=options.only_relevant,
                 names=options.names, marking_mode=options.marking_mode,
                 highlight_color_default=options.highlight_color_default, highlight_color_names=options.highlight_color_names,
             )
+            marked_lines += lines
             total_matches += matches
             total_skipped += skipped
             self._raise_if_cancelled(job)
             if watermark_pdf_page(document[index], watermark):
                 watermark_pages += 1
             self._post_job(job, "pages", index + 1, len(document), total_matches, total_skipped)
-        return total_matches, total_skipped, watermark_pages
+        return total_matches, total_skipped, watermark_pages, marked_lines
 
     def _save_processed_document(self, job, document, output_file, ocr_used, options):
+        """Stage a completed PDF before atomically committing the approved target."""
         self._raise_if_cancelled(job)
-        if not ocr_used:
-            save_compact_pdf(document, output_file)
-            self._raise_if_cancelled(job)
-            return None
-        prepared = self._create_temp_pdf_path()
+        target = Path(output_file)
+        self._validate_output_target(job.input_file, target)
+        # Stage beside the destination so the final replace stays on one filesystem.
+        handle = tempfile.NamedTemporaryFile(prefix=".hsph-", suffix=".pdf", dir=target.parent, delete=False)
+        staged = handle.name
+        prepared = None
         try:
-            document.save(prepared)
+            handle.close()
+            if not ocr_used:
+                save_compact_pdf(document, staged)
+                result = None
+            else:
+                prepared = self._create_temp_pdf_path()
+                document.save(prepared)
+                self._raise_if_cancelled(job)
+                result = save_pdf_path_in_process(
+                    prepared, staged, original_pdf_path=job.input_file, ocr_used=True,
+                    reduce_large_outputs=options.ocr_reduce_large_outputs, is_cancelled=job.cancel.is_set,
+                )
+            with open(staged, "r+b") as completed:
+                os.fsync(completed.fileno())
             self._raise_if_cancelled(job)
-            document.close()
-            return save_pdf_path_in_process(
-                prepared, output_file, original_pdf_path=job.input_file, ocr_used=True,
-                reduce_large_outputs=options.ocr_reduce_large_outputs, is_cancelled=job.cancel.is_set,
-            )
+            self._validate_output_target(job.input_file, target)
+            if self._target_signature(target) != job.target_signature:
+                raise OSError("result_target_changed")
+            os.replace(staged, target)
+            job.committed = True
+            return result
         finally:
             self._safe_unlink(prepared)
+            self._safe_unlink(staged)
+
+    @staticmethod
+    def _target_signature(path):
+        """Detect a destination created or changed since overwrite approval."""
+        try:
+            stat = Path(path).stat()
+            return stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns
+        except FileNotFoundError:
+            return None
+
+    @staticmethod
+    def _validate_output_target(input_file, output_file):
+        """Reject path aliases and existing hard links to the source."""
+        source, target = Path(input_file), Path(output_file)
+        if source.resolve() == target.resolve() or (source.exists() and target.exists() and source.samefile(target)):
+            raise ValueError("result_source_target")
 
     def _confirm_ocr_processing(self, language):
         choices = [(get_ui_string(self.strings, key), value) for key, value in OCR_LANGUAGE_CHOICES]
@@ -1358,42 +1445,214 @@ class PDFHighlighterApp:
 
     def _safe_unlink(self, path):
         if path is not None:
-            with suppress(OSError):
-                Path(path).unlink()
+            try:
+                Path(path).unlink(missing_ok=True)
+            except OSError:
+                logging.getLogger(__name__).warning("Could not remove temporary PDF %s", path, exc_info=True)
 
     def _ask_output_file(self, input_file):
-        return filedialog.asksaveasfilename(
-            parent=self.root, defaultextension=".pdf", filetypes=[("PDF files", "*.pdf")],
-            initialfile=get_ui_string(self.strings, "file_out_pattern").format(input_file.rsplit(".", 1)[0]),
-        )
+        while not self._closing:
+            target = filedialog.asksaveasfilename(
+                parent=self.root, defaultextension=".pdf", filetypes=[("PDF files", "*.pdf")],
+                initialdir=str(Path(input_file).parent),
+                initialfile=get_ui_string(self.strings, "file_out_pattern").format(Path(input_file).stem),
+                confirmoverwrite=False,
+            )
+            if not target:
+                return None
+            try:
+                self._validate_output_target(input_file, target)
+            except ValueError:
+                show_error(self, get_ui_string(self.strings, "error"), get_ui_string(self.strings, "result_source_target"))
+                continue
+            if not Path(target).exists() or ask_ok_cancel(
+                self, get_ui_string(self.strings, "result_overwrite_title"),
+                get_ui_string(self.strings, "result_overwrite").format(target),
+            ):
+                return target
+        return None
 
     def finalize_processing(self, job):
-        """Release a terminated job, then present only its own terminal result."""
+        """Release a terminated worker while preserving completion and retry data."""
         if self._job is not job or job.result is None or (job.worker is not None and job.worker.is_alive()):
             return
-        result = ("aborted",) if job.cancel.is_set() else job.result
+        result = job.result if job.committed else ("aborted",) if job.cancel.is_set() else job.result
+        job.result = result
         self.last_processing_result = result
         self._job = None
         self.processing_active = False
+        if result[0] == "save_failed" and not self._closing:
+            self._pending_save = job
+        else:
+            self._cleanup_job_result(job)
+        if job.started:
+            self._result_job = job
         self._set_determinate_progress()
         self.progress_bar["value"] = 0
-        self._set_status("status_aborted_processing" if result[0] == "aborted" else "status_waiting")
+        status = {"saved": "status_done", "aborted": "status_aborted_processing", "info_key": "val_nothing"}.get(result[0], "result_failed")
+        self._set_status(status)
         self._set_inputs_locked()
         self._render_operation()
-        if self._closing:
+        self._render_result()
+        if not self._closing and result[0] in ("failed", "error_key"):
+            show_error(self, get_ui_string(self.strings, "error"), get_ui_string(
+                self.strings, result[1] if result[0] == "error_key" else "result_processing_failed",
+            ))
+
+    def _cleanup_job_result(self, job):
+        """Release a retained document before removing its OCR backing file."""
+        if job.document is not None:
+            with suppress(Exception):
+                job.document.close()
+            job.document = None
+        self._safe_unlink(job.ocr_temp_file)
+        job.ocr_temp_file = None
+
+    def discard_pending_save(self):
+        """Explicitly discard an unsaved calculation, also used during app close."""
+        job = getattr(self, "_pending_save", None)
+        if job is None or self._job:
             return
-        if result[0] == "saved":
-            _, matches, skipped, save_result, watermark_pages = result
-            message = self.get_plural_string("processing_complete", matches).format(matches, skipped)
-            if watermark_pages:
-                message += "\n" + self.get_plural_string("watermarked_pages", watermark_pages).format(watermark_pages)
-            if save_result and save_result.reduction_failed:
-                message += "\n\n" + get_ui_string(self.strings, "ocr_reduction_failed").format(save_result.output_size / (1024 * 1024))
-            show_info(self, get_ui_string(self.strings, "status_done"), message)
-        elif result[0] == "info_key":
-            show_info(self, get_ui_string(self.strings, "info"), get_ui_string(self.strings, result[1]))
-        elif result[0] in ("failed", "error_key"):
-            show_error(self, get_ui_string(self.strings, "error"), get_ui_string(self.strings, result[1]) if result[0] == "error_key" else result[1])
+        self._cleanup_job_result(job)
+        self._pending_save = None
+        job.result = ("aborted",)
+        self._set_status("status_aborted_processing")
+        self._render_operation()
+        self._render_result()
+
+    def retry_save(self, choose_target=False):
+        """Save retained data in a new owned worker without repeating OCR/pages."""
+        job = getattr(self, "_pending_save", None)
+        if job is None or self.output_options_locked:
+            return
+        # Reserve the UI even during a nested native file dialog.
+        self._job = job
+        self._set_inputs_locked()
+        try:
+            if choose_target:
+                job.dialog_open = True
+                try:
+                    target = self._ask_output_file(job.input_file)
+                finally:
+                    job.dialog_open = False
+                if not target:
+                    return
+                job.output_file = target
+                job.target_signature = self._target_signature(target)
+            if self._closing:
+                return
+            self._pending_save = None
+            job.result = None
+            job.cancel.clear()
+            self.processing_active = True
+            self._set_status("status_saving")
+            self._start_indeterminate_progress_gui()
+            job.worker = threading.Thread(target=self._retry_save_worker, args=(job,), daemon=True)
+            job.worker.start()
+        except Exception as exc:
+            logging.getLogger(__name__).exception("Could not start or prepare PDF save retry")
+            job.result = ("save_failed", str(exc))
+            job.worker = None
+            self.finalize_processing(job)
+        finally:
+            if getattr(self, "_pending_save", None) is job:
+                self._job = None
+                if self._closing:
+                    self.discard_pending_save()
+            self._set_inputs_locked()
+            self._render_operation()
+            self._render_result()
+
+    def _retry_save_worker(self, job):
+        """Reuse the retained calculation and report a new save outcome."""
+        try:
+            saved = self._save_processed_document(job, job.document, job.output_file, bool(job.ocr_temp_file), job.options)
+            matches, skipped, pages, lines = job.counts
+            result = ("saved", matches, skipped, saved, pages, lines, job.output_file)
+        except OcrCancelled:
+            result = ("aborted",)
+        except Exception as exc:
+            logging.getLogger(__name__).exception("Retry saving PDF failed")
+            result = ("save_failed", str(exc))
+        self._post_job(job, "result", *result)
+
+    def _result_text(self):
+        """Translate the retained outcome without changing its resources or state."""
+        job = getattr(self, "_result_job", None)
+        if job is None:
+            return get_ui_string(self.strings, "result_empty")
+        result = job.result
+        if result is None:
+            return get_ui_string(self.strings, "status_saving")
+        kind = result[0]
+        if kind == "saved":
+            _, matches, skipped, saved, pages, lines, target = result
+            text = get_ui_string(self.strings, "status_done") + "\n"
+            text += self.get_plural_string("marked_lines", lines).format(lines)
+            text += "\n" + self.get_plural_string("processing_complete", matches).format(matches, skipped)
+            if pages:
+                text += "\n" + self.get_plural_string("watermarked_pages", pages).format(pages)
+            text += "\n" + get_ui_string(self.strings, "result_location").format(target)
+            if saved and saved.reduction_failed:
+                text += "\n" + get_ui_string(self.strings, "ocr_reduction_failed").format(saved.output_size / (1024 * 1024))
+            return text
+        if kind == "save_failed":
+            message = get_ui_string(self.strings, "result_save_failed")
+            # Only our actionable destination checks belong in the UI. Native
+            # exceptions and worker diagnostics remain in the logs.
+            if result[1] in ("result_target_changed", "result_source_target"):
+                message = get_ui_string(self.strings, result[1]) + "\n" + message
+            return message
+        if kind == "info_key":
+            return get_ui_string(self.strings, result[1])
+        if kind == "aborted":
+            return get_ui_string(self.strings, "status_aborted_processing")
+        return get_ui_string(self.strings, result[1] if kind == "error_key" else "result_processing_failed")
+
+    def _render_result(self):
+        """Keep completion details and available actions in the main window."""
+        if not hasattr(self, "result_label"):
+            return
+        self.result_frame.configure(text=get_ui_string(self.strings, "result_title"))
+        self.result_label.configure(text=self._result_text())
+        job = getattr(self, "_result_job", None)
+        saved = bool(job and job.result and job.result[0] == "saved")
+        pending = bool(getattr(self, "_pending_save", None))
+        for key, button in self.result_buttons.items():
+            button.configure(text=get_ui_string(self.strings, key), state="normal" if (
+                not self.output_options_locked and (saved if key.startswith("result_open") else pending)
+            ) else "disabled")
+            if (key.startswith("result_open") and not pending) or (not key.startswith("result_open") and pending):
+                button.grid()
+            else:
+                button.grid_remove()
+
+    def _open_result(self, folder=False):
+        """Dispatch a saved path through the system without shell interpolation."""
+        job = getattr(self, "_result_job", None)
+        if self.output_options_locked or not job or not job.result or job.result[0] != "saved":
+            return
+        target = Path(job.result[6])
+        try:
+            if not target.is_file():
+                show_error(self, get_ui_string(self.strings, "error"), get_ui_string(self.strings, "result_open_missing"))
+                return
+            path = str(target.parent if folder else target)
+            if os.name == "nt":
+                os.startfile(path)
+            else:
+                subprocess.Popen(["open" if sys.platform == "darwin" else "xdg-open", path])
+        except Exception:
+            logging.getLogger(__name__).exception("Could not open saved PDF or folder: %s", target)
+            show_error(self, get_ui_string(self.strings, "error"), get_ui_string(self.strings, "result_open_failed"))
+
+    def open_result_pdf(self):
+        """Open the last successfully saved PDF with the system application."""
+        self._open_result()
+
+    def open_result_folder(self):
+        """Open the saved PDF's containing folder."""
+        self._open_result(folder=True)
 
     def _start_indeterminate_progress_gui(self):
         self.progress_bar.stop()

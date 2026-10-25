@@ -438,7 +438,7 @@ def test_native_dehyphenation_and_duplicate_occurrences_are_preserved(tmp_path):
     # One export annotation per rectangle despite multiple occurrences.
     from src.core.pdf_processor import highlight_matching_data
     with pymupdf.open(path) as doc:
-        found, _ = highlight_matching_data(doc[0], "CLUB", True)
+        found, _, _ = highlight_matching_data(doc[0], "CLUB", True)
         assert found == 3
         assert len(list(doc[0].annots())) == 1
     renderer.close()

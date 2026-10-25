@@ -96,8 +96,8 @@ def highlight_matching_data(
     marking_mode: MarkingMode = MarkingMode.ALL_MATCHES,
     highlight_color_default: str = HIGHLIGHT_COLOR_DEFAULT,
     highlight_color_names: str = HIGHLIGHT_COLOR_NAMES,
-) -> tuple[int, int]:
-    """Mark eligible lines once, counting found/skipped search occurrences.
+) -> tuple[int, int, int]:
+    """Mark eligible lines once, counting found/skipped occurrences and newly marked lines.
 
     Relevance and name selection apply independently. Existing source annotations
     are preserved; only duplicate rectangles generated in this call are suppressed.
@@ -114,4 +114,4 @@ def highlight_matching_data(
             continue
         marked.add(key)
         add_line_highlight(page, match, marking_mode, highlight_color_default, highlight_color_names)
-    return matches_found, skipped_matches
+    return matches_found, skipped_matches, len(marked)

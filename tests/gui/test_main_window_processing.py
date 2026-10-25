@@ -1,5 +1,6 @@
 """Deterministic job races with queued Tk callbacks and controlled workers."""
 
+from pathlib import Path
 import queue
 import threading
 from types import SimpleNamespace
@@ -57,7 +58,7 @@ class Root:
 
 
 @pytest.fixture
-def app(monkeypatch):
+def app(monkeypatch, tmp_path):
     app = PDFHighlighterApp.__new__(PDFHighlighterApp)
     app.root = Root()
     app.paths = SimpleNamespace(is_valid_path=lambda path: None, ocr_tessdata_dir="tessdata")
@@ -93,7 +94,8 @@ def app(monkeypatch):
     app.strings = build_strings(lambda text: text)
     app.plural_strings = plural_strings
     app.n_ = lambda singular, plural, count: singular if count == 1 else plural
-    app._ask_output_file = lambda path: "out.pdf"
+    app.output = str(tmp_path / "out.pdf")
+    app._ask_output_file = lambda path: app.output
     app.infos = []
     app.errors = []
     monkeypatch.setattr(main_window, "show_info", lambda app, title, message: app.infos.append((title, message)))
@@ -122,7 +124,7 @@ def app(monkeypatch):
             self.closed = True
 
     monkeypatch.setattr(main_window, "Document", Document)
-    monkeypatch.setattr(main_window, "highlight_matching_data", lambda **kwargs: (1, 0))
+    monkeypatch.setattr(main_window, "highlight_matching_data", lambda **kwargs: (1, 0, 1))
     monkeypatch.setattr(main_window, "watermark_pdf_page", lambda *args: None)
     monkeypatch.setattr(main_window, "save_compact_pdf", lambda *args: None)
     yield app
@@ -130,6 +132,17 @@ def app(monkeypatch):
         app._job.cancel.set()
         app._job.worker.join(timeout=2)
         assert not app._job.worker.is_alive()
+    app._job = None
+    app.discard_pending_save()
+
+
+def serve_until(app, event):
+    while not event.is_set():
+        message = app._ui_messages.get(timeout=2)
+        app._ui_messages.put(message)
+        app._poll_work()
+        if message[1] == "started":
+            assert event.wait(2)
 
 
 def finish(app, job):
@@ -150,17 +163,17 @@ def finish(app, job):
 ])
 def test_export_decision_uses_applied_changes_and_counts_watermarked_pages(app, monkeypatch, matches, skipped, applied, export):
     targets, saves = [], []
-    monkeypatch.setattr(main_window, "highlight_matching_data", lambda **kwargs: (matches, skipped))
+    monkeypatch.setattr(main_window, "highlight_matching_data", lambda **kwargs: (matches, skipped, int(matches > skipped)))
     monkeypatch.setattr(main_window, "watermark_pdf_page", lambda page, settings: applied[page])
-    monkeypatch.setattr(app, "_ask_output_file", lambda path: targets.append(path) or "out.pdf")
+    monkeypatch.setattr(app, "_ask_output_file", lambda path: targets.append(path) or app.output)
     monkeypatch.setattr(main_window, "save_compact_pdf", lambda document, path: saves.append(path))
     app.start_processing()
     finish(app, app._job)
-    assert bool(targets) is export
+    assert bool(targets)
     assert bool(saves) is export
     if export:
-        assert app.last_processing_result == ("saved", matches * 2, skipped * 2, None, sum(applied))
-        assert ("Watermark applied" in app.infos[0][1]) is any(applied)
+        assert app.last_processing_result == ("saved", matches * 2, skipped * 2, None, sum(applied), 2 * int(matches > skipped), app.output)
+        assert ("Watermark applied" in app._result_text()) is any(applied)
     else:
         assert app.last_processing_result == ("info_key", "val_nothing")
     assert all(document.closed for document in app.documents)
@@ -190,9 +203,9 @@ def test_watermark_only_export_with_real_pdf(app, monkeypatch, tmp_path, enabled
     app.start_processing()
     finish(app, app._job)
     assert output.exists() is bool(expected_pages)
-    assert bool(asked) is bool(expected_pages)
+    assert bool(asked)
     if expected_pages:
-        assert app.last_processing_result == ("saved", 0, 0, None, expected_pages)
+        assert app.last_processing_result == ("saved", 0, 0, None, expected_pages, 0, str(output))
         with PdfDocument(output) as document:
             assert all(text in page.get_text() for page in document)
     else:
@@ -203,24 +216,24 @@ def test_watermark_only_export_with_real_pdf(app, monkeypatch, tmp_path, enabled
 def test_watermark_page_completion_uses_translated_plural(app, monkeypatch, language, count):
     gettext, app.n_ = setup_translation(language)
     app.strings = build_strings(gettext)
-    monkeypatch.setattr(main_window, "highlight_matching_data", lambda **kwargs: (0, 0))
+    monkeypatch.setattr(main_window, "highlight_matching_data", lambda **kwargs: (0, 0, 0))
     monkeypatch.setattr(main_window, "watermark_pdf_page", lambda page, settings: page < count)
     app.start_processing()
     finish(app, app._job)
     expected = (f"Watermark applied to {count} " + ("page." if count == 1 else "pages.")) if language == "en" else (
         f"Wasserzeichen auf {count} " + ("Seite angewendet." if count == 1 else "Seiten angewendet."))
-    assert expected in app.infos[0][1]
+    assert expected in app._result_text()
 
 
 def test_cancel_after_watermark_does_not_offer_export(app, monkeypatch):
-    monkeypatch.setattr(main_window, "highlight_matching_data", lambda **kwargs: (0, 0))
+    monkeypatch.setattr(main_window, "highlight_matching_data", lambda **kwargs: (0, 0, 0))
 
     def watermark(page, settings):
         app._job.cancel.set()
         return True
 
     monkeypatch.setattr(main_window, "watermark_pdf_page", watermark)
-    monkeypatch.setattr(app, "_ask_output_file", lambda path: pytest.fail("Offered cancelled export"))
+
     app.start_processing()
     finish(app, app._job)
     assert app.last_processing_result == ("aborted",)
@@ -232,7 +245,7 @@ def test_watermark_insertion_failure_is_a_processing_failure(app, monkeypatch):
         raise RuntimeError("watermark insertion failed")
 
     monkeypatch.setattr(main_window, "watermark_pdf_page", fail)
-    monkeypatch.setattr(app, "_ask_output_file", lambda path: pytest.fail("Offered failed export"))
+
     app.start_processing()
     finish(app, app._job)
     assert app.last_processing_result == ("failed", "watermark insertion failed")
@@ -249,7 +262,7 @@ def test_snapshot_is_used_between_pages_and_worker_never_reads_tk(app, monkeypat
         if len(highlights) == 1:
             first_page.set()
             assert next_page.wait(2)
-        return 1, 0
+        return 1, 0, 1
 
     monkeypatch.setattr(main_window, "highlight_matching_data", highlight)
     monkeypatch.setattr(main_window, "watermark_pdf_page", lambda page, settings: watermarks.append(dict(settings)))
@@ -257,7 +270,7 @@ def test_snapshot_is_used_between_pages_and_worker_never_reads_tk(app, monkeypat
     app.start_processing()
     job = app._job
     try:
-        assert first_page.wait(2)
+        serve_until(app, first_page)
         for name, value in dict(search_phrase="NEW", relevant_lines=0, marking_mode="named_matches", names="Changed",
                                 highlight_color_default="#000000", highlight_color_names="#111111").items():
             getattr(app, f"{name}_var").set(value)
@@ -271,10 +284,13 @@ def test_snapshot_is_used_between_pages_and_worker_never_reads_tk(app, monkeypat
     assert all(call["highlight_color_default"] == "#FFFFA6" for call in highlights)
     assert [call["search_str"] for call in highlights] == ["CLUB", "CLUB"]
     assert [item["watermark_text"] for item in watermarks] == ["Original", "Original"]
-    assert saved == ["out.pdf"]
+    assert len(saved) == 1
+    assert Path(saved[0]).parent == Path(app.output).parent
+    assert saved[0] != app.output
     assert app.last_processing_result[0] == "saved"
     assert all(doc.closed for doc in app.documents)
-    assert app.infos[0][0] == "Finished"
+    assert app.infos == []
+    assert "Finished" in app._result_text()
 
 
 def test_cancel_cannot_restart_until_worker_has_exited_even_after_result(app, monkeypatch):
@@ -291,7 +307,7 @@ def test_cancel_cannot_restart_until_worker_has_exited_even_after_result(app, mo
     app.start_processing()
     job = app._job
     try:
-        assert entered.wait(2)
+        serve_until(app, entered)
         app.request_cancel_processing()
         app.request_cancel_processing()
         app.start_processing()
@@ -345,13 +361,13 @@ def test_cancel_during_pages_skips_remaining_pages_and_save(app, monkeypatch):
         calls.append(kwargs)
         entered.set()
         assert release.wait(2)
-        return 1, 0
+        return 1, 0, 1
 
     monkeypatch.setattr(main_window, "highlight_matching_data", highlight)
     app.start_processing()
     job = app._job
     try:
-        assert entered.wait(2)
+        serve_until(app, entered)
         app.request_cancel_processing()
     finally:
         release.set()
@@ -426,8 +442,8 @@ def test_ocr_confirmation_and_save_use_captured_options(app, monkeypatch):
     assert save_calls[0]["is_cancelled"].__self__ is job.cancel
     assert app.last_processing_result[3] is saved_result
     assert app.last_processing_result[4] == 2
-    assert "Watermark applied to 2 pages." in app.infos[0][1]
-    assert "20.0" in app.infos[0][1]
+    assert "Watermark applied to 2 pages." in app._result_text()
+    assert "20.0" in app._result_text()
     from pathlib import Path
     assert all(not Path(path).exists() for path in paths)
     assert all(doc.closed for doc in app.documents)
@@ -519,13 +535,14 @@ def test_processing_rejects_download_and_language_render_preserves_cancellation(
     assert app.start_abort_button["state"] == "disabled"
 
 
-def test_worker_error_closes_document_and_reports_after_exit(app, monkeypatch):
+def test_worker_error_closes_document_and_reports_after_exit(app, monkeypatch, caplog):
     monkeypatch.setattr(main_window, "highlight_matching_data", lambda **kwargs: (_ for _ in ()).throw(ValueError("broken")))
     app.start_processing()
     job = app._job
     finish(app, job)
     assert app.last_processing_result == ("failed", "broken")
-    assert app.errors[0][1] == "broken"
+    assert app.errors[0][1] == app.strings["result_processing_failed"]
+    assert "broken" in caplog.text
     assert app.documents[0].closed
 
 
@@ -683,3 +700,403 @@ def test_file_selection_prepares_preview_immediately_without_opening_dialog(app,
     monkeypatch.setattr(main_window.filedialog, "askopenfilename", lambda **kwargs: "new.pdf")
     app.browse_file()
     assert prepared == ["new.pdf", ("query", "new.pdf")]
+
+
+@pytest.mark.parametrize("ocr", [False, True])
+def test_target_cancel_runs_no_ocr_pages_or_save_and_preserves_last_success(app, monkeypatch, ocr):
+    app.start_processing()
+    finish(app, app._job)
+    previous = app._result_job
+    previous_text = app._result_text()
+    app.app_settings.settings["ocr_enabled"] = "True" if ocr else "False"
+    app.ocr_detection_path, app.ocr_detection_result = "input.pdf", ocr
+    order = []
+    app._confirm_ocr_processing = lambda language: order.append("confirm") or "eng"
+    app._ask_output_file = lambda path: order.append("target") or None
+    monkeypatch.setattr(main_window, "create_searchable_ocr_pdf_in_process", lambda *a, **k: pytest.fail("OCR started"))
+    monkeypatch.setattr(main_window, "highlight_matching_data", lambda **k: pytest.fail("Pages started"))
+    monkeypatch.setattr(main_window, "save_compact_pdf", lambda *a: pytest.fail("Save started"))
+    app.start_processing()
+    finish(app, app._job)
+    assert order == (["confirm", "target"] if ocr else ["target"])
+    assert app.last_processing_result == ("aborted",)
+    assert app._result_job is previous
+    assert app._result_text() == previous_text
+    assert app.status_var.get() == app.strings["status_aborted_processing"]
+
+
+@pytest.mark.parametrize("ocr,failure", [
+    (False, "write"), (False, "replace"), (False, "temp_create"),
+    (True, "write"), (True, "replace"), (True, "temp_create"), (True, "prepare"),
+])
+def test_save_failure_retry_keeps_calculation_and_existing_output(app, monkeypatch, tmp_path, ocr, failure):
+    app.app_settings.settings["ocr_enabled"] = "True" if ocr else "False"
+    app.ocr_detection_path, app.ocr_detection_result = "input.pdf", ocr
+    app._confirm_ocr_processing = lambda language: "eng"
+    monkeypatch.setattr(main_window, "ensure_bundled_tessdata", lambda *a: "tessdata")
+    ocr_calls, page_calls = [], []
+    monkeypatch.setattr(main_window, "create_searchable_ocr_pdf_in_process", lambda *a, **k: ocr_calls.append(a))
+    monkeypatch.setattr(main_window, "highlight_matching_data", lambda **k: page_calls.append(k) or (3, 0, 1))
+    output = Path(app.output)
+    output.write_bytes(b"existing output")
+    def normal_save(doc, path):
+        Path(path).write_bytes(b"calculated PDF")
+
+    def ocr_save(prepared, path, **kwargs):
+        Path(path).write_bytes(b"calculated PDF")
+    monkeypatch.setattr(main_window, "save_compact_pdf", normal_save)
+    monkeypatch.setattr(main_window, "save_pdf_path_in_process", ocr_save)
+    original_replace = main_window.os.replace
+    original_temp = main_window.tempfile.NamedTemporaryFile
+    if failure == "write":
+        def fail_save(*args, **kwargs):
+            Path(args[1]).write_bytes(b"partial")
+            raise PermissionError("disk full")
+        monkeypatch.setattr(main_window, "save_pdf_path_in_process" if ocr else "save_compact_pdf", fail_save)
+    elif failure == "replace":
+        monkeypatch.setattr(main_window.os, "replace", lambda *a: (_ for _ in ()).throw(PermissionError("locked")))
+    elif failure == "temp_create":
+        def fail_temp(*args, **kwargs):
+            if kwargs.get("dir"):
+                raise PermissionError("no destination access")
+            return original_temp(*args, **kwargs)
+        monkeypatch.setattr(main_window.tempfile, "NamedTemporaryFile", fail_temp)
+    else:
+        # Failure to serialize OCR annotations must retain the live calculation too.
+        monkeypatch.setattr(main_window.Document, "save",
+                            lambda *a: (_ for _ in ()).throw(OSError("prepare failed")))
+    app.start_processing()
+    job = app._job
+    finish(app, job)
+    assert job.result[0] == "save_failed"
+    assert app._pending_save is job
+    assert not job.document.closed
+    assert output.read_bytes() == b"existing output"
+    assert list(tmp_path.glob(".hsph-*.pdf")) == []
+    assert "retained" in app._result_text()
+    assert app.start_abort_button["state"] == "disabled"
+    app.start_processing()
+    assert app._job is None  # A fresh run needs an explicit discard first.
+    monkeypatch.setattr(main_window.os, "replace", original_replace)
+    monkeypatch.setattr(main_window.tempfile, "NamedTemporaryFile", original_temp)
+    monkeypatch.setattr(main_window, "save_compact_pdf", normal_save)
+    monkeypatch.setattr(main_window, "save_pdf_path_in_process", ocr_save)
+    monkeypatch.setattr(main_window.Document, "save", lambda *a: None)
+    retained, backing = job.document, job.ocr_temp_file
+    app.retry_save()
+    finish(app, job)
+    assert job.result[0] == "saved"
+    assert job.result[1:3] == (6, 0)
+    assert job.result[5] == 2  # Same coordinates on different pages count separately.
+    assert len(page_calls) == 2 and len(ocr_calls) == int(ocr)
+    assert retained.closed
+    assert not backing or not Path(backing).exists()
+    assert app._pending_save is None
+    assert output.read_bytes() == b"calculated PDF"
+    assert list(tmp_path.glob(".hsph-*.pdf")) == []
+    assert app.infos == []
+
+
+def fail_to_save(app, monkeypatch):
+    monkeypatch.setattr(main_window, "save_compact_pdf", lambda *a: (_ for _ in ()).throw(OSError("locked")))
+    app.start_processing()
+    job = app._job
+    finish(app, job)
+    assert app._pending_save is job
+    return job
+
+
+def test_retry_target_cancel_preserves_pending_then_new_location_saves(app, monkeypatch, tmp_path):
+    job = fail_to_save(app, monkeypatch)
+    document, result = job.document, job.result
+    app._ask_output_file = lambda path: None
+    app.retry_save(choose_target=True)
+    assert app._pending_save is job and app._job is None
+    assert job.document is document and job.result == result
+    output = tmp_path / "new folder" / "output with spaces.pdf"
+    output.parent.mkdir()
+    app._ask_output_file = lambda path: str(output)
+    monkeypatch.setattr(main_window, "highlight_matching_data", lambda **k: pytest.fail("Reprocessed pages"))
+    monkeypatch.setattr(main_window, "save_compact_pdf", lambda doc, path: Path(path).write_bytes(b"PDF"))
+    app.retry_save(choose_target=True)
+    finish(app, job)
+    assert job.result[0] == "saved" and job.result[6] == str(output)
+    assert output.read_bytes() == b"PDF"
+
+
+@pytest.mark.parametrize("action", ["discard", "close", "cancel_retry"])
+def test_retained_document_and_ocr_file_cleanup(app, monkeypatch, tmp_path, action):
+    job = fail_to_save(app, monkeypatch)
+    backing = tmp_path / "retained OCR.pdf"
+    backing.write_bytes(b"OCR")
+    job.ocr_temp_file = str(backing)
+    doc = job.document
+    if action == "close":
+        app.close()
+    elif action == "discard":
+        app.discard_pending_save()
+    else:
+        entered, release = threading.Event(), threading.Event()
+        def save(*a, **kw):
+            entered.set()
+            assert release.wait(2)
+            raise main_window.OcrCancelled()
+        monkeypatch.setattr(main_window, "save_pdf_path_in_process", save)
+        app.retry_save()
+        assert entered.wait(2)
+        try:
+            app.request_cancel_processing()
+            assert not doc.closed and backing.exists()
+        finally:
+            release.set()
+        finish(app, job)
+    assert doc.closed and not backing.exists()
+    assert app._pending_save is None
+    assert job.result == ("aborted",)
+
+
+@pytest.mark.parametrize("alias", ["same", "relative", "hardlink"])
+def test_source_cannot_be_used_as_target(tmp_path, monkeypatch, alias):
+    source = tmp_path / "source.pdf"
+    source.write_bytes(b"source")
+    if alias == "same":
+        target = source
+    elif alias == "relative":
+        target = tmp_path / "sub" / ".." / "source.pdf"
+    else:
+        target = tmp_path / "linked.pdf"
+        target.hardlink_to(source)
+    with pytest.raises(ValueError, match="result_source_target"):
+        PDFHighlighterApp._validate_output_target(source, target)
+    assert source.read_bytes() == b"source"
+
+
+def test_destination_selection_rejects_source_and_requires_overwrite_approval(app, monkeypatch, tmp_path):
+    del app._ask_output_file  # Exercise the real selection loop.
+    source, target = tmp_path / "source.pdf", tmp_path / "existing.pdf"
+    source.write_bytes(b"source")
+    target.write_bytes(b"old")
+    selections = iter([str(source), str(target), str(target)])
+    approvals = iter([False, True])
+    calls = []
+    def choose(**kwargs):
+        assert kwargs["confirmoverwrite"] is False
+        calls.append("select")
+        return next(selections)
+    monkeypatch.setattr(main_window.filedialog, "asksaveasfilename", choose)
+    monkeypatch.setattr(main_window, "ask_ok_cancel", lambda *a: next(approvals))
+    assert app._ask_output_file(str(source)) == str(target)
+    assert len(calls) == 3 and len(app.errors) == 1
+    assert target.read_bytes() == b"old" and source.read_bytes() == b"source"
+
+
+def test_changed_destination_is_never_silently_overwritten_on_retry(app, monkeypatch):
+    output = Path(app.output)
+    output.write_bytes(b"approved")
+    def save(doc, path):
+        Path(path).write_bytes(b"result")
+        output.write_bytes(b"another application changed this")
+    monkeypatch.setattr(main_window, "save_compact_pdf", save)
+    app.start_processing()
+    job = app._job
+    finish(app, job)
+    assert job.result[0] == "save_failed"
+    assert output.read_bytes() == b"another application changed this"
+    monkeypatch.setattr(main_window, "save_compact_pdf", lambda doc, path: Path(path).write_bytes(b"result"))
+    app.retry_save()
+    finish(app, job)
+    assert job.result[0] == "save_failed"
+    assert output.read_bytes() == b"another application changed this"
+    app.retry_save(choose_target=True)  # Re-selection represents renewed overwrite approval.
+    finish(app, job)
+    assert job.result[0] == "saved" and output.read_bytes() == b"result"
+
+
+def test_committed_save_remains_successful_when_cancellation_arrives_after_replace(app, monkeypatch):
+    original = main_window.os.replace
+    def replace(source, target):
+        original(source, target)
+        app._job.cancel.set()
+    monkeypatch.setattr(main_window.os, "replace", replace)
+    app.start_processing()
+    finish(app, app._job)
+    assert app.last_processing_result[0] == "saved"
+    assert "Finished" in app._result_text()
+
+
+def test_opening_actions_pass_complete_paths_and_handle_missing_or_failed_open(app, monkeypatch, tmp_path, caplog):
+    output = tmp_path / "folder with spaces" / "result with spaces.pdf"
+    output.parent.mkdir()
+    output.write_bytes(b"PDF")
+    app._ask_output_file = lambda path: str(output)
+    app.start_processing()
+    finish(app, app._job)
+    opened = []
+    if main_window.os.name == "nt":
+        monkeypatch.setattr(main_window.os, "startfile", opened.append)
+    else:
+        monkeypatch.setattr(main_window.subprocess, "Popen", lambda args: opened.append(args[-1]))
+    app.open_result_pdf()
+    app.open_result_folder()
+    assert opened == [str(output), str(output.parent)]
+    def fail(*args):
+        raise OSError("no associated app")
+    if main_window.os.name == "nt":
+        monkeypatch.setattr(main_window.os, "startfile", fail)
+    else:
+        monkeypatch.setattr(main_window.subprocess, "Popen", fail)
+    app.open_result_pdf()
+    assert app.errors[-1][1] == app.strings["result_open_failed"]
+    assert "no associated app" in caplog.text
+    output.unlink()
+    app.open_result_folder()
+    assert app.errors[-1][1] == app.strings["result_open_missing"]
+    assert opened == [str(output), str(output.parent)]
+
+
+@pytest.mark.parametrize("kind", ["save_failed", "failed", "aborted", "info_key"])
+def test_open_actions_ignore_unsaved_results(app, monkeypatch, kind):
+    job = ProcessingJob(1, "source.pdf", app._collect_processing_options())
+    job.result = (kind, "val_nothing")
+    app._result_job = job
+    monkeypatch.setattr(main_window.os, "startfile", lambda *a: pytest.fail("Opened unsaved PDF"), raising=False)
+    monkeypatch.setattr(main_window.subprocess, "Popen", lambda *a: pytest.fail("Opened unsaved PDF"))
+    app.open_result_pdf()
+    app.open_result_folder()
+
+
+@pytest.mark.parametrize("ocr", [False, True])
+def test_real_pdf_retry_preserves_source_counts_and_annotations(app, monkeypatch, tmp_path, ocr):
+    import shutil
+    from src.core.pdf_processor import highlight_matching_data
+    from src.core.ocr import save_compact_pdf
+    source = tmp_path / "source.pdf"
+    with PdfDocument() as document:
+        for _ in range(2):
+            page = document.new_page()
+            page.insert_text((50, 60), "Bahn 1 CLUB Alice CLUB 00:59.99")
+            page.add_text_annot((400, 50), "Preserve existing annotation")
+        document.save(source)
+    source_bytes = source.read_bytes()
+    output = Path(app.output)
+    output.write_bytes(b"existing")
+    app.input_file_full_path = str(source)
+    app.app_settings.settings["ocr_enabled"] = "True" if ocr else "False"
+    app.ocr_detection_path, app.ocr_detection_result = str(source), ocr
+    app._confirm_ocr_processing = lambda lang: "eng"
+    calls = []
+    def copy_ocr(input_path, output_path, **kwargs):
+        calls.append("ocr")
+        shutil.copyfile(input_path, output_path)
+    def save_process(prepared, target, **kwargs):
+        with PdfDocument(prepared) as document:
+            save_compact_pdf(document, target)
+    monkeypatch.setattr(main_window, "Document", PdfDocument)
+    monkeypatch.setattr(main_window, "highlight_matching_data", highlight_matching_data)
+    monkeypatch.setattr(main_window, "save_compact_pdf", save_compact_pdf)
+    monkeypatch.setattr(main_window, "ensure_bundled_tessdata", lambda *a: "tessdata")
+    monkeypatch.setattr(main_window, "create_searchable_ocr_pdf_in_process", copy_ocr)
+    monkeypatch.setattr(main_window, "save_pdf_path_in_process", save_process)
+    original_replace = main_window.os.replace
+    monkeypatch.setattr(main_window.os, "replace", lambda *a: (_ for _ in ()).throw(PermissionError("locked output")))
+    app.start_processing()
+    job = app._job
+    finish(app, job)
+    assert job.result[0] == "save_failed"
+    assert output.read_bytes() == b"existing"
+    assert source.read_bytes() == source_bytes
+    monkeypatch.setattr(main_window.os, "replace", original_replace)
+    monkeypatch.setattr(main_window, "highlight_matching_data", lambda **k: pytest.fail("Repeated marking"))
+    app.retry_save()
+    finish(app, job)
+    assert job.result[:3] == ("saved", 4, 0)
+    assert job.result[5] == 2
+    assert calls == (["ocr"] if ocr else [])
+    assert source.read_bytes() == source_bytes
+    with PdfDocument(output) as document:
+        for page in document:
+            annotations = list(page.annots())
+            assert len(annotations) == 2
+            assert annotations[0].info["content"] == "Preserve existing annotation"
+    assert list(tmp_path.glob(".hsph-*.pdf")) == []
+
+
+def test_ocr_confirmation_cancel_never_asks_target_or_starts_processing(app, monkeypatch):
+    app.app_settings.settings["ocr_enabled"] = "True"
+    app.ocr_detection_path, app.ocr_detection_result = "input.pdf", True
+    app._confirm_ocr_processing = lambda lang: None
+    app._ask_output_file = lambda *a: pytest.fail("Target offered after cancelled OCR")
+    monkeypatch.setattr(main_window, "create_searchable_ocr_pdf_in_process", lambda *a, **kw: pytest.fail("OCR"))
+    app.start_processing()
+    finish(app, app._job)
+    assert app.last_processing_result == ("aborted",)
+
+
+@pytest.mark.parametrize("invalid", ["path", "encrypted", "required"])
+def test_preflight_rejects_invalid_input_before_target_selection(app, monkeypatch, invalid):
+    app._ask_output_file = lambda *a: pytest.fail("Target offered for invalid source")
+    if invalid == "path":
+        app.paths.is_valid_path = lambda path: (_ for _ in ()).throw(FileNotFoundError("source missing"))
+    elif invalid == "encrypted":
+        monkeypatch.setattr(main_window.Document, "is_encrypted", True)
+    else:
+        app.search_phrase_var.set("   ")
+    app.start_processing()
+    if invalid == "required":
+        assert app._job is None and app.errors
+    else:
+        finish(app, app._job)
+        assert app.last_processing_result[0] in ("failed", "error_key")
+
+
+def test_fsync_failure_retains_result_and_does_not_replace_output(app, monkeypatch):
+    output = Path(app.output)
+    output.write_bytes(b"existing")
+    monkeypatch.setattr(main_window.os, "fsync", lambda fd: (_ for _ in ()).throw(OSError("sync failure")))
+    app.start_processing()
+    finish(app, app._job)
+    assert app._pending_save and output.read_bytes() == b"existing"
+    assert list(output.parent.glob(".hsph-*.pdf")) == []
+
+
+def test_retry_thread_start_failure_preserves_pending_calculation(app, monkeypatch, caplog):
+    job = fail_to_save(app, monkeypatch)
+    document = job.document
+    monkeypatch.setattr(threading.Thread, "start", lambda self: (_ for _ in ()).throw(RuntimeError("thread start failed")))
+    app.retry_save()
+    assert app._pending_save is job and app._job is None
+    assert job.document is document and not document.closed
+    assert "thread start failed" not in app._result_text()
+    assert "thread start failed" in caplog.text
+
+
+@pytest.mark.parametrize("close", [False, True])
+def test_retry_target_nested_event_loop_keeps_job_reserved(app, monkeypatch, close):
+    job = fail_to_save(app, monkeypatch)
+    document = job.document
+    def choose(path):
+        app._poll_work()
+        assert app._job is job and job.dialog_open
+        assert app.start_download() is False
+        assert not document.closed
+        if close:
+            app.close()
+        return None
+    app._ask_output_file = choose
+    app.retry_save(choose_target=True)
+    assert app._job is None
+    assert document.closed is close
+    assert (app._pending_save is None) is close
+
+
+@pytest.mark.parametrize("kind", ["failed", "save_failed"])
+@pytest.mark.parametrize("detail", ["RuntimeError: worker exited with code 1; hsph-ocr-secret.pdf", "upd_note"])
+def test_user_messages_do_not_include_internal_failure_details(app, kind, detail):
+    job = ProcessingJob(1, "source.pdf", app._collect_processing_options(), started=True)
+    job.result = (kind, detail)
+    app._job = job
+    app.finalize_processing(job)
+    assert detail not in app._result_text()
+    assert detail not in app.status_var.get()
+    assert all(detail not in message for _, message in app.errors)
+    assert app._result_text() == app.strings["result_save_failed" if kind == "save_failed" else "result_processing_failed"]

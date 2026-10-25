@@ -27,6 +27,23 @@ def build_strings(_: Callable[[str], str]) -> Dict[str, str]:
 
     # ---- General app text / statuses shown broadly ----
     general_strings = {
+        "result_title": _("Result"),
+        "result_empty": _("No completed processing yet."),
+        "result_location": _("Saved to: {0}"),
+        "result_open_pdf": _("Open PDF"),
+        "result_open_folder": _("Open folder"),
+        "result_retry": _("Retry saving"),
+        "result_choose": _("Choose another location"),
+        "result_discard": _("Discard result"),
+        "result_failed": _("Processing failed."),
+        "result_processing_failed": _("The PDF could not be processed. Try again or select another PDF."),
+        "result_save_failed": _("The PDF could not be saved. Your result is retained. Retry saving, choose another location or discard it."),
+        "result_source_target": _("Choose a destination different from the source PDF."),
+        "result_target_changed": _("The destination has changed since selection. Choose the location again to confirm overwriting."),
+        "result_overwrite_title": _("Replace PDF?"),
+        "result_overwrite": _("Replace the existing file after successful saving?\n{0}"),
+        "result_open_failed": _("Could not open the saved result. You can find it at the location shown above."),
+        "result_open_missing": _("The saved PDF is no longer at this location. Check whether it was moved or deleted."),
         "settings_notice": _("Settings"),
         "settings_recovered": _(
             "The settings file could not be read as valid settings. Defaults are being used. "
@@ -90,7 +107,7 @@ def build_strings(_: Callable[[str], str]) -> Dict[str, str]:
         "ocr_language_deu": _("German (recommended)"),
         "ocr_language_eng": _("English"),
         "ocr_language_deu_eng": _("German + English"),
-        "ocr_reduction_failed": _("OCR output was large and reduction failed. Saved the normal OCR output ({0:.1f} MB)."),
+        "ocr_reduction_failed": _("The PDF was saved, but its file size could not be reduced ({0:.1f} MB)."),
         "status_ocr_checking": _("Status: Checking PDF text..."),
         "status_ocr_needed": _("Status: PDF imported. OCR will be used when processing."),
         "status_ocr_processing": _("Status: Running OCR... {0}/{1} pages processed."),
@@ -198,7 +215,7 @@ def build_strings(_: Callable[[str], str]) -> Dict[str, str]:
         "status_aborted": _("Status: Aborted by user."),
         "status_aborted_processing": _("Status: Processing aborted."),
         "status_done": _("Finished"),
-        "status_saving": _("Status: Saving and compacting PDF... Please wait..."),
+        "status_saving": _("Status: Saving PDF... Please wait..."),
     }
 
     # ---- Validation and user-facing errors ----
@@ -284,6 +301,10 @@ def build_strings(_: Callable[[str], str]) -> Dict[str, str]:
 
 # Plural strings - keep as raw strings for proper ngettext handling
 plural_strings = {
+    "marked_lines": {
+        "singular": "{0} line newly highlighted.",
+        "plural": "{0} lines newly highlighted.",
+    },
     "watermarked_pages": {
         "singular": "Watermark applied to {0} page.",
         "plural": "Watermark applied to {0} pages.",
@@ -302,6 +323,7 @@ plural_strings = {
 # xgettext hint - never executed, only for extraction
 def _xgettext_dummy(n_):
     # Keep the ngettext patterns in source for translation extraction tools
+    n_("{0} line newly highlighted.", "{0} lines newly highlighted.", 1)
     n_("Watermark applied to {0} page.", "Watermark applied to {0} pages.", 1)
     n_("Processing complete: {0} match found. {1} skipped.", "Processing complete: {0} matches found. {1} skipped.", 1)
     n_("Processed: {0}/{1} pages. {2} match found. {3} skipped.", "Processed: {0}/{1} pages. {2} matches found. {3} skipped.", 1)
