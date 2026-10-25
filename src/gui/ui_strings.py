@@ -277,6 +277,12 @@ def build_strings(_: Callable[[str], str]) -> Dict[str, str]:
 
     # ---- Developer tools ----
     dev_strings = {
+        "dev_versions_empty": _("No versions are available for this channel."),
+        "dev_versions_loading": _("Loading versions..."),
+        "dev_versions_failed": _("Could not load versions. Please try again."),
+        "dev_versions_cached": _("Could not refresh versions. Previously loaded versions are still available."),
+        "dev_checksum_missing": _("This version has no checksum file. Choose another version to keep verification enabled."),
+        "dev_settings_open_failed": _("Could not open the settings file. You can find it here: {0}"),
         "dev_btn_install": _("Install"),
         "dev_channel": _("Channel"),
         "dev_confirm_install": _("Are you sure you want to install version {0}?"),

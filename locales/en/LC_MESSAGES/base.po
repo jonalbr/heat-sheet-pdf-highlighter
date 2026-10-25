@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-25 16:43+0100\n"
+"POT-Creation-Date: 2026-10-25 17:45+0100\n"
 "PO-Revision-Date: 2024-05-15 13:58+0200\n"
 "Last-Translator: Automatically generated\n"
 "Language-Team: none\n"
@@ -803,51 +803,82 @@ msgid "A new version ({0}) is available."
 msgstr "A new version ({0}) is available."
 
 #: ..\src\gui\ui_strings.py:280
+msgid "No versions are available for this channel."
+msgstr "No versions are available for this channel."
+
+#: ..\src\gui\ui_strings.py:281
+msgid "Loading versions..."
+msgstr "Loading versions..."
+
+#: ..\src\gui\ui_strings.py:282
+msgid "Could not load versions. Please try again."
+msgstr "Could not load versions. Please try again."
+
+#: ..\src\gui\ui_strings.py:283
+msgid ""
+"Could not refresh versions. Previously loaded versions are still available."
+msgstr ""
+"Could not refresh versions. Previously loaded versions are still available."
+
+#: ..\src\gui\ui_strings.py:284
+msgid ""
+"This version has no checksum file. Choose another version to keep "
+"verification enabled."
+msgstr ""
+"This version has no checksum file. Choose another version to keep "
+"verification enabled."
+
+#: ..\src\gui\ui_strings.py:285
+#, python-brace-format
+msgid "Could not open the settings file. You can find it here: {0}"
+msgstr "Could not open the settings file. You can find it here: {0}"
+
+#: ..\src\gui\ui_strings.py:286
 msgid "Install"
 msgstr "Install"
 
-#: ..\src\gui\ui_strings.py:281
+#: ..\src\gui\ui_strings.py:287
 msgid "Channel"
 msgstr "Channel"
 
-#: ..\src\gui\ui_strings.py:282
+#: ..\src\gui\ui_strings.py:288
 #, python-brace-format
 msgid "Are you sure you want to install version {0}?"
 msgstr "Are you sure you want to install version {0}?"
 
-#: ..\src\gui\ui_strings.py:283
+#: ..\src\gui\ui_strings.py:289
 msgid "Are you sure you want to reset all settings to defaults?"
 msgstr "Are you sure you want to reset all settings to defaults?"
 
-#: ..\src\gui\ui_strings.py:284
+#: ..\src\gui\ui_strings.py:290
 msgid "Debug Options"
 msgstr "Debug Options"
 
-#: ..\src\gui\ui_strings.py:285
+#: ..\src\gui\ui_strings.py:291
 msgid "Install Specific Version"
 msgstr "Install Specific Version"
 
-#: ..\src\gui\ui_strings.py:286
+#: ..\src\gui\ui_strings.py:292
 msgid "Open Settings File"
 msgstr "Open Settings File"
 
-#: ..\src\gui\ui_strings.py:287
+#: ..\src\gui\ui_strings.py:293
 msgid "Release Candidates (rc)"
 msgstr "Release Candidates (rc)"
 
-#: ..\src\gui\ui_strings.py:288
+#: ..\src\gui\ui_strings.py:294
 msgid "Release Notes"
 msgstr "Release Notes"
 
-#: ..\src\gui\ui_strings.py:289
+#: ..\src\gui\ui_strings.py:295
 msgid "Reset to Defaults"
 msgstr "Reset to Defaults"
 
-#: ..\src\gui\ui_strings.py:290
+#: ..\src\gui\ui_strings.py:296
 msgid "Reset Settings"
 msgstr "Reset Settings"
 
-#: ..\src\gui\ui_strings.py:291
+#: ..\src\gui\ui_strings.py:297
 msgid ""
 "When enabled, updates require a matching .sha256 file for verification "
 "(affects all channels)"
@@ -855,51 +886,51 @@ msgstr ""
 "When enabled, updates require a matching .sha256 file for verification "
 "(affects all channels)"
 
-#: ..\src\gui\ui_strings.py:292
+#: ..\src\gui\ui_strings.py:298
 msgid "Stable"
 msgstr "Stable"
 
-#: ..\src\gui\ui_strings.py:293
+#: ..\src\gui\ui_strings.py:299
 msgid "Dev Tools"
 msgstr "Dev Tools"
 
-#: ..\src\gui\ui_strings.py:294
+#: ..\src\gui\ui_strings.py:300
 msgid "Update Channel"
 msgstr "Update Channel"
 
-#: ..\src\gui\ui_strings.py:295
+#: ..\src\gui\ui_strings.py:301
 msgid "Verify SHA256"
 msgstr "Verify SHA256"
 
-#: ..\src\gui\ui_strings.py:346
+#: ..\src\gui\ui_strings.py:352
 #, python-brace-format
 msgid "{0} name"
 msgid_plural "{0} names"
 msgstr[0] "{0} name"
 msgstr[1] "{0} names"
 
-#: ..\src\gui\ui_strings.py:347
+#: ..\src\gui\ui_strings.py:353
 #, python-brace-format
 msgid "{0} line newly highlighted."
 msgid_plural "{0} lines newly highlighted."
 msgstr[0] "{0} line newly highlighted."
 msgstr[1] "{0} lines newly highlighted."
 
-#: ..\src\gui\ui_strings.py:348
+#: ..\src\gui\ui_strings.py:354
 #, python-brace-format
 msgid "Watermark applied to {0} page."
 msgid_plural "Watermark applied to {0} pages."
 msgstr[0] "Watermark applied to {0} page."
 msgstr[1] "Watermark applied to {0} pages."
 
-#: ..\src\gui\ui_strings.py:349
+#: ..\src\gui\ui_strings.py:355
 #, python-brace-format
 msgid "Processing complete: {0} match found. {1} skipped."
 msgid_plural "Processing complete: {0} matches found. {1} skipped."
 msgstr[0] "Processing complete: {0} match found. {1} skipped."
 msgstr[1] "Processing complete: {0} matches found. {1} skipped."
 
-#: ..\src\gui\ui_strings.py:350
+#: ..\src\gui\ui_strings.py:356
 #, python-brace-format
 msgid "Processed: {0}/{1} pages. {2} match found. {3} skipped."
 msgid_plural "Processed: {0}/{1} pages. {2} matches found. {3} skipped."
