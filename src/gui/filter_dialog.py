@@ -4,11 +4,10 @@ import csv
 from io import BytesIO
 import logging
 from tkinter import Button, StringVar, TclError, Text, Toplevel, colorchooser, filedialog, ttk
-from tkinter.font import Font
 
 from PIL import Image, ImageTk
 
-from ..core.marking_preview import PREVIEW_HEIGHT, PREVIEW_WIDTH, ExampleText, PreviewRequest
+from ..core.marking_preview import EXAMPLE_PAGE_SIZE, PREVIEW_HEIGHT, PREVIEW_WIDTH, ExampleText, PreviewRequest
 from ..core.pdf_processor import parse_names
 from ..models import MarkingMode
 from ..utils.theme import get_theme_colors
@@ -132,7 +131,12 @@ class FilterDialog:
         preview_frame.grid(row=7, column=0, columnspan=2, sticky="ew", pady=(12, 6))
         self.preview_label = ttk.Label(preview_frame, text="")
         self.preview_label.pack(anchor="w")
-        self.preview_viewport = ttk.Frame(preview_frame, width=PREVIEW_WIDTH, height=PREVIEW_HEIGHT)
+        # The synthetic example has a known aspect ratio. Real PDF excerpts
+        # retain a fixed viewport while asynchronous results change.
+        self._preview_height = PREVIEW_HEIGHT if getattr(self.app, "input_file_full_path", None) else min(
+            PREVIEW_HEIGHT, round(PREVIEW_WIDTH * EXAMPLE_PAGE_SIZE[1] / EXAMPLE_PAGE_SIZE[0]),
+        )
+        self.preview_viewport = ttk.Frame(preview_frame, width=PREVIEW_WIDTH, height=self._preview_height)
         self.preview_viewport.pack(pady=(4, 0))
         self.preview_viewport.pack_propagate(False)
         self.preview_panels = []
@@ -142,12 +146,9 @@ class FilterDialog:
             image = ttk.Label(panel, anchor="center")
             image.pack(fill="both", expand=True)
             self.preview_panels.append((panel, heading, image))
-        self.preview_panels[0][0].place(x=0, y=0, relwidth=1, height=PREVIEW_HEIGHT)
+        self.preview_panels[0][0].place(x=0, y=0, relwidth=1, height=self._preview_height)
         self.preview_image = self.preview_panels[0][2]
-        note_font = Font(root=window, font=ttk.Style(window).lookup("TLabel", "font") or "TkDefaultFont")
-        self.preview_note_space = ttk.Frame(preview_frame, width=PREVIEW_WIDTH, height=note_font.metrics("linespace") * 2)
-        self.preview_note_space.pack(pady=(6, 0))
-        self.preview_note_space.pack_propagate(False)
+        self.preview_note_space = ttk.Frame(preview_frame, width=PREVIEW_WIDTH)
         self.preview_note = ttk.Label(self.preview_note_space, text="", wraplength=PREVIEW_WIDTH, anchor="nw")
         self.preview_note.pack(fill="both", expand=True)
         footer = ttk.Frame(content)
@@ -320,7 +321,8 @@ class FilterDialog:
                 heading.pack(side="top", anchor="w", before=label)
             else:
                 heading.pack_forget()
-            panel.place(x=0, y=i * PREVIEW_HEIGHT // len(snippets), relwidth=1, height=PREVIEW_HEIGHT // len(snippets))
+            panel.place(x=0, y=i * self._preview_height // len(snippets), relwidth=1,
+                        height=self._preview_height // len(snippets))
         self._photo = self._photos[0]
         self.preview_label.configure(text=self._text("flt_preview_excerpts") if split else (
             self._text("flt_pdf_excerpt").format(result.page_number) if result.page_number is not None else self._text(
@@ -329,7 +331,15 @@ class FilterDialog:
                       "no_text": "flt_preview_no_text", "no_matches": "flt_preview_no_matches",
                       "unavailable": "flt_preview_unavailable"}
         key = "flt_no_names_found" if result.no_named_matches else state_keys.get(result.state)
-        self.preview_note.configure(text=self._text(key) if key else "")
+        self._set_preview_note(self._text(key) if key else "")
+
+    def _set_preview_note(self, text):
+        """Allocate message space only while there is a message to display."""
+        self.preview_note.configure(text=text)
+        if text:
+            self.preview_note_space.pack(pady=(6, 0))
+        else:
+            self.preview_note_space.pack_forget()
 
     def _reveal(self):
         """Map the fixed layout immediately, independently of PDF preparation."""
@@ -342,7 +352,7 @@ class FilterDialog:
     def _preview_failed(self):
         """Keep settings usable if the preview process could not return an image."""
         if self.window is not None:
-            self.preview_note.configure(text=self._text("flt_preview_unavailable"))
+            self._set_preview_note(self._text("flt_preview_unavailable"))
             self._reveal()
 
     def apply_changes(self):

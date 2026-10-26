@@ -245,12 +245,12 @@ def test_dialog_opens_before_first_image_and_requests_it_without_typing_delay(di
     assert dialog._preview.immediate[-1] is True
 
 
-def test_preview_image_and_note_changes_do_not_resize_dialog(dialog):
+def test_preview_image_changes_do_not_resize_dialog(dialog):
     dialog._show_preview(preview_result())
     dialog.window.update_idletasks()
     size = (dialog.window.winfo_width(), dialog.window.winfo_height())
     requested = (dialog.window.winfo_reqwidth(), dialog.window.winfo_reqheight())
-    for result in (preview_result(80, 10, no_named_matches=True), preview_result(560, 40), preview_result()):
+    for result in (preview_result(80, 10), preview_result(560, 40), preview_result()):
         dialog._show_preview(result)
         dialog.window.update_idletasks()
         assert (dialog.window.winfo_width(), dialog.window.winfo_height()) == size
@@ -258,6 +258,61 @@ def test_preview_image_and_note_changes_do_not_resize_dialog(dialog):
     dialog._changed()
     dialog.window.update_idletasks()
     assert (dialog.window.winfo_width(), dialog.window.winfo_height()) == size
+
+
+def test_example_fits_viewport_without_an_empty_note_area(dialog):
+    from src.core.marking_preview import MarkingPreviewRenderer
+
+    request = dialog.capture_request()
+    renderer = MarkingPreviewRenderer()
+    try:
+        result = renderer.render(request)
+    finally:
+        renderer.close()
+    dialog._preview.emit(result)
+    dialog.window.update_idletasks()
+    with Image.open(BytesIO(result.png)) as image:
+        assert dialog.preview_viewport.winfo_height() == image.height
+    assert not dialog.preview_note_space.winfo_manager()
+    assert dialog.preview_note.cget("text") == ""
+
+
+def test_real_pdf_keeps_full_viewport_for_short_images_and_split_excerpts(dialog, tmp_path):
+    from src.core.marking_preview import PREVIEW_HEIGHT, PreviewSnippet
+
+    dialog.close()
+    source = tmp_path / "source.pdf"
+    source.write_bytes(b"source identity")
+    dialog.app.input_file_full_path = str(source)
+    dialog.open()
+    dialog.window.update_idletasks()
+    size = (dialog.window.winfo_width(), dialog.window.winfo_height())
+    png = preview_result(height=40).png
+    split = PreviewResult(png, 2, snippets=(PreviewSnippet(png, 2, "named"), PreviewSnippet(png, 17, "general")))
+    for result in (preview_result(height=10), split, preview_result()):
+        dialog._preview.emit(result)
+        dialog.window.update_idletasks()
+        assert dialog.preview_viewport.winfo_height() == PREVIEW_HEIGHT
+        assert (dialog.window.winfo_width(), dialog.window.winfo_height()) == size
+
+
+def test_notes_only_take_space_while_they_have_text(dialog):
+    dialog._preview.emit(preview_result())
+    dialog.window.update_idletasks()
+    compact_height = dialog.window.winfo_reqheight()
+    dialog._preview.emit(preview_result(no_named_matches=True))
+    dialog.window.update_idletasks()
+    assert dialog.preview_note_space.winfo_manager() == "pack"
+    assert dialog.preview_note.cget("text") == dialog._text("flt_no_names_found")
+    assert dialog.window.winfo_reqheight() > compact_height
+    dialog._preview.emit(preview_result())
+    dialog.window.update_idletasks()
+    assert dialog.window.winfo_reqheight() == compact_height
+    assert not dialog.preview_note_space.winfo_manager()
+    dialog._preview.on_error()
+    dialog.window.update_idletasks()
+    assert dialog.preview_note_space.winfo_manager() == "pack"
+    assert dialog.preview_note.cget("text") == dialog._text("flt_preview_unavailable")
 
 
 def test_reopen_reuses_matching_preview_before_new_worker_result(dialog):

@@ -16,6 +16,7 @@ from .preview_index import DocumentIndex
 PREVIEW_WIDTH = 560
 PREVIEW_HEIGHT = 150
 SPLIT_HEIGHT = 55
+EXAMPLE_PAGE_SIZE = (520, 130)
 
 
 @dataclass(frozen=True)
@@ -380,7 +381,7 @@ class MarkingPreviewRenderer:
     def _render_example(self, request: PreviewRequest, *, no_named_matches: bool = False) -> PreviewResult:
         """Show a fictional heat with the same columns and spacing as a heat sheet."""
         with pymupdf.open() as document:
-            page = document.new_page(width=520, height=130)
+            page = document.new_page(width=EXAMPLE_PAGE_SIZE[0], height=EXAMPLE_PAGE_SIZE[1])
             labels = request.example_text
             page.insert_text((12, 18), labels.heading, fontsize=12, fontname="hebo")
             for x, title in ((12, labels.lane), (66, labels.swimmer), (266, labels.year), (304, labels.club)):
