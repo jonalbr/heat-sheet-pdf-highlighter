@@ -35,56 +35,44 @@
   </picture>
 </p>
 
-## What it does
-
-Heat Sheet PDF Highlighter is a small desktop app for marking the rows that matter in heat-sheet PDFs. It highlights by club or search term, can narrow the result to specific swimmers, and can add a watermark before writing a new PDF.
-
-The packaged installer is Windows-only. Running from source on macOS or Linux may work, but those platforms are currently untested.
-
 ## Install
 
-### Windows installer
+[Download for Windows](https://github.com/jonalbr/heat-sheet-pdf-highlighter/releases/latest/download/heat_sheet_pdf_highlighter_installer.exe), run the installer, and launch the app from the Start menu.
 
-1. [Download the latest installer](https://github.com/jonalbr/heat-sheet-pdf-highlighter/releases/latest/download/heat_sheet_pdf_highlighter_installer.exe).
-2. Run the downloaded `.exe`.
-3. If Windows SmartScreen appears for the unsigned installer, choose **More info** → **Run anyway**.
-4. Launch **Heat Sheet PDF Highlighter** from the Start menu or desktop shortcut.
+If SmartScreen blocks the unsigned installer, choose **More info** → **Run anyway**.
 
-You can also browse all versions on the [releases page](https://github.com/jonalbr/heat-sheet-pdf-highlighter/releases).
+Windows only; running from source on macOS or Linux is untested.
 
 ## Quick start
 
 1. Click **Browse** and choose a heat-sheet PDF.
 2. Enter a club name or other search term.
-3. Leave **Mark only relevant lines** enabled when you only want rows that match the expected heat-sheet layout.
-4. Click **Start** and save the generated highlighted PDF. If the PDF is scanned, confirm the OCR prompt and choose the OCR language.
+3. Optionally adjust **Filter and Colors** or add a watermark.
+4. Click **Start** and save the highlighted PDF.
 
-The app saves a new PDF with a `_highlighted` suffix at the location you choose.
+For scanned PDFs, choose German or English when prompted for OCR. The app saves a new PDF with a `_highlighted` suffix.
 
 ## Features
 
-- Highlight rows by club name or custom search term
-- Limit highlighting to specific swimmers and choose between:
-  - **Names Only:** highlight rows containing matching names in yellow; leave other rows unmarked
-  - **Differential Colors:** highlight rows containing matching names in blue and other matching rows in yellow
-- Import names from CSV or text files. Comma-separated and newline-separated lists are parsed automatically.
-- Preview and place watermarks with preset or custom colors, size controls, and nudgeable positioning
-- Detect scanned PDFs and run bundled German or English OCR before highlighting
-- Use system, light, or dark theme. System mode follows Windows appearance changes.
-- Track processing progress while the PDF is being generated
-- Keep language, search, filter, watermark, and window preferences between sessions
-- Switch between English and German
-- Check for and install updates from inside the app on Windows
+- Highlight matching rows, distinguish selected swimmers by color, or mark only listed names
+- Import names from CSV or text files
+- Preview custom highlight colors and position watermarks
+- Read scanned PDFs with bundled German and English OCR
+- English and German interface, system/light/dark themes, and saved preferences
+- In-app updates on Windows
 
 ## Screenshots
 
-Filter dialog:
+<details>
+<summary>Filter, colors, and watermark dialogs</summary>
+
+Filter and colors dialog:
 
 <div align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="images/app_screenshot_filter_dark.png">
     <source media="(prefers-color-scheme: light)" srcset="images/app_screenshot_filter_light.png">
-    <img alt="Filter dialog with example names" src="images/app_screenshot_filter_light.png">
+    <img alt="Filter and colors dialog with name settings and highlight preview" src="images/app_screenshot_filter_light.png">
   </picture>
 </div>
 
@@ -98,6 +86,8 @@ Watermark dialog:
   </picture>
 </div>
 
+</details>
+
 ## Run from source
 
 To run from source, install [`uv`](https://docs.astral.sh/uv/), then:
@@ -110,9 +100,11 @@ uv sync --locked --all-groups
 uv run python main.py
 ```
 
+For development, translations, builds, and releases, see [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## Support the Project
 
-I maintain Heat Sheet PDF Highlighter in my free time. If you find it useful and want to say thanks, you’re welcome to support me.
+If the app helps you, you can support its development:
 
 <div align="center">
   <a href="https://ko-fi.com/L4L81ZOT4V">
@@ -120,12 +112,8 @@ I maintain Heat Sheet PDF Highlighter in my free time. If you find it useful and
   </a>
 </div>
 
-## Contributing
-
-Development setup, translations, builds, releases, checksum verification, and Dev Tools are documented in [CONTRIBUTING.md](CONTRIBUTING.md).
-
 ## License
 
-This project is licensed under the GNU General Public License v3.0. See [LICENSE](LICENSE).
+[GNU General Public License v3.0](LICENSE).
 
-Bundled Tesseract `tessdata_best` OCR language files for German and English are distributed under Apache-2.0; see [assets/ocr](assets/ocr).
+Bundled OCR language files use Apache-2.0; see [assets/ocr](assets/ocr).

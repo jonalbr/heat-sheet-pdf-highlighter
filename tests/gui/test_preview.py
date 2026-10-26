@@ -129,6 +129,12 @@ class FakeCanvas:
         self.coords_calls = []
         self.created = []
 
+    def winfo_width(self):
+        return 200
+
+    def winfo_height(self):
+        return 100
+
     def configure(self, **kwargs):
         self.configured.update(kwargs)
 
@@ -152,10 +158,10 @@ def test_update_canvas_scene_moves_existing_watermark_without_flattening(monkeyp
 
     preview._update_canvas_scene(Image.new("RGB", (200, 100), "white"), Image.new("RGBA", (10, 5)), (40, 70))
 
-    assert preview.canvas.configured == {"width": 200, "height": 100}
+    assert preview.canvas.configured == {"scrollregion": (0, 0, 200, 100)}
     assert preview.canvas.items[1]["image"] == "photo-(200, 100)"
     assert preview.canvas.items[2]["image"] == "photo-(10, 5)"
-    assert preview.canvas.coords_calls == [(2, (40, 70))]
+    assert preview.canvas.coords_calls == [(1, (0, 0)), (2, (40, 70))]
 
 
 def test_update_canvas_scene_hides_watermark_when_disabled(monkeypatch):

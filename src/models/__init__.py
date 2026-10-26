@@ -2,9 +2,22 @@
 Enums and data models
 """
 
-from enum import IntEnum
+from enum import StrEnum
+from dataclasses import dataclass
+from typing import Literal
 
 
-class HighlightMode(IntEnum):
-    ONLY_NAMES = 0
-    NAMES_DIFF_COLOR = 1
+@dataclass(frozen=True)
+class UpdateDecision:
+    """One confirmed update action and its version reminder preference."""
+
+    action: Literal["update_now", "later", "cancel"]
+    skip_version: bool = False
+
+
+class MarkingMode(StrEnum):
+    """Choose which search matches receive the independently configured colors."""
+
+    ALL_MATCHES = "all_matches"
+    DISTINGUISH_NAMES = "distinguish_names"
+    NAMED_MATCHES = "named_matches"

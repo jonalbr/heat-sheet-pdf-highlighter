@@ -9,6 +9,7 @@ import re
 import subprocess
 import tempfile
 import time
+import threading
 from typing import TYPE_CHECKING
 import logging
 
@@ -33,9 +34,36 @@ class UpdateChecker:
         self.last_download_url: str | None = None
         self.last_sha_url: str | None = None
         self.last_version_tag: str | None = None
+        self.last_update_context: tuple[str, int] | None = None
         # Concurrency guards
+        self._download_lock = threading.Lock()
         self._active_download: bool = False
         self._active_check: bool = False
+        self._check_lock = threading.RLock()
+        self._channel = self.app_settings.settings.get("update_channel", "stable")
+        self._channel_revision = 0
+        self._checking_context: tuple[str, int] | None = None
+        self._pending_channel_refresh = False
+
+    def channel_changed(self) -> None:
+        """Invalidate discovered assets and any outstanding old-channel UI work."""
+        with self._check_lock:
+            self._channel = self.app_settings.settings.get("update_channel", "stable")
+            self._channel_revision += 1
+            self.last_download_url = self.last_sha_url = self.last_version_tag = None
+            self.last_update_context = None
+            self._pending_channel_refresh = self._active_check
+
+    def _update_context(self) -> tuple[str, int]:
+        """Capture a channel revision, detecting changes made through settings."""
+        with self._check_lock:
+            if self._channel != self.app_settings.settings.get("update_channel", "stable"):
+                self.channel_changed()
+            return self._channel, self._channel_revision
+
+    def is_current_context(self, context: tuple[str, int]) -> bool:
+        """Check the channel and revision, including a switch away and back."""
+        return context == self._update_context() and not getattr(self.app_instance, "_closing", False)
 
     def check_for_app_updates(self, current_version: Version, force_check: bool = False, quiet: bool = False):
         """
@@ -47,10 +75,14 @@ class UpdateChecker:
         Returns:
             Version: The latest version available.
         """
-        # Prevent overlapping network checks (unless forced); a force can still be ignored if one is already active
-        if self._active_check:
-            return self._stored_newest_version_or(current_version)
-        self._active_check = True
+        with self._check_lock:
+            context = self._update_context()
+            if self._active_check:
+                if self._checking_context is not None and context != self._checking_context:
+                    self._pending_channel_refresh = True
+                return self._stored_newest_version_or(current_version)
+            self._active_check = True
+            self._checking_context = context
         now = datetime.datetime.now()
 
         try:
@@ -58,26 +90,38 @@ class UpdateChecker:
             ttl_seconds = int(self.app_settings.settings.get("update_cache_ttl_seconds", 86400))
             cache_expiry = datetime.timedelta(seconds=ttl_seconds)
 
-            if not force_check:
-                cache_time, latest_version = load_update_cache()
-                if cache_time and now - cache_time < cache_expiry:
-                    self.update_callback(latest_version, current_version)
-                    return latest_version
-            else:
+            cache_time, latest_version = (None, None) if force_check else load_update_cache(channel=context[0])
+            cache_hit = cache_time is not None and now - cache_time < cache_expiry
+            if force_check:
                 # If a forced update is requested, invalidate the releases cache without unlinking
                 invalidate_releases_cache()
 
             # Perform the update check
-            latest_version = self._get_latest_version_from_github(current_version=current_version, force_check=force_check, quiet=quiet)
+            if not cache_hit:
+                latest_version = self._get_latest_version_from_github(
+                    current_version=current_version, force_check=force_check, quiet=quiet, context=context,
+                )
+            with self._check_lock:
+                publish = self.is_current_context(context)
+                if publish:
+                    if isinstance(latest_version, Version) and cache_hit:
+                        self._record_latest_version(latest_version, context[0])
+                    if isinstance(latest_version, Version) and not cache_hit:
+                        save_update_cache(fetched_at=now, latest_version=latest_version, channel=context[0])
+                else:
+                    self._pending_channel_refresh = True
+            # Tk dispatch may wait for the main thread; never hold our lock here.
+            if publish:
+                self.update_callback(latest_version, current_version, context)
         finally:
             # Release guard even if request failed/raised or cache hit occurred
-            self._active_check = False
-
-        # Cache the result using JSON - only cache if we got a valid version
-        if isinstance(latest_version, Version):
-            save_update_cache(fetched_at=now, latest_version=latest_version)
-
-        self.update_callback(latest_version, current_version)
+            with self._check_lock:
+                self._active_check = False
+                self._checking_context = None
+                refresh = self._pending_channel_refresh
+                self._pending_channel_refresh = False
+        if refresh and not getattr(self.app_instance, "_closing", False):
+            return self.check_for_app_updates(current_version, force_check=True, quiet=True)
         return latest_version
 
     def _fetch_release_info(self, url: str):
@@ -152,14 +196,12 @@ class UpdateChecker:
                 exe_url, sha_pre = self._select_release_assets(latest_pre_release)
                 download_url = exe_url or download_url
                 sha_url = sha_pre
-                self.app_settings.update_setting("newest_version_available", str(latest_version))
-                self.app_settings.update_setting("ask_for_update", "True")
-        else:
-            self.app_settings.update_setting("newest_version_available", str(latest_version))
-            self.app_settings.update_setting("ask_for_update", "True")
         return latest_version, download_url, sha_url
 
-    def _get_latest_version_from_github(self, current_version: Version, force_check: bool = False, quiet: bool = False):
+    def _get_latest_version_from_github(
+        self, current_version: Version, force_check: bool = False, quiet: bool = False, context=None,
+    ):
+        context = context if context is not None else self._update_context()
         release_url = self.paths.GITHUB_LATEST_RELEASE
         try:
             release_info = self._fetch_release_info(release_url)
@@ -167,7 +209,11 @@ class UpdateChecker:
             download_url, sha_url = self._select_release_assets(release_info)
 
             # Apply channel policy (stable vs rc)
-            latest_version, download_url, sha_url = self._apply_channel_policy(latest_version, download_url, sha_url)
+            latest_version, download_url, sha_url = self._apply_channel_policy(
+                latest_version, download_url, sha_url, channel=context[0],
+            )
+            if not self.is_current_context(context):
+                return current_version
 
             # Validate required assets and possibly short-circuit
             short_circuit = self._validate_required_assets(
@@ -181,35 +227,37 @@ class UpdateChecker:
             if short_circuit is not None:
                 return short_circuit
 
-            # Update settings when a newer version exists
-            self._update_settings_if_newer(latest_version)
-
-            # Persist discovered asset URLs for potential direct install later
-            self.last_download_url = download_url
-            self.last_sha_url = sha_url
-            self.last_version_tag = str(latest_version)
+            with self._check_lock:
+                if not self.is_current_context(context):
+                    return current_version
+                self._record_latest_version(latest_version, context[0])
+                self.last_download_url = download_url
+                self.last_sha_url = sha_url
+                self.last_version_tag = str(latest_version)
+                self.last_update_context = context
 
             # If we're quiet or shouldn't prompt, just return the version
-            if quiet or not self._should_prompt_user(latest_version, current_version, force_check):
+            if quiet or not self._should_prompt_user(latest_version, current_version, force_check, context[0]):
                 return latest_version
 
             # Prompt and possibly kick off the update
-            self._handle_user_prompt(latest_version, download_url, sha_url)
+            self._handle_user_prompt(latest_version, download_url, sha_url, context)
             return latest_version
 
         except requests.exceptions.RequestException as e:
-            return self._handle_update_check_exception(e, current_version, force_check, quiet)
+            return self._handle_update_check_exception(e, current_version, force_check, quiet or not self.is_current_context(context))
         except (KeyError, TypeError, ValueError) as e:
-            return self._handle_invalid_release_metadata(e, current_version, force_check, quiet)
+            return self._handle_invalid_release_metadata(e, current_version, force_check, quiet or not self.is_current_context(context))
 
     def _apply_channel_policy(
         self,
         latest_version: Version,
         download_url: str | None,
         sha_url: str | None,
+        channel: str | None = None,
     ) -> tuple[Version, str | None, str | None]:
         """Apply update channel policy (stable/rc) and return possibly updated values."""
-        channel = self.app_settings.settings.get("update_channel", "stable")
+        channel = channel if channel is not None else self.app_settings.settings.get("update_channel", "stable")
         if channel == "rc":
             return self._handle_rc_releases(latest_version, download_url, sha_url)
         return latest_version, download_url, sha_url
@@ -278,68 +326,57 @@ class UpdateChecker:
             download_url (str): The URL to download the installer from.
             sha_url (str | None): Optional URL to the .sha256 file for checksum verification. If None, no verification is performed.
         """
-        # Concurrency guard: prevent multiple simultaneous downloads
-        if self._active_download:
-            logging.getLogger("updater").info("Download already in progress; ignoring duplicate request")
+        if self._active_download or not self._download_lock.acquire(blocking=False):
             return
         self._active_download = True
-        # Start download UI state
-        self.gui_callbacks.start_download_ui()
-
-        # setup_download_progress() publishes the first visible 0-byte status
-        # once the GET response exposes a total size.
-
-        # Create a temporary file for the installer
-        with tempfile.NamedTemporaryFile(suffix=".exe", delete=False) as temp_file:
-            installer_path = temp_file.name
-
+        installer_path = None
+        reserved = False
         try:
-            cancelled, total_size_in_bytes = self._download_with_progress(download_url, installer_path)
-        except requests.exceptions.HTTPError as e:
-            self.gui_callbacks.show_download_error(str(e))
-            self._safe_unlink(installer_path)
-            self._active_download = False
-            return
-        except Exception as e:
-            logging.getLogger("updater").exception("Unexpected error downloading installer: %s", e)
-            self._safe_unlink(installer_path)
-            self._active_download = False
-            raise
-
-        if cancelled:
-            self._safe_unlink(installer_path)
-            self._active_download = False
-            return
-
-        if total_size_in_bytes != 0:
-            current_value = self.gui_callbacks.get_progress_value()
-            if current_value != total_size_in_bytes:
-                logging.getLogger("updater").warning("Downloaded size mismatch: progress %s vs expected %s", current_value, total_size_in_bytes)
-
-        # Finish download UI state
-        self.gui_callbacks.finish_download_ui()
-
-        # Verify SHA256 if URL provided
-        if sha_url and not self._verify_sha256(installer_path, sha_url):
-            # Error already shown inside _verify_sha256
-            self._safe_unlink(installer_path)
-            self._active_download = False
-            return
-
-        # Close the application and run installer
-        try:
+            # None is retained for older non-GUI callback implementations.
+            reserved = self.gui_callbacks.start_download_ui() is not False
+            if not reserved or self.gui_callbacks.is_download_cancelled():
+                return
+            with tempfile.NamedTemporaryFile(suffix=".exe", delete=False) as temp_file:
+                installer_path = temp_file.name
+            cancelled, total_size = self._download_with_progress(download_url, installer_path)
+            if cancelled or self.gui_callbacks.is_download_cancelled():
+                return
+            if total_size and self.gui_callbacks.get_progress_value() != total_size:
+                logging.getLogger("updater").warning("Downloaded size mismatch")
+            if sha_url and not self._verify_sha256(installer_path, sha_url):
+                return
+            if self.gui_callbacks.is_download_cancelled():
+                return
             self.gui_callbacks.close_application()
             self._spawn_installer(installer_path)
+            installer_path = None  # The update batch now owns this file.
+        except requests.exceptions.HTTPError as exc:
+            self.gui_callbacks.show_download_error(str(exc))
+        except Exception:
+            logging.getLogger("updater").exception("Unexpected error downloading installer")
+            raise
         finally:
-            # Not strictly needed because app is closing, but good for tests / reuse
-            self._active_download = False
+            if installer_path is not None:
+                self._safe_unlink(installer_path)
+            try:
+                if reserved:
+                    self.gui_callbacks.finish_download_ui()
+            finally:
+                self._active_download = False
+                self._download_lock.release()
 
     # --- helper methods to reduce complexity ---
 
-    def _update_settings_if_newer(self, latest_version: Version) -> None:
-        if latest_version > self._stored_newest_version_or(Version()):
-            self.app_settings.update_setting("ask_for_update", "True")
-            self.app_settings.update_setting("newest_version_available", str(latest_version))
+    def _record_latest_version(self, latest_version: Version, channel: str) -> None:
+        """Publish the selected channel's version and legacy reminder mirror."""
+        self.app_settings.update_settings({
+            "ask_for_update": "False" if self._is_skipped(latest_version, channel) else "True",
+            "newest_version_available": str(latest_version),
+        })
+
+    def _is_skipped(self, version: Version, channel: str) -> bool:
+        """Match only the explicitly skipped version in this channel."""
+        return self.app_settings.settings.get("skipped_update_versions", {}).get(channel) == str(version)
 
     def _stored_newest_version_or(self, fallback: Version) -> Version:
         stored_value = self.app_settings.settings.get("newest_version_available", str(fallback))
@@ -350,36 +387,47 @@ class UpdateChecker:
             self.app_settings.update_setting("newest_version_available", "0.0.0")
             return fallback
 
-    def _should_prompt_user(self, latest_version: Version, current_version: Version, force_check: bool) -> bool:
-        should_prompt = latest_version > current_version and (self.app_settings.settings["ask_for_update"] == "True" or force_check)
+    def _should_prompt_user(self, latest_version: Version, current_version: Version, force_check: bool, channel=None) -> bool:
+        channel = channel if channel is not None else self._update_context()[0]
+        should_prompt = latest_version > current_version and (force_check or not self._is_skipped(latest_version, channel))
         if not should_prompt and force_check:
             self.gui_callbacks.show_up_to_date()
         return should_prompt
 
-    def _handle_user_prompt(self, latest_version: Version, download_url: str | None, sha_url: str | None) -> None:
-        update_choice = self.gui_callbacks.show_update_available(latest_version)
-        if update_choice is None:
-            return  # Cancel
-        if update_choice:
+    def _handle_user_prompt(self, latest_version: Version, download_url: str | None, sha_url: str | None, context=None) -> None:
+        context = context if context is not None else self._update_context()
+        if not self.is_current_context(context):
+            return
+        decision = self.gui_callbacks.show_update_available(latest_version, lambda: self.is_current_context(context))
+        with self._check_lock:
+            if not self.is_current_context(context) or decision.action == "cancel":
+                return
+            skipped = dict(self.app_settings.settings.get("skipped_update_versions", {}))
+            if decision.skip_version:
+                skipped[context[0]] = str(latest_version)
+            elif skipped.get(context[0]) == str(latest_version):
+                del skipped[context[0]]
+            self.app_settings.update_settings({
+                "skipped_update_versions": skipped,
+                "ask_for_update": "False" if skipped.get(context[0]) == str(latest_version) else "True",
+            })
+        if decision.action == "update_now":
             # Verify SHA based on global setting (applies to any channel)
             verify_sha = self.app_settings.settings.get("verify_sha", "True") == "True"
             if not download_url:
                 self.gui_callbacks.show_download_error("Installer asset not found in the selected release.")
                 return
-            # Keep cached for direct re-use (e.g. if user cancels once then installs later)
-            self.last_download_url = download_url
-            self.last_sha_url = sha_url
             # Run download in a background thread to avoid freezing Tk main loop
-            import threading
-
             threading.Thread(
-                target=lambda: self.download_and_run_installer(download_url, sha_url if verify_sha else None),
+                target=lambda: self.download_discovered_installer(download_url, sha_url if verify_sha else None, context),
                 daemon=True,
             ).start()
             return
-        # User clicked "No"
-        if self.gui_callbacks.show_update_reminder_choice():
-            self.app_settings.update_setting("ask_for_update", "False")
+
+    def download_discovered_installer(self, download_url: str, sha_url: str | None, context) -> None:
+        """Reject an install queued before the selected channel changed."""
+        if context is not None and self.is_current_context(context):
+            self.download_and_run_installer(download_url, sha_url)
 
     def _download_with_progress(self, url: str, dest_path: str) -> tuple[bool, int]:
         """Download a file streaming to dest_path with GUI progress. Returns (cancelled, total_size).

@@ -1,8 +1,11 @@
 import json
+from pathlib import Path
+import threading
 
 import pytest
 
 from src.config.settings import AppSettings, _is_valid_ratio
+from src.config import settings as settings_module
 from src.constants import VERSION_STR, LANGUAGE_OPTIONS
 
 
@@ -20,8 +23,9 @@ def test_defaults_loaded_when_file_missing(settings_file):
         "version",
         "search_str",
         "mark_only_relevant_lines",
-        "enable_filter",
-        "highlight_mode",
+        "marking_mode",
+        "highlight_color_default",
+        "highlight_color_names",
         "theme_mode",
         "language",
         "ocr_enabled",
@@ -45,6 +49,88 @@ def test_save_and_reload_persists_changes(settings_file):
     assert app2.settings["search_str"] == "NewTerm"
 
 
+@pytest.mark.parametrize("channel", ["stable", "rc"])
+@pytest.mark.parametrize("legacy_version", ["v99.0.0", "99.0.0-rc1", "99.0.0-beta2"])
+def test_legacy_update_suppression_migrates_once(settings_file, channel, legacy_version):
+    settings_file.write_text(json.dumps({
+        "ask_for_update": "False", "newest_version_available": legacy_version, "update_channel": channel,
+    }))
+    app = AppSettings(settings_file)
+    canonical = legacy_version.removeprefix("v").replace("-rc", "rc").replace("-beta", "rc")
+    assert app.settings["skipped_update_versions"] == {channel: canonical}
+    assert AppSettings(settings_file).settings["skipped_update_versions"] == {channel: canonical}
+    app.update_setting("skipped_update_versions", {})
+    assert AppSettings(settings_file).settings["skipped_update_versions"] == {}
+
+
+@pytest.mark.parametrize("version", [None, 123, "invalid", "0.0.0"])
+def test_invalid_legacy_suppression_does_not_disable_all_updates(settings_file, version):
+    settings_file.write_text(json.dumps({"ask_for_update": "False", "newest_version_available": version}))
+    assert AppSettings(settings_file).settings["skipped_update_versions"] == {}
+
+
+@pytest.mark.parametrize("value,expected", [
+    (None, {}), (False, {}), ([], {}), ("99.0.0", {}),
+    ({"stable": "v99.0.0", "rc": "99.1.0-rc1", "beta": "99.2.0"}, {"stable": "99.0.0", "rc": "99.1.0rc1"}),
+    ({"stable": "invalid", "rc": 123}, {}), ({"stable": "0.0.0"}, {}),
+])
+def test_explicit_skipped_versions_are_validated_without_legacy_fallback(settings_file, value, expected):
+    settings_file.write_text(json.dumps({
+        "ask_for_update": "False", "newest_version_available": "99.0.0", "skipped_update_versions": value,
+    }))
+    app = AppSettings(settings_file)
+    assert app.settings["skipped_update_versions"] == expected
+    snapshot = app.snapshot()
+    snapshot["skipped_update_versions"]["stable"] = "100.0.0"
+    assert app.settings["skipped_update_versions"] == expected
+    app.reset_to_defaults()
+    assert AppSettings(settings_file).settings["skipped_update_versions"] == {}
+
+
+@pytest.mark.parametrize("enabled", [0, 1])
+@pytest.mark.parametrize("legacy", ["ONLY_NAMES", "NAMES_DIFF_COLOR"])
+def test_legacy_marking_migration(settings_file, enabled, legacy):
+    settings_file.write_text(json.dumps({"enable_filter": enabled, "highlight_mode": legacy}))
+    app = AppSettings(settings_file)
+    expected = "all_matches" if not enabled else (
+        "named_matches" if legacy == "ONLY_NAMES" else "distinguish_names"
+    )
+    assert app.settings["marking_mode"] == expected
+    assert app.settings["highlight_color_names"] == ("#FFFFA6" if legacy == "ONLY_NAMES" else "#C4FAF8")
+    assert "enable_filter" not in app.settings
+    assert "highlight_mode" not in app.settings
+    assert AppSettings(settings_file).settings == app.settings
+
+
+def test_new_marking_values_take_precedence_and_normalize_colors(settings_file):
+    settings_file.write_text(json.dumps({
+        "enable_filter": 1, "highlight_mode": "ONLY_NAMES", "marking_mode": "distinguish_names",
+        "highlight_color_names": "#abcdef", "highlight_color_default": "#fedcba",
+    }))
+    app = AppSettings(settings_file)
+    assert app.settings["marking_mode"] == "distinguish_names"
+    assert app.settings["highlight_color_names"] == "#ABCDEF"
+    assert app.settings["highlight_color_default"] == "#FEDCBA"
+    app.validate_settings()
+    assert AppSettings(settings_file).settings == app.settings
+
+
+@pytest.mark.parametrize("color", [None, 123, "#123", "#1234567", "#GGGGGG", "red", "#abcdef\n"])
+def test_invalid_highlight_colors_fall_back(settings_file, color):
+    app = AppSettings(settings_file)
+    app.settings.update(highlight_color_default=color, highlight_color_names=color)
+    app.validate_settings()
+    assert app.settings["highlight_color_default"] == "#FFFFA6"
+    assert app.settings["highlight_color_names"] == "#C4FAF8"
+
+
+def test_legacy_only_names_preserves_explicit_new_name_color(settings_file):
+    settings_file.write_text(json.dumps({
+        "enable_filter": 1, "highlight_mode": "ONLY_NAMES", "highlight_color_names": "#abcdef",
+    }))
+    assert AppSettings(settings_file).settings["highlight_color_names"] == "#ABCDEF"
+
+
 def test_theme_mode_persists(settings_file):
     app = AppSettings(settings_file)
     app.update_setting("theme_mode", "dark")
@@ -54,9 +140,9 @@ def test_theme_mode_persists(settings_file):
 
 def test_update_setting_writes_file(settings_file):
     app = AppSettings(settings_file)
-    app.update_setting("enable_filter", 1)
+    app.update_setting("marking_mode", "named_matches")
     data = json.loads(settings_file.read_text())
-    assert data["enable_filter"] == 1
+    assert data["marking_mode"] == "named_matches"
 
 
 def test_reset_to_defaults(settings_file):
@@ -99,14 +185,36 @@ def test_theme_force_env_invalid_fallback_light(settings_file, monkeypatch):
     assert app.settings["theme_mode"] == "light"
 
 
+@pytest.mark.parametrize("color,expected", [
+    ("#abcdef", "#ABCDEF"), ("#000000", "#000000"), ("#", "#FFA500"),
+    ("#123", "#FFA500"), ("#1234567", "#FFA500"), ("#gg0000", "#FFA500"),
+    ("red", "#FFA500"), (None, "#FFA500"), (["#123456"], "#FFA500"),
+])
+def test_watermark_colors_are_complete_rgb_and_normalized(settings_file, color, expected):
+    app = AppSettings(settings_file)
+    app.update_setting("watermark_color", color)
+    assert AppSettings(settings_file).snapshot()["watermark_color"] == expected
+
+
+@pytest.mark.parametrize("size,expected", [
+    (1, 1), (100, 100), ("24", 24), (0, 16), (101, 16), (-1, 16),
+    ("1.5", 16), ("", 16), ("²", 16), (None, 16), (True, 16),
+])
+def test_watermark_size_bounds_persist_consistently(settings_file, size, expected):
+    app = AppSettings(settings_file)
+    app.update_setting("watermark_size", size)
+    assert AppSettings(settings_file).snapshot()["watermark_size"] == expected
+
+
 def test_validator_coercions(settings_file):
     app = AppSettings(settings_file)
     # Directly tamper and revalidate
     app.settings.update(
         {
             "mark_only_relevant_lines": 5,
-            "enable_filter": 5,
-            "highlight_mode": "BAD",
+            "marking_mode": "BAD",
+            "highlight_color_default": "#123",
+            "highlight_color_names": "#gggggg",
             "language": "zz",
             "ask_for_update": "MAYBE",
             "update_available": "MAYBE",
@@ -132,8 +240,9 @@ def test_validator_coercions(settings_file):
     app.validate_settings()
     s = app.settings
     assert s["mark_only_relevant_lines"] in (0, 1)
-    assert s["enable_filter"] in (0, 1)
-    assert s["highlight_mode"] == "NAMES_DIFF_COLOR"
+    assert s["marking_mode"] == "all_matches"
+    assert s["highlight_color_default"] == "#FFFFA6"
+    assert s["highlight_color_names"] == "#C4FAF8"
     assert s["language"] == "en"
     assert s["ask_for_update"] == "True"
     assert s["update_available"] == "False"
@@ -252,3 +361,245 @@ def test_non_string_newest_version_resets(settings_file):
     app.settings["newest_version_available"] = 123
     app.validate_settings()
     assert app.settings["newest_version_available"] == "0.0.0"
+
+
+@pytest.mark.parametrize("original", [
+    b"", b'{"search_str":', b'{"names":"\xff"}',
+    b"null", b"[]", b'["names"]', b'"text"', b"123", b"1.5", b"true", b"false",
+])
+def test_corrupt_settings_recover_exact_original_bytes(settings_file, original):
+    settings_file.write_bytes(original)
+    app = AppSettings(settings_file)
+    assert app.snapshot() == app.default_settings
+    notice, = app.take_notices()
+    assert notice.kind == "recovered"
+    assert notice.backup_path.read_bytes() == original
+    assert json.loads(settings_file.read_text(encoding="utf-8")) == app.default_settings
+    assert app.take_notices() == []
+    assert AppSettings(settings_file).take_notices() == []
+
+
+def test_repeated_corruption_preserves_distinct_backups(settings_file):
+    originals = [b"first broken file", b"second broken file"]
+    backups = []
+    for original in originals:
+        settings_file.write_bytes(original)
+        backups.append(AppSettings(settings_file).take_notices()[0].backup_path)
+    assert backups[0] != backups[1]
+    assert [path.read_bytes() for path in backups] == originals
+
+
+def fail_file_operation(monkeypatch, operation):
+    """Inject faults while still closing the real temporary file on Windows."""
+    def fail(*args, **kwargs):
+        raise PermissionError(f"simulated {operation} failure")
+
+    if operation == "create":
+        monkeypatch.setattr(settings_module.tempfile, "NamedTemporaryFile", fail)
+    elif operation in ("fsync", "replace"):
+        monkeypatch.setattr(settings_module.os, operation, fail)
+    else:
+        factory = settings_module.tempfile.NamedTemporaryFile
+
+        class FaultyFile:
+            def __init__(self, *args, **kwargs):
+                self.stream = factory(*args, **kwargs)
+
+            def __getattr__(self, name):
+                return getattr(self.stream, name)
+
+            def __enter__(self):
+                if operation in ("write", "flush"):
+                    setattr(self, operation, fail)
+                return self
+
+            def __exit__(self, *args):
+                self.stream.__exit__(*args)
+                if operation == "close":
+                    fail()
+
+        monkeypatch.setattr(settings_module.tempfile, "NamedTemporaryFile", FaultyFile)
+
+
+@pytest.mark.parametrize("operation", ["create", "write", "flush", "fsync", "close", "replace"])
+def test_atomic_write_failure_preserves_old_file_and_cleans_temporary(settings_file, monkeypatch, operation):
+    app = AppSettings(settings_file)
+    original = settings_file.read_bytes()
+    with monkeypatch.context() as patch:
+        fail_file_operation(patch, operation)
+        assert app.update_settings({"search_str": "Änderung", "names": "Müller"}) is False
+        assert app.snapshot()["search_str"] == "Änderung"
+        assert settings_file.read_bytes() == original
+        assert sorted(settings_file.parent.iterdir()) == [settings_file]
+        assert [notice.kind for notice in app.take_notices()] == ["write_failed"]
+        app.save_settings()
+        assert app.take_notices() == []
+    assert app.save_settings() is True
+    assert AppSettings(settings_file).snapshot()["names"] == "Müller"
+    # After a successful save, a new failure is explained again.
+    fail_file_operation(monkeypatch, "replace")
+    app.save_settings()
+    assert [notice.kind for notice in app.take_notices()] == ["write_failed"]
+
+
+@pytest.mark.parametrize("operation", ["create", "write", "flush", "fsync", "close"])
+def test_backup_failure_protects_original_for_entire_session(settings_file, monkeypatch, operation):
+    original = b'{"damaged":\xff'
+    settings_file.write_bytes(original)
+    with monkeypatch.context() as patch:
+        fail_file_operation(patch, operation)
+        app = AppSettings(settings_file)
+    assert app.snapshot() == app.default_settings
+    assert [notice.kind for notice in app.take_notices()] == ["backup_failed"]
+    assert app.update_setting("names", "Session only") is False
+    assert app.snapshot()["names"] == "Session only"
+    app.validate_settings()
+    assert app.reset_to_defaults() is False
+    assert app.save_settings() is False
+    assert settings_file.read_bytes() == original
+    assert list(settings_file.parent.iterdir()) == [settings_file]
+
+
+def test_access_failure_is_not_corruption_and_blocks_overwrite(settings_file, monkeypatch):
+    original = b'{"names": "Unread"}'
+    settings_file.write_bytes(original)
+    read = Path.read_bytes
+
+    def unreadable(path):
+        if path == settings_file:
+            raise PermissionError("access denied")
+        return read(path)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "read_bytes", unreadable)
+        app = AppSettings(settings_file)
+    assert app.snapshot() == app.default_settings
+    assert [notice.kind for notice in app.take_notices()] == ["read_failed"]
+    assert app.update_setting("names", "Session") is False
+    assert settings_file.read_bytes() == original
+    assert list(settings_file.parent.iterdir()) == [settings_file]
+
+
+def test_directory_creation_failure_does_not_prevent_start(settings_file, monkeypatch):
+    def denied(*args, **kwargs):
+        raise PermissionError("mkdir denied")
+
+    monkeypatch.setattr(Path, "mkdir", denied)
+    app = AppSettings(settings_file)
+    assert app.snapshot() == app.default_settings
+    assert [notice.kind for notice in app.take_notices()] == ["write_failed"]
+    assert not settings_file.exists()
+
+
+def test_successful_retry_removes_an_unshown_write_warning(settings_file, monkeypatch):
+    app = AppSettings(settings_file)
+    with monkeypatch.context() as patch:
+        fail_file_operation(patch, "replace")
+        app.update_setting("names", "Retry")
+    assert app.save_settings()
+    assert app.take_notices() == []
+
+
+def test_ephemeral_settings_perform_no_filesystem_operations(settings_file, monkeypatch):
+    settings_file.write_bytes(b"\xff damaged")
+    monkeypatch.setenv("HSPH_USE_DEFAULT_SETTINGS", "1")
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("Ephemeral settings touched the filesystem")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "read_bytes", forbidden)
+        patch.setattr(Path, "mkdir", forbidden)
+        patch.setattr(settings_module.tempfile, "NamedTemporaryFile", forbidden)
+        patch.setattr(settings_module.os, "replace", forbidden)
+        app = AppSettings(settings_file)
+        app.update_settings({"names": "Session", "theme_mode": "dark"})
+        app.validate_settings()
+        app.reset_to_defaults()
+        assert app.take_notices() == []
+    assert settings_file.read_bytes() == b"\xff damaged"
+
+
+def test_batch_normalizes_all_values_and_saves_once(settings_file, monkeypatch):
+    app = AppSettings(settings_file)
+    replacements = []
+    replace = settings_module.os.replace
+
+    def record(source, target):
+        replacements.append(json.loads(Path(source).read_text(encoding="utf-8")))
+        replace(source, target)
+
+    monkeypatch.setattr(settings_module.os, "replace", record)
+    assert app.update_settings({"names": "Älice", "highlight_color_names": "#abcdef", "ocr_dpi": 1})
+    assert len(replacements) == 1
+    assert replacements[0]["names"] == "Älice"
+    assert replacements[0]["highlight_color_names"] == "#ABCDEF"
+    assert replacements[0]["ocr_dpi"] == 300
+    independent = app.snapshot()
+    independent["names"] = "Changed copy"
+    assert app.snapshot()["names"] == "Älice"
+
+
+def test_concurrent_updates_and_snapshots_are_serialized(settings_file, monkeypatch):
+    app = AppSettings(settings_file)
+    entered, release, second_started, reader_started = (threading.Event() for _ in range(4))
+    replace = settings_module.os.replace
+    results, errors = [], []
+
+    def controlled_replace(source, target):
+        if threading.current_thread().name == "first":
+            entered.set()
+            assert release.wait(5)
+        replace(source, target)
+
+    def first():
+        app.update_settings({"names": "Together", "search_str": "Together"})
+
+    def second():
+        second_started.set()
+        app.update_setting("verify_sha", "False")
+
+    def reader():
+        reader_started.set()
+        results.append(app.snapshot())
+
+    def guarded(callback):
+        try:
+            callback()
+        except BaseException as exc:
+            errors.append(exc)
+
+    monkeypatch.setattr(settings_module.os, "replace", controlled_replace)
+    workers = [threading.Thread(target=guarded, args=(callback,), name=name)
+               for name, callback in (("first", first), ("second", second), ("reader", reader))]
+    try:
+        workers[0].start()
+        assert entered.wait(5)
+        for worker in workers[1:]:
+            worker.start()
+        assert second_started.wait(5) and reader_started.wait(5)
+        assert results == []
+    finally:
+        release.set()
+        for worker in workers:
+            if worker.ident is not None:
+                worker.join(5)
+                assert not worker.is_alive()
+    assert errors == []
+    assert results[0]["names"] == results[0]["search_str"] == "Together"
+    persisted = json.loads(settings_file.read_text(encoding="utf-8"))
+    assert persisted == app.snapshot()
+    assert persisted["verify_sha"] == "False"
+    assert persisted["names"] == "Together"
+
+
+@pytest.mark.parametrize("value", ["²", "9" * 5000, [], {}, None])
+def test_malformed_individual_values_do_not_prevent_start(settings_file, value):
+    settings_file.write_text(json.dumps({
+        "watermark_size": value, "ocr_dpi": value, "ocr_settings_version": value,
+        "watermark_x_ratio": value, "language": value, "marking_mode": value,
+    }), encoding="utf-8")
+    app = AppSettings(settings_file)
+    assert app.snapshot()["ocr_dpi"] == 300
+    assert app.snapshot()["watermark_size"] == 16
+    assert app.take_notices() == []

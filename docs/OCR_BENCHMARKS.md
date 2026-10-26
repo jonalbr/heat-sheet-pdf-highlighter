@@ -4,7 +4,6 @@ Benchmark date: 2026-05-20
 
 ## Test Input
 
-- File: `C:\Users\albre\Downloads\3.Pfingstmeeting AMTV 2026 ME Teil1.pdf`
 - Pages: 37
 - Input size: 7.28 MB
 - OCR language: `deu`

@@ -3,16 +3,19 @@ Main application window
 """
 
 from contextlib import suppress
-from dataclasses import dataclass
-import re
+from collections.abc import Callable
+from dataclasses import dataclass, field, replace
 import os
 import logging
 import queue
+import subprocess
+import sys
 import threading
 import tempfile
 import time
 from pathlib import Path
-from tkinter import Button, IntVar, Menu, StringVar, TclError, Tk, filedialog, ttk
+from tkinter.font import Font
+from tkinter import Button, Canvas, IntVar, Menu, StringVar, TclError, Tk, filedialog, ttk
 
 from PIL import Image, ImageTk
 from pymupdf import Document
@@ -22,7 +25,6 @@ from ..config.settings import AppSettings
 from ..constants import LANGUAGE_OPTIONS, VERSION_STR
 from ..core.ocr import (
     OcrCancelled,
-    OcrSaveResult,
     create_searchable_ocr_pdf_in_process,
     document_needs_ocr,
     ensure_bundled_tessdata,
@@ -30,19 +32,20 @@ from ..core.ocr import (
     save_compact_pdf,
     save_pdf_path_in_process,
 )
-from ..core.pdf_processor import highlight_matching_data
+from ..core.pdf_processor import highlight_matching_data, parse_names
 from ..core.watermark import watermark_pdf_page
-from ..models import HighlightMode
+from ..models import MarkingMode
 from ..utils.localization import setup_translation
 from ..utils.theme import ThemeColors, get_effective_theme, get_theme_colors, set_windows_title_bar_theme
 from ..utils.updater import UpdateChecker
 from ..version import Version
 from .dev_tools import DevToolsWindow
 from .dialogs import FilterDialog, UpdateDialogs, WatermarkDialog
-from .message_dialog import ask_choice_ok_cancel, show_error, show_info
+from .marking_preview import MarkingPreview
+from .message_dialog import ask_choice_ok_cancel, ask_ok_cancel, show_error, show_info
 from .preview import PreviewWindow
 from .ui_strings import _xgettext_dummy, build_strings, get_ui_string, plural_strings
-from .widgets import Tooltip
+from .widgets import Tooltip, scrollbar_command
 
 THEME_ICON_SIZE = (16, 16)
 UNIFORM_ACTION_BUTTON_WIDTH = 14
@@ -60,9 +63,47 @@ OCR_LANGUAGE_CHOICES = (
 class ProcessingOptions:
     search_str: str
     only_relevant: bool
-    filter_enabled: bool
-    names: list[str]
-    highlight_mode: HighlightMode
+    names: tuple[str, ...]
+    marking_mode: MarkingMode
+    highlight_color_default: str
+    highlight_color_names: str
+    watermark: tuple[tuple[str, str | int | float], ...] = ()
+    ocr_enabled: bool = True
+    ocr_language: str = "deu"
+    ocr_dpi: int = 300
+    ocr_reduce_large_outputs: bool = True
+    needs_ocr: bool | None = None
+
+
+@dataclass
+class GuiRequest:
+    """One cancellable worker request answered only by the Tk thread."""
+
+    callback: Callable[[], object]
+    ready: threading.Event = field(default_factory=threading.Event)
+    value: object = None
+    error: Exception | None = None
+
+
+@dataclass
+class ProcessingJob:
+    """Resources and immutable input belonging to one PDF operation."""
+
+    identifier: int
+    input_file: str
+    options: ProcessingOptions
+    cancel: threading.Event = field(default_factory=threading.Event)
+    worker: threading.Thread | None = None
+    state: str = "preparing"
+    result: tuple | None = None
+    dialog_open: bool = False
+    started: bool = False
+    output_file: str = ""
+    target_signature: tuple | None = None
+    document: Document | None = None
+    ocr_temp_file: str | None = None
+    counts: tuple[int, int, int, int] = (0, 0, 0, 0)
+    committed: bool = False
 
 
 class PDFHighlighterApp:
@@ -98,14 +139,34 @@ class PDFHighlighterApp:
         self.update_dialogs = UpdateDialogs(self)
         self.update_checker = UpdateChecker(self)
 
-        # Initialize the UI components
-        self.setup_ui()
-
-        # Processing and download state
+        self._job = None
+        self._pending_save = None
+        self._result_job = None
+        self._next_job_id = 0
+        self._ui_messages = queue.Queue()
+        self._closing = False
+        self._download_cancel = threading.Event()
+        self._download_id = 0
         self.processing_active = False
         self.download_active = False
+        self._status = ("status_waiting", ())
+
+        # Cached detection belongs to the currently selected source.
         self.ocr_detection_path: str | None = None
         self.ocr_detection_result: bool | None = None
+
+        # Initialize the UI components
+        self._syncing_settings = True
+        self.setup_ui()
+        self._syncing_settings = False
+
+        self.marking_preview = MarkingPreview(self.root)
+        self._preview_prefetch_timer = None
+        self.root.after_idle(self.marking_preview.warm)
+        self.root.after_idle(self._prefetch_preview)
+        self.search_phrase_var.trace_add("write", self._schedule_preview_prefetch)
+        self.root.after(30, self._poll_work)
+        self.root.after_idle(self._show_settings_notices)
 
         # Check for updates AFTER UI is set up (skip when in screenshot mode to prevent race with root.destroy)
         if os.getenv("HSPH_SCREENSHOT_MODE") not in ("1", "true", "True"):
@@ -148,18 +209,17 @@ class PDFHighlighterApp:
         Sets up the user interface for the PDFHighlighterApp.
         """
         self.root.title(get_ui_string(self.strings, "title"))
-        self.root.geometry("600x350")  # Adjusted size for a better layout
-        self.root.minsize(width=600, height=350)
-        self.root.resizable(False, False)
+        width = min(760, max(1, self.root.winfo_screenwidth() - 40))
+        height = min(650, max(1, self.root.winfo_screenheight() - 80))
+        self.root.geometry(f"{width}x{height}")
+        self.root.resizable(True, True)
         self.root.protocol("WM_DELETE_WINDOW", self.close)
 
-        # Improved styling
+        # Keep named font sizes stable across theme/language changes.
+        self.ui_font = Font(root=self.root, family="Arial", size=10)
+        self.heading_font = Font(root=self.root, family="Arial", size=16, weight="bold")
         self.style = ttk.Style()
-        self.style.configure("TButton", font=("Arial", 10), borderwidth="4")  # Button styling
-        self.style.configure("TMenubutton", font=("Arial", 10), borderwidth="4")  # Theme selector styling
-        self.style.configure("TEntry", font=("Arial", 10), borderwidth="2")  # Entry widget styling
-        self.style.configure("TCheckbutton", font=("Arial", 10))  # Checkbutton styling
-        self.style.configure("Horizontal.TProgressbar", thickness=20)  # Progressbar styling
+        self.style.configure("Horizontal.TProgressbar", thickness=20)
         self._apply_theme()
         self.theme_icon_images = self._load_theme_icon_images()
 
@@ -172,7 +232,7 @@ class PDFHighlighterApp:
 
         # Load and display the logo
         logo_image = Image.open(self.paths.logo_path)
-        title_font = ("Arial", 16, "bold")
+        title_font = self.heading_font
         title_height = 50  # Set the desired height of the title
         logo_image = logo_image.resize((title_height, title_height))
         logo_photo = ImageTk.PhotoImage(logo_image)
@@ -203,7 +263,10 @@ class PDFHighlighterApp:
             style="Title.TLabel",
             anchor="w",
         )
-        self.title.grid(row=0, column=1, sticky="W", padx=(14, 10), pady=10)
+        self.title.grid(row=0, column=1, sticky="EW", padx=(14, 10), pady=10)
+
+        self.header_frame.bind("<Configure>", lambda event: self.title.configure(
+            wraplength=max(80, event.width - self.header_controls_frame.winfo_reqwidth() - 110)))
 
         # Theme selector (system/light/dark)
         self.theme_mode_var = StringVar()
@@ -245,105 +308,152 @@ class PDFHighlighterApp:
         Tooltip(self.theme_button, text=get_ui_string(self.strings, "theme_menu_tooltip"))
 
         # Language selection
-        lang_var = StringVar()
-        lang_var.set(self.app_settings.settings["language"])
-        lang_var.trace_add("write", lambda *args: self.app_settings.update_setting("language", lang_var.get()))
+        self.language_var = StringVar()
+        self.language_var.set(self.app_settings.settings["language"])
+        self.language_var.trace_add("write", lambda *args: self._persist_setting("language", self.language_var.get()))
 
         self.language_menu = ttk.OptionMenu(
             self.header_controls_frame,
-            lang_var,
+            self.language_var,
             self.app_settings.settings["language"],
             *LANGUAGE_OPTIONS,
-            command=lambda _: self.on_language_change(lang_var.get()),
+            command=lambda _: self.on_language_change(self.language_var.get()),
         )
         self.language_menu.config(width=4)
         self.language_menu.grid(row=0, column=1, sticky="E")
 
+        # Scroll only the main content, keeping header and version information visible.
+        body = ttk.Frame(self.root)
+        body.grid(row=1, column=0, columnspan=3, sticky="nsew")
+        body.columnconfigure(0, weight=1)
+        body.rowconfigure(0, weight=1)
+        self.content_canvas = Canvas(body, width=1, height=1, highlightthickness=0, borderwidth=0)
+        self.content_canvas.grid(row=0, column=0, sticky="nsew")
+        self.content_scrollbar = ttk.Scrollbar(body, orient="vertical", command=scrollbar_command(self.content_canvas.yview))
+        self.content_scrollbar.grid(row=0, column=1, sticky="ns")
+        self.content_canvas.configure(yscrollcommand=self.content_scrollbar.set)
+        self.content = ttk.Frame(self.content_canvas)
+        self._content_item = self.content_canvas.create_window(0, 0, window=self.content, anchor="nw")
+        self.content.columnconfigure(1, weight=1)
+        self.content_canvas.bind("<Configure>", self._resize_content)
+        self.content.bind("<Configure>", self._content_changed)
+        # Toplevel bindings apply only to this window; dialogs retain their own scrolling.
+        self.root.bind("<MouseWheel>", self._scroll_content, add="+")
+        self.root.bind("<FocusIn>", self._reveal_control, add="+")
+
         # PDF file selection
-        self.label_pdf_file = ttk.Label(self.root, text=get_ui_string(self.strings, "pdf_file"))
+        self.label_pdf_file = ttk.Label(self.content, text=get_ui_string(self.strings, "pdf_file"))
         self.label_pdf_file.grid(row=1, column=0, sticky="E", padx=(10, 4), pady=2)
         self.pdf_file_var = StringVar()
 
-        self.entry_file = ttk.Entry(self.root, textvariable=self.pdf_file_var, state="readonly")
+        self.entry_file = ttk.Entry(self.content, textvariable=self.pdf_file_var, state="readonly")
         self.entry_file.grid(row=1, column=1, sticky="WE", padx=(2, 0))
 
         self.browse_button = ttk.Button(
-            self.root,
+            self.content,
             text=get_ui_string(self.strings, "btn_browse"),
             command=self.browse_file,
-            width=UNIFORM_ACTION_BUTTON_WIDTH,
+            width=-UNIFORM_ACTION_BUTTON_WIDTH,
         )
         self.browse_button.grid(row=1, column=2, sticky="E", padx=(3, 10))
 
         # Search string
-        self.label_search_str = ttk.Label(self.root, text=get_ui_string(self.strings, "search_term"))
+        self.label_search_str = ttk.Label(self.content, text=get_ui_string(self.strings, "search_term"))
         self.label_search_str.grid(row=2, column=0, sticky="E", padx=(10, 4), pady=2)
 
         self.search_phrase_var = StringVar()
         self.search_phrase_var.set(self.app_settings.settings["search_str"])
 
-        self.entry_search_str = ttk.Entry(self.root, textvariable=self.search_phrase_var)
+        self.entry_search_str = ttk.Entry(self.content, textvariable=self.search_phrase_var)
         self.entry_search_str.grid(row=2, column=1, sticky="WE", padx=(2, 0))
 
         # Options for highlighting
         self.relevant_lines_var = IntVar()
         self.relevant_lines_var.set(self.app_settings.settings.get("mark_only_relevant_lines", 1))
         self.relevant_lines_var.trace_add(
-            "write", lambda *args: self.app_settings.update_setting("mark_only_relevant_lines", self.relevant_lines_var.get())
+            "write", lambda *args: self._persist_setting("mark_only_relevant_lines", self.relevant_lines_var.get())
         )
 
         self.checkbox_relevant_lines = ttk.Checkbutton(
-            self.root, text=get_ui_string(self.strings, "mark_only_relevant"), variable=self.relevant_lines_var
+            self.content, text=get_ui_string(self.strings, "mark_only_relevant"), variable=self.relevant_lines_var
         )
-        self.checkbox_relevant_lines.grid(row=3, column=0, columnspan=2, sticky="W", padx=10, pady=2)
+        self.checkbox_relevant_lines.grid(row=3, column=0, columnspan=3, sticky="W", padx=10, pady=6)
 
         # Filter variables
         self.names_var = StringVar()
         self.names_var.set(self.app_settings.settings.get("names", ""))
-        self.names_var.trace_add("write", lambda *args: self.app_settings.update_setting("names", self.names_var.get()))
+        self.names_var.trace_add("write", lambda *args: self._persist_setting("names", self.names_var.get()))
 
-        self.highlight_mode_var = StringVar()
-        self.highlight_mode_var.set(self.app_settings.settings.get("highlight_mode", HighlightMode.NAMES_DIFF_COLOR.name))
-        self.highlight_mode_var.trace_add("write", lambda *args: self.app_settings.update_setting("highlight_mode", self.highlight_mode_var.get()))
-
-        self.enable_filter_var = IntVar()
-        self.enable_filter_var.set(self.app_settings.settings.get("enable_filter", 0))
-        self.enable_filter_var.trace_add("write", lambda *args: self.app_settings.update_setting("enable_filter", self.enable_filter_var.get()))
+        self.marking_mode_var = StringVar(value=self.app_settings.settings["marking_mode"])
+        self.marking_mode_var.trace_add(
+            "write", lambda *args: self._persist_setting("marking_mode", self.marking_mode_var.get())
+        )
+        self.highlight_color_default_var = StringVar(value=self.app_settings.settings["highlight_color_default"])
+        self.highlight_color_names_var = StringVar(value=self.app_settings.settings["highlight_color_names"])
+        for key in ("highlight_color_default", "highlight_color_names"):
+            variable = getattr(self, f"{key}_var")
+            variable.trace_add("write", lambda *args, key=key, var=variable: self._persist_setting(key, var.get()))
 
         # Filter and watermark buttons
+        self.options_actions = ttk.Frame(self.content)
+        self.options_actions.grid(row=4, column=0, columnspan=3, sticky="ew", padx=10, pady=2)
+        self.options_actions.columnconfigure(0, weight=1)
         self.button_filter = ttk.Button(
-            self.root,
+            self.options_actions,
             text=get_ui_string(self.strings, "btn_filter"),
             command=self.open_filter_window,
-            width=UNIFORM_ACTION_BUTTON_WIDTH,
+            width=-UNIFORM_ACTION_BUTTON_WIDTH,
         )
-        self.button_filter.grid(row=3, column=1, sticky="E", padx=(2, 1), pady=2)
+        self.button_filter.grid(row=0, column=0, sticky="E", padx=(0, 3), pady=2)
 
         self.button_watermark = ttk.Button(
-            self.root,
+            self.options_actions,
             text=get_ui_string(self.strings, "btn_watermark"),
             command=self.open_watermark_window,
-            width=UNIFORM_ACTION_BUTTON_WIDTH,
+            width=-UNIFORM_ACTION_BUTTON_WIDTH,
         )
-        self.button_watermark.grid(row=3, column=2, sticky="E", padx=(3, 10), pady=2)
+        self.button_watermark.grid(row=0, column=1, sticky="E", pady=2)
+
+        self.options_label = ttk.Label(self.content, wraplength=500, justify="left")
+        self.options_label.grid(row=5, column=0, columnspan=3, sticky="ew", padx=10, pady=(8, 0))
 
         # Progress bar
-        self.progress_bar = ttk.Progressbar(self.root, orient="horizontal", length=400, mode="determinate")
-        self.progress_bar.grid(row=4, column=0, columnspan=3, padx=10, pady=20, sticky="WE")
+        self.progress_bar = ttk.Progressbar(self.content, orient="horizontal", length=400, mode="determinate")
+        self.progress_bar.grid(row=6, column=0, columnspan=3, padx=10, pady=12, sticky="WE")
 
         # Status label
         self.status_var = StringVar()
         self.status_var.set(get_ui_string(self.strings, "status_waiting"))
-        self.status_label = ttk.Label(self.root, textvariable=self.status_var)
-        self.status_label.grid(row=5, column=0, columnspan=3, padx=10, pady=2)
+        self.status_label = ttk.Label(self.content, textvariable=self.status_var, wraplength=500, justify="left")
+        self.status_label.grid(row=7, column=0, columnspan=3, padx=10, pady=2, sticky="EW")
 
         # Start/Abort button
-        self.start_abort_button = ttk.Button(self.root, text=get_ui_string(self.strings, "btn_start"), command=self.start_processing)
-        self.start_abort_button.grid(row=6, column=1, pady=10)
+        self.start_abort_button = ttk.Button(self.content, text=get_ui_string(self.strings, "btn_start"), command=self.start_processing)
+        self.start_abort_button.grid(row=8, column=1, pady=10)
+
+        # Persistent completion details; the path wraps with the available width.
+        self.result_frame = ttk.LabelFrame(self.content, padding=10)
+        self.result_frame.grid(row=9, column=0, columnspan=3, padx=10, pady=6, sticky="NSEW")
+        self.result_frame.columnconfigure(0, weight=1)
+        self.result_label = ttk.Label(self.result_frame, justify="left", wraplength=650)
+        self.result_label.grid(row=0, column=0, sticky="EW")
+        self.result_label.bind("<Configure>", lambda event: self.result_label.configure(wraplength=max(100, event.width)))
+        self.result_actions = ttk.Frame(self.result_frame)
+        self.result_actions.grid(row=1, column=0, sticky="EW", pady=(8, 0))
+        self.result_actions.bind("<Configure>", lambda _event: self._layout_result_actions())
+        self.result_buttons = {}
+        for column, (key, command) in enumerate((
+            ("result_open_pdf", self.open_result_pdf), ("result_open_folder", self.open_result_folder),
+            ("result_retry", self.retry_save), ("result_choose", lambda: self.retry_save(choose_target=True)),
+            ("result_discard", self.discard_pending_save),
+        )):
+            button = ttk.Button(self.result_actions, command=command)
+            button.grid(row=0, column=column, padx=(0, 6))
+            self.result_buttons[key] = button
 
         # Version frame
         self.version_frame = ttk.Frame(self.root)
-        self.version_frame.grid(row=7, column=0, columnspan=3, padx=10, pady=2, sticky="WE")
+        self.version_frame.grid(row=2, column=0, columnspan=3, padx=10, pady=2, sticky="WE")
 
         # Initialize version color
         self.version_color = "#808080"
@@ -390,6 +500,7 @@ class PDFHighlighterApp:
                     verify_sha = self.app_settings.settings.get("verify_sha", "True") == "True"
                     dl = self.update_checker.last_download_url  # type: ignore[assignment]
                     sha = self.update_checker.last_sha_url if verify_sha else None
+                    context = self.update_checker.last_update_context
                     if not dl:
                         # Fallback to forced check if somehow missing
                         import threading as _th
@@ -402,7 +513,7 @@ class PDFHighlighterApp:
                     import threading
 
                     threading.Thread(
-                        target=lambda: self.update_checker.download_and_run_installer(dl, sha),
+                        target=lambda: self.update_checker.download_discovered_installer(dl, sha, context),
                         daemon=True,
                     ).start()
                 else:
@@ -420,19 +531,176 @@ class PDFHighlighterApp:
 
         self.update_label.bind("<Button-1>", _on_update_label_click)
 
-        # Make version frame sticky to the bottom
-        self.root.grid_rowconfigure(7, weight=1)
-
-        # Set up the grid layout
-        self.root.grid_columnconfigure(0, minsize=178)  # Set a fixed minimum width for column 0
-        self.root.grid_columnconfigure(1, weight=1)  # Allow column 1 to expand and fill space
-        self.root.grid_columnconfigure(2, weight=0)  # Header controls and action buttons
+        self.root.grid_rowconfigure(1, weight=1)
+        self.root.grid_columnconfigure(0, weight=1)
 
         self._apply_theme()
         self.update_all_widget_texts()
         self._poll_system_theme()
         # Set the initial state of the UI based on the settings
-        self.on_language_change(self.app_settings.settings["language"])
+        self.sync_settings_to_ui()
+        self._update_layout_metrics()
+        self._fit_initial_height(width)
+
+    def _resize_content(self, event):
+        """Allocate content by viewport width rather than by long label requests."""
+        self._layout_content_width(event.width)
+
+    def _layout_content_width(self, width):
+        """Wrap content at the allocated width, including before the first mapping."""
+        self.content_canvas.itemconfigure(self._content_item, width=width)
+        for label, margin in ((self.status_label, 24), (self.options_label, 24), (self.result_label, 48)):
+            label.configure(wraplength=max(80, width - margin))
+        self._layout_result_actions()
+
+    def _fit_initial_height(self, width):
+        """Fit startup content once; later changes preserve the user's window size."""
+        width = max(width, self.root.minsize()[0])
+        self.title.configure(wraplength=max(80, width - self.header_controls_frame.winfo_reqwidth() - 110))
+        self._layout_content_width(max(1, width - self.content_scrollbar.winfo_reqwidth()))
+        self.root.update_idletasks()
+        self._layout_result_actions()
+        self.root.update_idletasks()
+        height = (
+            self.header_frame.winfo_reqheight() + self.content.winfo_reqheight()
+            + self.version_frame.winfo_reqheight() + 4  # Version frame's grid padding.
+        )
+        height = max(self.root.minsize()[1], min(height, max(1, self.root.winfo_screenheight() - 80)))
+        self.root.geometry(f"{width}x{height}")
+
+    def _content_changed(self, _event=None):
+        self.content_canvas.configure(scrollregion=self.content_canvas.bbox("all"))
+
+    def _scroll_content(self, event):
+        """Scroll only this main window's form, leaving other toplevels independent."""
+        if event.widget.winfo_toplevel() is self.root:
+            self.content_canvas.yview_scroll(-1 if event.delta > 0 else 1, "units")
+
+    def _reveal_control(self, event):
+        """Keep keyboard-focused form controls visible inside the scrolling content."""
+        widget = event.widget
+        if not str(widget).startswith(str(self.content) + "."):
+            return
+        top = widget.winfo_rooty() - self.content.winfo_rooty()
+        bottom = top + widget.winfo_height()
+        visible_top = self.content_canvas.canvasy(0)
+        visible_bottom = visible_top + self.content_canvas.winfo_height()
+        height = max(1, self.content.winfo_height())
+        if top < visible_top:
+            self.content_canvas.yview_moveto(max(0, top - 8) / height)
+        elif bottom > visible_bottom:
+            self.content_canvas.yview_moveto((bottom + 8 - self.content_canvas.winfo_height()) / height)
+
+    def _layout_result_actions(self):
+        """Wrap the existing visible action buttons without changing their states."""
+        if not hasattr(self, "result_actions"):
+            return
+        available = max(1, self.result_actions.winfo_width())
+        row = column = used = 0
+        for button in self.result_buttons.values():
+            if not button.winfo_manager():
+                continue
+            width = button.winfo_reqwidth() + 6
+            if column and used + width > available:
+                row, column, used = row + 1, 0, 0
+            button.grid(row=row, column=column, sticky="w", pady=3)
+            column += 1
+            used += width
+
+    def _update_layout_metrics(self):
+        """Use font/control measurements for a bounded minimum, preserving user size."""
+        self.root.update_idletasks()
+        width = max(
+            max(self.label_pdf_file.winfo_reqwidth(), self.label_search_str.winfo_reqwidth())
+            + self.ui_font.measure("M" * 14) + self.browse_button.winfo_reqwidth() + 60,
+            self.button_filter.winfo_reqwidth() + self.button_watermark.winfo_reqwidth() + 60,
+            self.logo_label.winfo_reqwidth() + self.header_controls_frame.winfo_reqwidth() + self.ui_font.measure("M" * 20) + 50,
+            *(button.winfo_reqwidth() + 64 for button in self.result_buttons.values()),
+        )
+        height = self.header_frame.winfo_reqheight() + self.version_frame.winfo_reqheight() + self.ui_font.metrics("linespace") * 8
+        self.root.minsize(min(width, max(1, self.root.winfo_screenwidth() - 40)),
+                          min(height, max(1, self.root.winfo_screenheight() - 80)))
+        self.title.configure(wraplength=max(100, self.root.winfo_width() - self.header_controls_frame.winfo_reqwidth() - 100))
+        self._layout_result_actions()
+
+    def _options_text(self):
+        """Describe committed options, using the retained job while it owns an output."""
+        job = self._job or getattr(self, "_pending_save", None)
+        options = job.options if job else self._collect_processing_options()
+        def text(key):
+            return get_ui_string(self.strings, key)
+        parts = [text({MarkingMode.ALL_MATCHES: "opt_all", MarkingMode.DISTINGUISH_NAMES: "opt_distinguish",
+                       MarkingMode.NAMED_MATCHES: "opt_named"}[options.marking_mode])]
+        if options.marking_mode != MarkingMode.ALL_MATCHES:
+            parts.append(self.get_plural_string("option_names", len(options.names)).format(len(options.names)))
+        parts.append(text("opt_relevant" if options.only_relevant else "opt_any_line"))
+        watermark = dict(options.watermark)
+        watermark_key = "opt_watermark_off"
+        if watermark.get("watermark_enabled") == "True":
+            watermark_key = "opt_watermark_on" if str(watermark.get("watermark_text", "")).strip() else "opt_watermark_empty"
+        parts.append(text(watermark_key))
+        parts.append(text("opt_ocr_auto" if options.ocr_enabled else "opt_ocr_off"))
+        return text("opt_job" if job else "opt_active") + " " + " · ".join(parts)
+
+    def _render_options(self):
+        """Refresh the summary after a committed edit or job ownership change."""
+        if hasattr(self, "options_label"):
+            self.options_label.configure(text=self._options_text())
+
+    def _persist_setting(self, key, value):
+        if not getattr(self, "_syncing_settings", False):
+            self.app_settings.update_setting(key, value)
+            self._render_options()
+
+    def sync_setting_variables(self, settings):
+        """Apply a full or partial settings snapshot without persistence traces."""
+        variables = {
+            "search_str": "search_phrase_var", "mark_only_relevant_lines": "relevant_lines_var",
+            "names": "names_var", "marking_mode": "marking_mode_var",
+            "highlight_color_default": "highlight_color_default_var",
+            "highlight_color_names": "highlight_color_names_var",
+            "language": "language_var", "theme_mode": "theme_mode_var",
+        }
+        previous = getattr(self, "_syncing_settings", False)
+        self._syncing_settings = True
+        try:
+            for key, attribute in variables.items():
+                if key in settings:
+                    getattr(self, attribute).set(settings[key])
+        finally:
+            self._syncing_settings = previous
+        self._render_options()
+
+    def sync_settings_to_ui(self):
+        """Synchronize initialization/reset, including translated auxiliary UI."""
+        settings = self.app_settings.snapshot()
+        self.sync_setting_variables(settings)
+        self._apply_theme(settings["theme_mode"])
+        self.on_language_change(settings["language"])
+        if hasattr(self, "marking_preview"):
+            self._schedule_preview_prefetch()
+
+    def reset_settings(self):
+        """Discard drafts and synchronize defaults while preserving the source PDF."""
+        if self.output_options_locked or self.update_checker._active_download:
+            return
+        self.filter_dialog.close()
+        self.watermark_dialog.close(close_preview=True)
+        self.preview_window_handler.last_watermark_data = {}
+        self.preview_window_handler.last_origin = None
+        self.app_settings.reset_to_defaults()
+        self.update_checker.channel_changed()
+        self.sync_settings_to_ui()
+
+    def _show_settings_notices(self):
+        """Explain filesystem failures only after startup, on the Tk thread."""
+        if self._closing:
+            return
+        for notice in self.app_settings.take_notices():
+            text = get_ui_string(self.strings, f"settings_{notice.kind}").format(
+                path=notice.path, backup=notice.backup_path,
+            )
+            show_info(self, get_ui_string(self.strings, "settings_notice"), text)
 
     def update_all_widget_texts(self):
         """
@@ -443,7 +711,7 @@ class PDFHighlighterApp:
         self.label_pdf_file.config(text=get_ui_string(self.strings, "pdf_file"))
         self.label_search_str.config(text=get_ui_string(self.strings, "search_term"))
         self.checkbox_relevant_lines.config(text=get_ui_string(self.strings, "mark_only_relevant"))
-        self.start_abort_button.config(text=get_ui_string(self.strings, "btn_start"))
+        self._render_operation()
         self.browse_button.config(text=get_ui_string(self.strings, "btn_browse"))
         self.button_filter.config(text=get_ui_string(self.strings, "btn_filter"))
         self.button_watermark.config(text=get_ui_string(self.strings, "btn_watermark"))
@@ -457,7 +725,7 @@ class PDFHighlighterApp:
         self.update_version_labels()
 
         # Tooltips
-        Tooltip(self.entry_file, text=get_ui_string(self.strings, "select_pdf"))
+        Tooltip(self.entry_file, text=getattr(self, "input_file_full_path", "") or get_ui_string(self.strings, "select_pdf"))
         Tooltip(self.label_pdf_file, text=get_ui_string(self.strings, "select_pdf"))
         Tooltip(self.label_search_str, text=get_ui_string(self.strings, "enter_club"))
         Tooltip(self.entry_search_str, text=get_ui_string(self.strings, "enter_club"))
@@ -547,10 +815,13 @@ class PDFHighlighterApp:
             logging.getLogger("main_window").debug("Could not update Tk palette: %s", e)
 
     def _configure_ttk_styles(self, colors: ThemeColors) -> None:
-        label_font = ("Arial", 10)
-        title_font = ("Arial", 16, "bold")
+        label_font = getattr(self, "ui_font", ("Arial", 10))
+        title_font = getattr(self, "heading_font", ("Arial", 16, "bold"))
+        if hasattr(self, "ui_font"):
+            # Breeze also sets widget defaults, which override TLabel/TEntry styles.
+            self.root.option_add("*font", self.ui_font)
 
-        self.style.configure(".", background=colors.background, foreground=colors.foreground)
+        self.style.configure(".", font=label_font, background=colors.background, foreground=colors.foreground)
         self.style.configure("TFrame", background=colors.background)
         self.style.configure("TLabelframe", background=colors.background, foreground=colors.foreground)
         self.style.configure("TLabelframe.Label", background=colors.background, foreground=colors.foreground)
@@ -624,7 +895,7 @@ class PDFHighlighterApp:
         except Exception:
             return
 
-        if widget_class in {"Tk", "Toplevel", "Frame", "Labelframe"}:
+        if widget_class in {"Tk", "Toplevel", "Frame", "Labelframe", "Canvas"}:
             self._safe_configure(widget, background=colors.background, highlightbackground=colors.background)
         elif widget_class == "Button":
             swatch_color = getattr(widget, "_hsph_swatch_color", None)
@@ -723,10 +994,14 @@ class PDFHighlighterApp:
             try:
                 if window.winfo_exists():
                     self.apply_theme_to_window(window)
+                    if hasattr(owner, "refresh_theme"):
+                        owner.refresh_theme()
             except Exception as e:
                 logging.getLogger("main_window").debug("Could not theme %s window: %s", owner_name, e)
 
     def _on_theme_mode_change(self, mode: str) -> None:
+        if getattr(self, "_syncing_settings", False):
+            return
         self.app_settings.update_setting("theme_mode", mode)
         self._apply_theme(mode)
 
@@ -746,34 +1021,44 @@ class PDFHighlighterApp:
 
     def open_filter_window(self):
         """Open the filter configuration dialog."""
-        self.filter_dialog.open()
+        if not self.output_options_locked:
+            self.filter_dialog.open()
 
     def close(self) -> None:
-        """Close owned windows before destroying the main application window."""
-        try:
-            self.preview_window_handler.close()
-        except Exception as e:
-            logging.getLogger("main_window").debug("Could not close preview window: %s", e)
-
-        for owner_name in ("filter_dialog", "watermark_dialog", "dev_tools"):
-            owner = getattr(self, owner_name, None)
-            window = getattr(owner, "window", None)
-            if window is None:
-                continue
-            try:
-                if window.winfo_exists():
-                    window.destroy()
-            except Exception as e:
-                logging.getLogger("main_window").debug("Could not close %s window: %s", owner_name, e)
-
-        try:
-            self.root.destroy()
-        except Exception as e:
-            logging.getLogger("main_window").debug("Could not destroy root window: %s", e)
+        """Cancel owned work and let the main loop observe asynchronous cleanup."""
+        if self._closing:
+            return
+        self._closing = True
+        self.discard_pending_save()
+        self.request_cancel_processing()
+        self._download_cancel.set()
+        self._closing_previews = []
+        preview = getattr(self, "marking_preview", None) or getattr(self.filter_dialog, "_preview", None)
+        if preview is not None:
+            # close() detaches Tk timers; its process cleanup runs outside Tk.
+            preview.close()
+            if preview.cleanup_worker is not None:
+                self._closing_previews.append(preview.cleanup_worker)
+        for owner in (self.preview_window_handler, self.filter_dialog, self.watermark_dialog):
+            with suppress(TclError):
+                owner.close()
+        self._closing_previews.extend(getattr(self, "_preview_cleanups", ()))
+        window = getattr(self.dev_tools, "window", None)
+        if window is not None:
+            with suppress(TclError):
+                window.destroy()
+        # Release nested wait_window calls, including processing prompts.
+        for child in self.root.winfo_children():
+            if child.winfo_class() == "Toplevel":
+                with suppress(TclError):
+                    child.destroy()
+        self._set_inputs_locked()
+        self._render_operation()
 
     def open_watermark_window(self):
         """Open the watermark configuration dialog."""
-        self.watermark_dialog.open()
+        if not self.output_options_locked:
+            self.watermark_dialog.open()
 
     def preview_watermark(self, enabled, text, color, size, position, x_ratio, y_ratio, preview_page, origin=None, force_open=True):
         """Preview watermark (delegate to preview window handler)."""
@@ -814,14 +1099,19 @@ class PDFHighlighterApp:
         self.update_label.config(text=self.update_label_text)
         self.root.update_idletasks()
 
-    def on_version_update(self, latest_version, current_version):
+    def on_version_update(self, latest_version, current_version, context=None):
         """Callback for when version update info is received."""
         # Schedule on main thread since this is called from update check thread
         try:
             # If the root has been destroyed (common in screenshot mode teardown), silently ignore
             if not getattr(self.root, "tk", None):
                 return
-            self.root.after_idle(lambda: self._safe_update_version_info(latest_version, current_version))
+
+            def publish():
+                if context is None or self.update_checker.is_current_context(context):
+                    self._safe_update_version_info(latest_version, current_version)
+
+            self.root.after_idle(publish)
         except RuntimeError:
             # Root is gone; ignore
             return
@@ -850,10 +1140,9 @@ class PDFHighlighterApp:
         self.init_translatable_strings()
         self.update_all_widget_texts()
         # In screenshot mode, keep a neutral waiting status for a cleaner image
-        if os.getenv("HSPH_SCREENSHOT_MODE") in ("1", "true", "True"):
-            self.status_var.set(get_ui_string(self.strings, "status_waiting"))
-        else:
-            self.status_var.set(get_ui_string(self.strings, "status_language_changed"))
+        if not self.output_options_locked and not getattr(self, "last_processing_result", None):
+            self._set_status("status_waiting" if os.getenv("HSPH_SCREENSHOT_MODE") in ("1", "true", "True") else "status_language_changed")
+        self._render_operation()
         self.update_version_labels_text(
             Version.from_str(self.app_settings.settings["newest_version_available"]), Version.from_str(self.app_settings.settings["version"])
         )
@@ -887,10 +1176,16 @@ class PDFHighlighterApp:
         except Exception as e:
             logging.getLogger("main_window").exception("Unexpected error while refreshing watermark dialog: %s", e)
 
+        self.preview_window_handler.refresh_ui_strings()
+        if hasattr(self, "content_canvas"):
+            self._update_layout_metrics()
+
     def browse_file(self):
         """
         Opens a file dialog to browse and select a PDF file.
         """
+        if self.output_options_locked:
+            return
         self.status_var.set(get_ui_string(self.strings, "status_importing"))
         self.root.update_idletasks()
         file_path = filedialog.askopenfilename(
@@ -900,6 +1195,9 @@ class PDFHighlighterApp:
             file_name = Path(file_path).name
             self.pdf_file_var.set(file_name)  # Display only the file name
             self.input_file_full_path = file_path  # Store full path for processing
+            Tooltip(self.entry_file, text=file_path)
+            self.marking_preview.prepare(file_path)
+            self._prefetch_preview()
             self.ocr_detection_path = file_path
             self.ocr_detection_result = None
             self.status_var.set(get_ui_string(self.strings, "status_imported"))
@@ -908,6 +1206,21 @@ class PDFHighlighterApp:
         else:
             self.status_var.set(get_ui_string(self.strings, "status_waiting"))
             self.root.update_idletasks()
+
+    def _schedule_preview_prefetch(self, *_):
+        if getattr(self, "_syncing_settings", False):
+            return
+        if self._preview_prefetch_timer is not None:
+            self.root.after_cancel(self._preview_prefetch_timer)
+        self._preview_prefetch_timer = self.root.after(300, self._prefetch_preview)
+
+    def _prefetch_preview(self):
+        if self._preview_prefetch_timer is not None:
+            with suppress(TclError):
+                self.root.after_cancel(self._preview_prefetch_timer)
+        self._preview_prefetch_timer = None
+        if not self._closing and self.filter_dialog.window is None:
+            self.marking_preview.request(self.filter_dialog.capture_request(), immediate=True)
 
     def _detect_ocr_requirement(self, file_path: str) -> None:
         """Detect scanned PDFs in the background after file import."""
@@ -920,7 +1233,7 @@ class PDFHighlighterApp:
         self.root.after_idle(lambda: self._apply_ocr_detection_result(file_path, needs_ocr))
 
     def _set_ocr_checking_status(self, file_path: str) -> None:
-        if getattr(self, "input_file_full_path", None) == file_path and not self.processing_active:
+        if getattr(self, "input_file_full_path", None) == file_path and not self.output_options_locked:
             self.status_var.set(get_ui_string(self.strings, "status_ocr_checking"))
 
     def _apply_ocr_detection_result(self, file_path: str, needs_ocr: bool) -> None:
@@ -928,372 +1241,587 @@ class PDFHighlighterApp:
             return
         self.ocr_detection_path = file_path
         self.ocr_detection_result = needs_ocr
-        if self.processing_active:
+        if self.output_options_locked:
             return
         status_key = "status_ocr_needed" if needs_ocr else "status_imported"
         self.status_var.set(get_ui_string(self.strings, status_key))
 
+    @property
+    def output_options_locked(self):
+        """Whether output-affecting edits and reset are currently unavailable."""
+        return bool(self._job or self.download_active or self._closing)
+
+    def _set_inputs_locked(self):
+        locked = self.output_options_locked
+        preview = getattr(self, "marking_preview", None)
+        if preview is not None:
+            preview.set_paused(bool(self._job))
+        for name in ("browse_button", "entry_search_str", "checkbox_relevant_lines", "button_filter", "button_watermark"):
+            getattr(self, name).configure(state="disabled" if locked else "normal")
+        self.entry_file.configure(state="disabled" if locked else "readonly")
+        for owner in (self.filter_dialog, self.watermark_dialog, self.dev_tools):
+            owner.set_busy(locked)
+
+    def _set_status(self, key, *args):
+        self._status = (key, args)
+        text = (self.get_plural_string(key, args[2]) if key == "processed_pages" else get_ui_string(self.strings, key))
+        self.status_var.set(text.format(*args))
+
+    def _render_operation(self):
+        job = self._job
+        cancelling = bool(job and job.cancel.is_set()) or (self.download_active and self._download_cancel.is_set())
+        busy = bool(job or self.download_active)
+        self.start_abort_button.configure(
+            text=get_ui_string(self.strings, "btn_cancelling" if cancelling else "btn_abort" if busy else "btn_start"),
+            command=self.request_cancel_processing if job else self.abort_download if busy else self.start_processing,
+            state="disabled" if cancelling or self._closing or (getattr(self, "_pending_save", None) and not busy) else "normal",
+        )
+        key, args = self._status
+        self._set_status(key, *args)
+        self._render_result()
+        self._render_options()
+
     def start_processing(self):
-        """
-        Starts the PDF processing based on the selected file and search parameters.
-        """
-        self.start_abort_button.config(text=get_ui_string(self.strings, "btn_abort"), command=self.finalize_processing)
-
-        # Set processing flag to True
-        self.processing_active = True
-
-        # Update the search string in the settings
-        if self.search_phrase_var.get() != self.app_settings.settings["search_str"]:
-            self.app_settings.update_setting("search_str", self.search_phrase_var.get())
-
-        # Start the processing in a separate thread
-        input_file = getattr(self, "input_file_full_path", None)
-        search_str = self.search_phrase_var.get()
-
-        if not all([input_file, search_str]):
-            show_error(self, get_ui_string(self.strings, "error"), get_ui_string(self.strings, "val_all_required"))
-            self.finalize_processing()
+        """Validate and capture one job before starting its owned worker."""
+        if self.output_options_locked or getattr(self, "_pending_save", None) or getattr(self.update_checker, "_active_download", False):
             return
-
-        threading.Thread(target=self.process_pdf, args=(input_file,), daemon=True).start()
-
-    def process_pdf(self, input_file: str):
-        """Process the PDF file with highlighting and watermarks."""
-        self.processing_active = True
+        input_file = getattr(self, "input_file_full_path", None)
         options = self._collect_processing_options()
-        ocr_used = False
-        ocr_temp_file: str | None = None
-        document = None
-
+        if not input_file or not options.search_str.strip():
+            show_error(self, get_ui_string(self.strings, "error"), get_ui_string(self.strings, "val_all_required"))
+            return
+        if options.marking_mode != MarkingMode.ALL_MATCHES and not options.names:
+            show_error(self, get_ui_string(self.strings, "error"), get_ui_string(self.strings, "flt_names_required"))
+            return
+        self.app_settings.update_setting("search_str", options.search_str)
+        self._next_job_id += 1
+        job = ProcessingJob(self._next_job_id, input_file, options)
+        self._job = job
+        self.processing_active = True
+        self._set_status("status_preparing")
+        self._set_inputs_locked()
+        self._render_operation()
+        job.worker = threading.Thread(target=self.process_pdf, args=(job,), daemon=True)
         try:
-            document = self._open_source_document(input_file)
-            if document is None:
+            job.worker.start()
+        except Exception as exc:
+            logging.getLogger(__name__).exception("Could not start PDF processing worker")
+            job.result = ("failed", str(exc))
+            job.worker = None
+            self.finalize_processing(job)
+
+    def request_cancel_processing(self):
+        """Request cancellation; resource ownership stays with the running job."""
+        if self._job is None:
+            return
+        self._job.cancel.set()
+        self._job.state = "cancelling"
+        self._set_status("status_cancelling")
+        self._render_operation()
+
+    def _post_job(self, job, kind, *args):
+        self._ui_messages.put((job.identifier, kind, args))
+
+    def _request_job_ui(self, job, callback):
+        request = GuiRequest(callback)
+        self._post_job(job, "request", request)
+        while not request.ready.wait(0.05):
+            self._raise_if_cancelled(job)
+        self._raise_if_cancelled(job)
+        if request.error:
+            raise request.error
+        return request.value
+
+    @staticmethod
+    def _raise_if_cancelled(job):
+        if job.cancel.is_set():
+            raise OcrCancelled()
+
+    def _poll_work(self):
+        """Drain worker messages and observe termination without waiting in Tk."""
+        # Bound each batch so a busy worker cannot starve Tk events.
+        for _ in range(100):
+            try:
+                identifier, kind, args = self._ui_messages.get_nowait()
+            except queue.Empty:
+                break
+            self._handle_work_message(identifier, kind, args)
+        job = self._job
+        if job and job.result is not None and not job.dialog_open and (job.worker is None or not job.worker.is_alive()):
+            self.finalize_processing(job)
+        if self._closing and not self._job and not getattr(self.update_checker, "_active_download", False):
+            if not any(worker.is_alive() for worker in getattr(self, "_closing_previews", ())):
+                self.root.destroy()
                 return
+        self.root.after(30, self._poll_work)
+        self._show_settings_notices()
 
-            document, ocr_temp_file, ocr_used = self._prepare_pdf_document(input_file, document)
-            if document is None:
+    def _handle_work_message(self, identifier, kind, args):
+        """Dispatch a queued message on the Tk thread, ignoring obsolete jobs."""
+        if kind == "download_request":
+            self._complete_gui_request(args[0])
+            return
+        if kind == "download":
+            if identifier == self._download_id and self.download_active and not self._closing:
+                args[0]()
+            return
+        job = self._job
+        if job is None or identifier != job.identifier:
+            if kind == "request":
+                args[0].ready.set()
+            return
+        if kind == "started":
+            self._result_job = None
+            self._render_result()
+        elif kind == "result":
+            job.result = args
+        elif kind == "request":
+            self._complete_gui_request(args[0], job)
+        elif not job.cancel.is_set() and not self._closing:
+            self._handle_job_progress(job, kind, args)
+
+    def _complete_gui_request(self, request, job=None):
+        """Always release the waiting worker, including skipped or failed dialogs."""
+        try:
+            if not self._closing and (job is None or not job.cancel.is_set()):
+                if job is not None:
+                    job.dialog_open = True
+                request.value = request.callback()
+        except Exception as exc:
+            request.error = exc
+        finally:
+            if job is not None:
+                job.dialog_open = False
+            request.ready.set()
+
+    def _handle_job_progress(self, job, kind, args):
+        """Apply phase and progress messages for an active, uncancelled job."""
+        if kind == "phase":
+            job.state = args[0]
+            self._set_status(args[1])
+            if job.state == "saving":
+                self._start_indeterminate_progress_gui()
+        elif kind == "pages":
+            self._set_determinate_progress()
+            self.progress_bar["value"] = args[0] / args[1] * 100
+            self._set_status("processed_pages", *args)
+        elif kind == "ocr":
+            self._set_determinate_progress()
+            self.progress_bar["value"] = args[0] / max(1, args[1]) * 100
+            self._set_status("status_ocr_processing", *args)
+
+    def process_pdf(self, job):
+        """Run PDF work using only job-owned input and cancellation."""
+        document = None
+        ocr_temp_file = None
+        outcome = ("aborted",)
+        try:
+            self._raise_if_cancelled(job)
+            self.paths.is_valid_path(job.input_file)
+            document = Document(job.input_file)
+            if document.is_encrypted:
+                outcome = ("error_key", "val_pdf_protected")
                 return
-
-            page_result = self._process_document_pages(document, options)
-            if page_result is None:
+            options = job.options
+            needs_ocr = options.needs_ocr
+            use_ocr = options.ocr_enabled and (needs_ocr if needs_ocr is not None else document_needs_ocr(document))
+            if use_ocr:
+                def confirm():
+                    language = self._confirm_ocr_processing(options.ocr_language)
+                    if language is not None and not job.cancel.is_set() and not self._closing:
+                        self.app_settings.update_setting("ocr_language", language)
+                        job.options = replace(options, ocr_language=language)
+                        self._render_options()
+                        return job.options
+                    return None
+                options = self._request_job_ui(job, confirm)
+                if options is None:
+                    raise OcrCancelled()
+            output_file = self._request_job_ui(job, lambda: self._ask_output_file(job.input_file))
+            if not output_file:
+                raise OcrCancelled()
+            job.output_file = output_file
+            job.target_signature = self._target_signature(output_file)
+            self._raise_if_cancelled(job)
+            job.started = True
+            self._post_job(job, "started")
+            if use_ocr:
+                try:
+                    tessdata = ensure_bundled_tessdata(self.paths.ocr_tessdata_dir, options.ocr_language)
+                except FileNotFoundError:
+                    outcome = ("error_key", "val_ocr_assets_missing")
+                    return
+                self._raise_if_cancelled(job)
+                ocr_temp_file = self._create_temp_pdf_path()
+                document.close()
+                document = None
+                self._post_job(job, "phase", "processing", "status_processing")
+                create_searchable_ocr_pdf_in_process(
+                    job.input_file, ocr_temp_file, tessdata_dir=tessdata,
+                    language=options.ocr_language, dpi=options.ocr_dpi,
+                    progress_callback=lambda current, total: self._post_job(job, "ocr", current, total),
+                    is_cancelled=job.cancel.is_set,
+                )
+                self._raise_if_cancelled(job)
+                document = Document(ocr_temp_file)
+            self._post_job(job, "phase", "processing", "status_processing")
+            job.counts = self._process_document_pages(job, document, options)
+            total_matches, total_skipped, watermark_pages, marked_lines = job.counts
+            self._raise_if_cancelled(job)
+            if total_matches - total_skipped <= 0 and watermark_pages == 0:
+                outcome = ("info_key", "val_nothing")
                 return
-
-            if self.processing_active:
-                total_matches, total_skipped = page_result
-                document = self._finish_processed_document(input_file, document, total_matches, total_skipped, ocr_used)
-
+            job.document = document
+            job.ocr_temp_file = ocr_temp_file
+            self._post_job(job, "phase", "saving", "status_saving")
+            try:
+                save_result = self._save_processed_document(job, document, output_file, bool(ocr_temp_file), options)
+            except OcrCancelled:
+                raise
+            except Exception as exc:
+                logging.getLogger(__name__).exception("PDF saving failed; retaining calculated result")
+                outcome = ("save_failed", str(exc))
+                document = ocr_temp_file = None  # Ownership transfers to the pending job.
+                return
+            outcome = ("saved", total_matches, total_skipped, save_result, watermark_pages, marked_lines, output_file)
         except OcrCancelled:
-            self._set_status_idle("status_aborted")
-        except Exception as e:
-            self._show_error_idle(str(e))
+            outcome = ("aborted",)
+        except Exception as exc:
+            logging.getLogger(__name__).exception("PDF processing failed")
+            outcome = ("failed", str(exc))
         finally:
             if document is not None:
                 with suppress(Exception):
                     document.close()
             self._safe_unlink(ocr_temp_file)
-            self.root.after_idle(self.finalize_processing)
+            if outcome[0] != "save_failed":
+                job.document = job.ocr_temp_file = None
+            self._post_job(job, "result", *outcome)
 
-    def _collect_processing_options(self) -> ProcessingOptions:
+    def _collect_processing_options(self):
+        settings = self.app_settings.snapshot()
         return ProcessingOptions(
-            search_str=self.search_phrase_var.get(),
-            only_relevant=bool(self.relevant_lines_var.get()),
-            filter_enabled=bool(self.enable_filter_var.get()),
-            names=[name.strip() for name in re.split(r",\s*", self.names_var.get()) if name.strip()],
-            highlight_mode=HighlightMode[self.highlight_mode_var.get()],
+            search_str=self.search_phrase_var.get(), only_relevant=bool(self.relevant_lines_var.get()),
+            names=parse_names(self.names_var.get()), marking_mode=MarkingMode(self.marking_mode_var.get()),
+            highlight_color_default=self.highlight_color_default_var.get(),
+            highlight_color_names=self.highlight_color_names_var.get(),
+            watermark=tuple((key, settings[key]) for key in (
+                "watermark_enabled", "watermark_text", "watermark_color", "watermark_size", "watermark_position",
+                "watermark_x_ratio", "watermark_y_ratio",
+            ) if key in settings),
+            ocr_enabled=settings.get("ocr_enabled", "True") == "True",
+            ocr_language=settings.get("ocr_language", "deu"), ocr_dpi=int(settings.get("ocr_dpi", 300)),
+            ocr_reduce_large_outputs=settings.get("ocr_reduce_large_outputs", "True") == "True",
+            needs_ocr=self.ocr_detection_result if self.ocr_detection_path == getattr(self, "input_file_full_path", None) else None,
         )
 
-    def _open_source_document(self, input_file: str) -> Document | None:
-        self.paths.is_valid_path(input_file)
-        document = Document(input_file)
-        if not document.is_encrypted:
-            return document
-
-        document.close()
-        self._show_error_idle(get_ui_string(self.strings, "val_pdf_protected"))
-        return None
-
-    def _prepare_pdf_document(self, input_file: str, document: Document) -> tuple[Document | None, str | None, bool]:
-        if not self._should_use_ocr(input_file, document):
-            return document, None, False
-
-        language = self._confirm_ocr_processing_threadsafe()
-        if language is None:
-            document.close()
-            self._set_status_idle("status_aborted")
-            return None, None, False
-
-        if language != self.app_settings.settings.get("ocr_language"):
-            self.app_settings.update_setting("ocr_language", language)
-
-        try:
-            tessdata_dir = ensure_bundled_tessdata(self.paths.ocr_tessdata_dir, language)
-        except FileNotFoundError:
-            document.close()
-            self._show_error_idle(get_ui_string(self.strings, "val_ocr_assets_missing"))
-            return None, None, False
-
-        return self._create_ocr_document(input_file, document, tessdata_dir, language)
-
-    def _create_ocr_document(self, input_file: str, document: Document, tessdata_dir: Path, language: str) -> tuple[Document, str, bool]:
-        ocr_temp_file = self._create_temp_pdf_path()
-        document.close()
-
-        try:
-            create_searchable_ocr_pdf_in_process(
-                input_file,
-                ocr_temp_file,
-                tessdata_dir=tessdata_dir,
-                language=language,
-                dpi=int(self.app_settings.settings.get("ocr_dpi", 300)),
-                progress_callback=self.update_ocr_progress,
-                is_cancelled=lambda: not self.processing_active,
+    def _process_document_pages(self, job, document, options):
+        total_matches = total_skipped = watermark_pages = marked_lines = 0
+        watermark = dict(options.watermark)
+        for index in range(len(document)):
+            self._raise_if_cancelled(job)
+            matches, skipped, lines = highlight_matching_data(
+                page=document[index], search_str=options.search_str, only_relevant=options.only_relevant,
+                names=options.names, marking_mode=options.marking_mode,
+                highlight_color_default=options.highlight_color_default, highlight_color_names=options.highlight_color_names,
             )
-            return Document(ocr_temp_file), ocr_temp_file, True
-        except Exception:
-            self._safe_unlink(ocr_temp_file)
-            raise
+            marked_lines += lines
+            total_matches += matches
+            total_skipped += skipped
+            self._raise_if_cancelled(job)
+            if watermark_pdf_page(document[index], watermark):
+                watermark_pages += 1
+            self._post_job(job, "pages", index + 1, len(document), total_matches, total_skipped)
+        return total_matches, total_skipped, watermark_pages, marked_lines
 
-    def _process_document_pages(self, document: Document, options: ProcessingOptions) -> tuple[int, int] | None:
-        total_matches = 0
-        total_skipped = 0
-        total_pages = len(document)
-
-        for page_index in range(total_pages):
-            if not self.processing_active:
-                self._set_status_idle("status_aborted")
-                return None
-
-            matches_found, skipped_matches = highlight_matching_data(
-                page=document[page_index],
-                search_str=options.search_str,
-                only_relevant=options.only_relevant,
-                filter_enabled=options.filter_enabled,
-                names=options.names,
-                highlight_mode=options.highlight_mode,
-            )
-            total_matches += matches_found
-            total_skipped += skipped_matches
-
-            watermark_pdf_page(document[page_index], self.app_settings.settings)
-            self.update_progress(page_index + 1, total_pages, total_matches, total_skipped)
-
-        return total_matches, total_skipped
-
-    def _finish_processed_document(
-        self,
-        input_file: str,
-        document: Document,
-        total_matches: int,
-        total_skipped: int,
-        ocr_used: bool,
-    ) -> Document | None:
-        output_file = self._output_file_for_processing_result(input_file, total_matches - total_skipped)
-        if not output_file:
-            return document
-
-        save_result = self._save_processed_document(document, input_file, output_file, ocr_used)
-        self._show_processing_complete(total_matches, total_skipped, save_result)
-        return None
-
-    def _output_file_for_processing_result(self, input_file: str, total_marked: int) -> str | None:
-        if total_marked == 0:
-            self._show_info_idle(get_ui_string(self.strings, "info"), get_ui_string(self.strings, "val_nothing"))
-            return None
-
-        output_file = self._ask_output_file_threadsafe(input_file)
-        if output_file and self.processing_active:
-            return output_file
-        if output_file:
-            self._set_status_idle("status_aborted")
-        else:
-            self._show_info_idle(get_ui_string(self.strings, "info"), get_ui_string(self.strings, "val_no_output"))
-        return None
-
-    def _save_processed_document(self, document: Document, input_file: str, output_file: str, ocr_used: bool) -> OcrSaveResult | None:
-        self.start_indeterminate_progress(get_ui_string(self.strings, "status_saving"))
-        if not ocr_used:
-            save_compact_pdf(document, output_file)
-            document.close()
-            return None
-
-        prepared_save_temp_file = self._create_temp_pdf_path()
+    def _save_processed_document(self, job, document, output_file, ocr_used, options):
+        """Stage a completed PDF before atomically committing the approved target."""
+        self._raise_if_cancelled(job)
+        target = Path(output_file)
+        self._validate_output_target(job.input_file, target)
+        # Stage beside the destination so the final replace stays on one filesystem.
+        handle = tempfile.NamedTemporaryFile(prefix=".hsph-", suffix=".pdf", dir=target.parent, delete=False)
+        staged = handle.name
+        prepared = None
         try:
-            document.save(prepared_save_temp_file)
-            document.close()
-            return save_pdf_path_in_process(
-                prepared_save_temp_file,
-                output_file,
-                original_pdf_path=input_file,
-                ocr_used=True,
-                reduce_large_outputs=self.app_settings.settings.get("ocr_reduce_large_outputs", "True") == "True",
-                is_cancelled=lambda: not self.processing_active,
-            )
+            handle.close()
+            if not ocr_used:
+                save_compact_pdf(document, staged)
+                result = None
+            else:
+                prepared = self._create_temp_pdf_path()
+                document.save(prepared)
+                self._raise_if_cancelled(job)
+                result = save_pdf_path_in_process(
+                    prepared, staged, original_pdf_path=job.input_file, ocr_used=True,
+                    reduce_large_outputs=options.ocr_reduce_large_outputs, is_cancelled=job.cancel.is_set,
+                )
+            with open(staged, "r+b") as completed:
+                os.fsync(completed.fileno())
+            self._raise_if_cancelled(job)
+            self._validate_output_target(job.input_file, target)
+            if self._target_signature(target) != job.target_signature:
+                raise OSError("result_target_changed")
+            os.replace(staged, target)
+            job.committed = True
+            return result
         finally:
-            self._safe_unlink(prepared_save_temp_file)
+            self._safe_unlink(prepared)
+            self._safe_unlink(staged)
 
-    def _show_processing_complete(self, total_matches: int, total_skipped: int, save_result: OcrSaveResult | None) -> None:
-        message = self.get_plural_string("processing_complete", total_matches).format(total_matches, total_skipped)
-        if save_result and save_result.reduction_failed:
-            message += "\n\n" + get_ui_string(self.strings, "ocr_reduction_failed").format(save_result.output_size / (1024 * 1024))
-        self._show_info_idle(get_ui_string(self.strings, "status_done"), message)
+    @staticmethod
+    def _target_signature(path):
+        """Detect a destination created or changed since overwrite approval."""
+        try:
+            stat = Path(path).stat()
+            return stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns
+        except FileNotFoundError:
+            return None
 
-    def _set_status_idle(self, status_key: str) -> None:
-        self.root.after_idle(lambda: self.status_var.set(get_ui_string(self.strings, status_key)))
+    @staticmethod
+    def _validate_output_target(input_file, output_file):
+        """Reject path aliases and existing hard links to the source."""
+        source, target = Path(input_file), Path(output_file)
+        if source.resolve() == target.resolve() or (source.exists() and target.exists() and source.samefile(target)):
+            raise ValueError("result_source_target")
 
-    def _show_error_idle(self, message: str) -> None:
-        self.root.after_idle(lambda: show_error(self, get_ui_string(self.strings, "error"), message))
-
-    def _show_info_idle(self, title: str, message: str) -> None:
-        self.root.after_idle(lambda: show_info(self, title, message))
-
-    def _should_use_ocr(self, input_file: str, document: Document) -> bool:
-        if self.app_settings.settings.get("ocr_enabled", "True") != "True":
-            return False
-        if self.ocr_detection_path == input_file and self.ocr_detection_result is not None:
-            return self.ocr_detection_result
-        return document_needs_ocr(document)
-
-    def _confirm_ocr_processing(self) -> str | None:
-        choices = [(get_ui_string(self.strings, label_key), value) for label_key, value in OCR_LANGUAGE_CHOICES]
+    def _confirm_ocr_processing(self, language):
+        choices = [(get_ui_string(self.strings, key), value) for key, value in OCR_LANGUAGE_CHOICES]
         return ask_choice_ok_cancel(
-            self,
-            get_ui_string(self.strings, "ocr_prompt_title"),
-            get_ui_string(self.strings, "ocr_prompt"),
-            get_ui_string(self.strings, "ocr_language_label"),
-            choices,
-            self.app_settings.settings.get("ocr_language", "deu"),
+            self, get_ui_string(self.strings, "ocr_prompt_title"), get_ui_string(self.strings, "ocr_prompt"),
+            get_ui_string(self.strings, "ocr_language_label"), choices, language,
             details_text=get_ui_string(self.strings, "ocr_prompt_details"),
             details_show_label=get_ui_string(self.strings, "ocr_prompt_more_info_show"),
             details_hide_label=get_ui_string(self.strings, "ocr_prompt_more_info_hide"),
         )
 
-    def _confirm_ocr_processing_threadsafe(self) -> str | None:
-        if threading.current_thread() is threading.main_thread():
-            return self._confirm_ocr_processing()
-
-        results: queue.Queue[str | None | Exception] = queue.Queue(maxsize=1)
-
-        def ask_on_main_thread() -> None:
-            try:
-                results.put(self._confirm_ocr_processing())
-            except Exception as exc:
-                results.put(exc)
-
-        self.root.after(0, ask_on_main_thread)
-        result = results.get()
-        if isinstance(result, Exception):
-            raise result
-        return result
-
-    def _create_temp_pdf_path(self) -> str:
+    def _create_temp_pdf_path(self):
         temp_file = tempfile.NamedTemporaryFile(prefix="hsph-ocr-", suffix=".pdf", delete=False)
         temp_file.close()
         return temp_file.name
 
-    def _safe_unlink(self, path: str | Path | None) -> None:
-        if path is None:
-            return
-        with suppress(OSError):
-            Path(path).unlink()
-
-    def _ask_output_file_threadsafe(self, input_file: str) -> str:
-        if threading.current_thread() is threading.main_thread():
-            return self._ask_output_file(input_file)
-
-        results: queue.Queue[str | Exception] = queue.Queue(maxsize=1)
-
-        def ask_on_main_thread() -> None:
+    def _safe_unlink(self, path):
+        if path is not None:
             try:
-                results.put(self._ask_output_file(input_file))
-            except Exception as exc:
-                results.put(exc)
+                Path(path).unlink(missing_ok=True)
+            except OSError:
+                logging.getLogger(__name__).warning("Could not remove temporary PDF %s", path, exc_info=True)
 
-        self.root.after(0, ask_on_main_thread)
-        result = results.get()
-        if isinstance(result, Exception):
-            raise result
-        return result
+    def _ask_output_file(self, input_file):
+        while not self._closing:
+            target = filedialog.asksaveasfilename(
+                parent=self.root, defaultextension=".pdf", filetypes=[("PDF files", "*.pdf")],
+                initialdir=str(Path(input_file).parent),
+                initialfile=get_ui_string(self.strings, "file_out_pattern").format(Path(input_file).stem),
+                confirmoverwrite=False,
+            )
+            if not target:
+                return None
+            try:
+                self._validate_output_target(input_file, target)
+            except ValueError:
+                show_error(self, get_ui_string(self.strings, "error"), get_ui_string(self.strings, "result_source_target"))
+                continue
+            if not Path(target).exists() or ask_ok_cancel(
+                self, get_ui_string(self.strings, "result_overwrite_title"),
+                get_ui_string(self.strings, "result_overwrite").format(target),
+            ):
+                return target
+        return None
 
-    def _ask_output_file(self, input_file: str) -> str:
-        return filedialog.asksaveasfilename(
-            defaultextension=".pdf",
-            filetypes=[("PDF files", "*.pdf")],
-            initialfile=get_ui_string(self.strings, "file_out_pattern").format(input_file.rsplit(".", 1)[0]),
-        )
-
-    def finalize_processing(self):
-        """
-        Resets the UI to the initial state, regardless of whether processing was completed or aborted.
-        """
-        self.progress_bar.stop()
-        self.progress_bar.configure(mode="determinate")
-        self.progress_bar["maximum"] = DETERMINATE_PROGRESS_MAXIMUM
-        self.progress_bar["value"] = 0  # Reset progress bar
-        # Reset the button to "Start" with the original command
-        self.start_abort_button.config(text=get_ui_string(self.strings, "btn_start"), command=self.start_processing)
-        if not self.processing_active:  # Only update the status if the processing was aborted
-            self.status_var.set(get_ui_string(self.strings, "status_aborted_processing"))
+    def finalize_processing(self, job):
+        """Release a terminated worker while preserving completion and retry data."""
+        if self._job is not job or job.result is None or (job.worker is not None and job.worker.is_alive()):
+            return
+        result = job.result if job.committed else ("aborted",) if job.cancel.is_set() else job.result
+        job.result = result
+        self.last_processing_result = result
+        self._job = None
+        self.processing_active = False
+        if result[0] == "save_failed" and not self._closing:
+            self._pending_save = job
         else:
-            self.status_var.set(get_ui_string(self.strings, "status_waiting"))
-        self.processing_active = False  # Reset the flag
-        self.root.update_idletasks()  # Ensure the UI updates are processed
-
-    def update_progress(self, current: int, total: int, matches: int, skipped: int):
-        """
-        Updates the progress bar and status message.
-
-        Args:
-            current (int): The current page being processed.
-            total (int): The total number of pages in the PDF.
-            matches (int): The total number of matches found.
-            skipped (int): The total number of matches skipped.
-        """
-        # Schedule GUI updates on the main thread
-        self.root.after_idle(lambda: self._update_progress_gui(current, total, matches, skipped))
-
-    def _update_progress_gui(self, current: int, total: int, matches: int, skipped: int):
-        """Internal method to update progress GUI elements on main thread."""
+            self._cleanup_job_result(job)
+        if job.started:
+            self._result_job = job
         self._set_determinate_progress()
-        self.progress_bar["value"] = (current / total) * 100
-        self.status_var.set(self.get_plural_string("processed_pages", matches).format(current, total, matches, skipped))
+        self.progress_bar["value"] = 0
+        status = {"saved": "status_done", "aborted": "status_aborted_processing", "info_key": "val_nothing"}.get(result[0], "result_failed")
+        self._set_status(status)
+        self._set_inputs_locked()
+        self._render_operation()
+        self._render_result()
+        if not self._closing and result[0] in ("failed", "error_key"):
+            show_error(self, get_ui_string(self.strings, "error"), get_ui_string(
+                self.strings, result[1] if result[0] == "error_key" else "result_processing_failed",
+            ))
 
-    def update_ocr_progress(self, current: int, total: int):
-        """Schedule OCR progress updates on the main thread."""
-        self.root.after_idle(lambda: self._update_ocr_progress_gui(current, total))
+    def _cleanup_job_result(self, job):
+        """Release a retained document before removing its OCR backing file."""
+        if job.document is not None:
+            with suppress(Exception):
+                job.document.close()
+            job.document = None
+        self._safe_unlink(job.ocr_temp_file)
+        job.ocr_temp_file = None
 
-    def _update_ocr_progress_gui(self, current: int, total: int):
-        self._set_determinate_progress()
-        if total > 0:
-            self.progress_bar["value"] = (current / total) * 100
-        self.status_var.set(get_ui_string(self.strings, "status_ocr_processing").format(current, total))
-
-    def start_indeterminate_progress(self, status_text: str) -> None:
-        """Show an animated progress bar while an operation cannot report exact progress."""
-        if threading.current_thread() is threading.main_thread():
-            self._start_indeterminate_progress_gui(status_text)
+    def discard_pending_save(self):
+        """Explicitly discard an unsaved calculation, also used during app close."""
+        job = getattr(self, "_pending_save", None)
+        if job is None or self._job:
             return
+        self._cleanup_job_result(job)
+        self._pending_save = None
+        job.result = ("aborted",)
+        self._set_status("status_aborted_processing")
+        self._render_operation()
+        self._render_result()
 
-        started = threading.Event()
+    def retry_save(self, choose_target=False):
+        """Save retained data in a new owned worker without repeating OCR/pages."""
+        job = getattr(self, "_pending_save", None)
+        if job is None or self.output_options_locked:
+            return
+        # Reserve the UI even during a nested native file dialog.
+        self._job = job
+        self._set_inputs_locked()
+        try:
+            if choose_target:
+                job.dialog_open = True
+                try:
+                    target = self._ask_output_file(job.input_file)
+                finally:
+                    job.dialog_open = False
+                if not target:
+                    return
+                job.output_file = target
+                job.target_signature = self._target_signature(target)
+            if self._closing:
+                return
+            self._pending_save = None
+            job.result = None
+            job.cancel.clear()
+            self.processing_active = True
+            self._set_status("status_saving")
+            self._start_indeterminate_progress_gui()
+            job.worker = threading.Thread(target=self._retry_save_worker, args=(job,), daemon=True)
+            job.worker.start()
+        except Exception as exc:
+            logging.getLogger(__name__).exception("Could not start or prepare PDF save retry")
+            job.result = ("save_failed", str(exc))
+            job.worker = None
+            self.finalize_processing(job)
+        finally:
+            if getattr(self, "_pending_save", None) is job:
+                self._job = None
+                if self._closing:
+                    self.discard_pending_save()
+            self._set_inputs_locked()
+            self._render_operation()
+            self._render_result()
 
-        def start_on_main_thread() -> None:
-            try:
-                self._start_indeterminate_progress_gui(status_text)
-            finally:
-                started.set()
+    def _retry_save_worker(self, job):
+        """Reuse the retained calculation and report a new save outcome."""
+        try:
+            saved = self._save_processed_document(job, job.document, job.output_file, bool(job.ocr_temp_file), job.options)
+            matches, skipped, pages, lines = job.counts
+            result = ("saved", matches, skipped, saved, pages, lines, job.output_file)
+        except OcrCancelled:
+            result = ("aborted",)
+        except Exception as exc:
+            logging.getLogger(__name__).exception("Retry saving PDF failed")
+            result = ("save_failed", str(exc))
+        self._post_job(job, "result", *result)
 
-        self.root.after(0, start_on_main_thread)
-        started.wait(timeout=1.0)
+    def _result_text(self):
+        """Translate the retained outcome without changing its resources or state."""
+        job = getattr(self, "_result_job", None)
+        if job is None:
+            return get_ui_string(self.strings, "result_empty")
+        result = job.result
+        if result is None:
+            return get_ui_string(self.strings, "status_saving")
+        kind = result[0]
+        if kind == "saved":
+            _, matches, skipped, saved, pages, lines, target = result
+            text = get_ui_string(self.strings, "status_done") + "\n"
+            text += self.get_plural_string("marked_lines", lines).format(lines)
+            text += "\n" + self.get_plural_string("processing_complete", matches).format(matches, skipped)
+            if pages:
+                text += "\n" + self.get_plural_string("watermarked_pages", pages).format(pages)
+            text += "\n" + get_ui_string(self.strings, "result_location").format(target)
+            if saved and saved.reduction_failed:
+                text += "\n" + get_ui_string(self.strings, "ocr_reduction_failed").format(saved.output_size / (1024 * 1024))
+            return text
+        if kind == "save_failed":
+            message = get_ui_string(self.strings, "result_save_failed")
+            # Only our actionable destination checks belong in the UI. Native
+            # exceptions and worker diagnostics remain in the logs.
+            if result[1] in ("result_target_changed", "result_source_target"):
+                message = get_ui_string(self.strings, result[1]) + "\n" + message
+            return message
+        if kind == "info_key":
+            return get_ui_string(self.strings, result[1])
+        if kind == "aborted":
+            return get_ui_string(self.strings, "status_aborted_processing")
+        return get_ui_string(self.strings, result[1] if kind == "error_key" else "result_processing_failed")
 
-    def _start_indeterminate_progress_gui(self, status_text: str) -> None:
+    def _render_result(self):
+        """Keep completion details and available actions in the main window."""
+        if not hasattr(self, "result_label"):
+            return
+        self.result_frame.configure(text=get_ui_string(self.strings, "result_title"))
+        self.result_label.configure(text=self._result_text())
+        job = getattr(self, "_result_job", None)
+        saved = bool(job and job.result and job.result[0] == "saved")
+        pending = bool(getattr(self, "_pending_save", None))
+        for key, button in self.result_buttons.items():
+            button.configure(text=get_ui_string(self.strings, key), state="normal" if (
+                not self.output_options_locked and (saved if key.startswith("result_open") else pending)
+            ) else "disabled")
+            if (key.startswith("result_open") and not pending) or (not key.startswith("result_open") and pending):
+                button.grid()
+            else:
+                button.grid_remove()
+
+        self._layout_result_actions()
+
+    def _open_result(self, folder=False):
+        """Dispatch a saved path through the system without shell interpolation."""
+        job = getattr(self, "_result_job", None)
+        if self.output_options_locked or not job or not job.result or job.result[0] != "saved":
+            return
+        target = Path(job.result[6])
+        try:
+            if not target.is_file():
+                show_error(self, get_ui_string(self.strings, "error"), get_ui_string(self.strings, "result_open_missing"))
+                return
+            path = str(target.parent if folder else target)
+            if os.name == "nt":
+                # Open the user-selected saved result with its Windows file association.
+                os.startfile(path)  # nosec B606
+            else:
+                subprocess.Popen(["open" if sys.platform == "darwin" else "xdg-open", path])
+        except Exception:
+            logging.getLogger(__name__).exception("Could not open saved PDF or folder: %s", target)
+            show_error(self, get_ui_string(self.strings, "error"), get_ui_string(self.strings, "result_open_failed"))
+
+    def open_result_pdf(self):
+        """Open the last successfully saved PDF with the system application."""
+        self._open_result()
+
+    def open_result_folder(self):
+        """Open the saved PDF's containing folder."""
+        self._open_result(folder=True)
+
+    def _start_indeterminate_progress_gui(self):
         self.progress_bar.stop()
         self.progress_bar.configure(mode="indeterminate")
         self.progress_bar["maximum"] = INDETERMINATE_PROGRESS_MAXIMUM
         self.progress_bar["value"] = 0
         self.progress_bar.start(INDETERMINATE_PROGRESS_INTERVAL_MS)
-        self.status_var.set(status_text)
-        self.root.update_idletasks()
 
-    def _set_determinate_progress(self) -> None:
+    def _set_determinate_progress(self):
         self.progress_bar.stop()
         self.progress_bar.configure(mode="determinate")
         self.progress_bar["maximum"] = DETERMINATE_PROGRESS_MAXIMUM
@@ -1303,29 +1831,34 @@ class PDFHighlighterApp:
         return self.update_checker.check_for_app_updates(current_version, force_check)
 
     def start_download(self):
-        """Start download process and update UI."""
+        """Reserve shared controls on Tk before the downloader does any work."""
+        if self.output_options_locked:
+            return False
+        self._download_id += 1
+        self._download_cancel.clear()
         self.download_active = True
-        self.start_abort_button.config(text=get_ui_string(self.strings, "btn_abort"), command=self.abort_download)
-        self.progress_bar.stop()
-        self.progress_bar.configure(mode="determinate")
-        self.progress_bar["maximum"] = DETERMINATE_PROGRESS_MAXIMUM
-        self.progress_bar["value"] = 0  # Reset progress bar
+        self._set_determinate_progress()
+        self.progress_bar["value"] = 0
+        self._set_status("upd_starting")
+        self._set_inputs_locked()
+        self._render_operation()
+        return True
 
     def abort_download(self):
-        """Abort download process and reset UI."""
-        self.download_active = False
-        self.start_abort_button.config(text=get_ui_string(self.strings, "btn_start"), command=self.start_processing)
-        self.progress_bar.stop()
-        self.progress_bar.configure(mode="determinate")
-        self.progress_bar["maximum"] = DETERMINATE_PROGRESS_MAXIMUM
-        self.progress_bar["value"] = 0  # Reset progress bar
-        self.status_var.set(get_ui_string(self.strings, "upd_cancelled"))
+        """Keep controls reserved until the downloader finishes cleanup."""
+        if self.download_active:
+            self._download_cancel.set()
+            self._set_status("status_cancelling")
+            self._render_operation()
 
     def finish_download(self):
-        """Finish download process and reset UI."""
+        """Release shared controls after verification and resource cleanup."""
         self.download_active = False
-        # Don't reset button here since app will close after download
+        self._set_determinate_progress()
+        self.progress_bar["value"] = 0
+        self._set_status("upd_cancelled" if self._download_cancel.is_set() else "status_waiting")
+        self._set_inputs_locked()
+        self._render_operation()
 
     def is_download_aborted(self):
-        """Check if download has been aborted."""
-        return not self.download_active
+        return self._download_cancel.is_set() or self._closing

@@ -21,9 +21,24 @@ def test_download_starting_status_string_exists():
     assert get_ui_string(s, "upd_starting") == "Starting download..."
 
 
-def test_saving_status_mentions_compacting():
+def test_combined_update_dialog_strings_and_german_translations():
+    expected = {
+        "upd_now": ("Update now", "Jetzt aktualisieren"),
+        "upd_later": ("Later", "Später"),
+        "upd_skip_version": ("Do not ask again for this version", "Für diese Version nicht erneut fragen"),
+        "upd_prompt": ("A new version ({0}) is available.", "Eine neue Version ({0}) ist verfügbar."),
+    }
+    for index, language in enumerate(("en", "de")):
+        strings = build_strings(setup_translation(language)[0])
+        for key, translations in expected.items():
+            assert strings[key] == translations[index]
+        assert "upd_note" not in strings
+        assert "upd_info" not in strings
+
+
+def test_saving_status_describes_user_action():
     s = build_strings(lambda x: x)
-    assert get_ui_string(s, "status_saving") == "Status: Saving and compacting PDF... Please wait..."
+    assert get_ui_string(s, "status_saving") == "Status: Saving PDF... Please wait..."
 
 
 def test_ocr_strings_exist():
@@ -100,6 +115,14 @@ def test_plural_strings_structure():
     assert "Processed:" in plural_strings["processed_pages"]["singular"]
 
 
+def test_watermark_position_has_its_own_translation_context():
+    english = build_strings(lambda text: text)
+    german = build_strings(setup_translation("de")[0])
+    assert [english[key] for key in ("wm_pos_top", "wm_pos_bottom", "wm_pos_custom")] == ["Top", "Bottom", "Custom"]
+    assert [german[key] for key in ("wm_pos_top", "wm_pos_bottom", "wm_pos_custom")] == ["Oben", "Unten", "Frei"]
+    assert german["wm_custom_color"] == "Weitere"
+
+
 def test_xgettext_dummy_invocation():
     # Provide a dummy ngettext-like function capturing arguments to ensure lines execute
     captured = []
@@ -109,5 +132,5 @@ def test_xgettext_dummy_invocation():
         return singular if n == 1 else plural
 
     _xgettext_dummy(fake_ngettext)
-    assert len(captured) == 2
+    assert len(captured) == len(plural_strings)
     assert all(isinstance(t[0], str) and isinstance(t[1], str) for t in captured)

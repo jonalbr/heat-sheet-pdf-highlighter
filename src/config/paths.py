@@ -3,6 +3,7 @@ Path configuration and management
 """
 
 import os
+import logging
 import sys
 from pathlib import Path
 
@@ -54,7 +55,12 @@ class Paths:
             case _:
                 raise Exception("Unsupported OS")
 
-        settings_dir.mkdir(parents=True, exist_ok=True)
+        if os.getenv("HSPH_USE_DEFAULT_SETTINGS") not in ("1", "true", "True"):
+            try:
+                settings_dir.mkdir(parents=True, exist_ok=True)
+            except OSError:
+                # AppSettings reports access/write failures after the GUI starts.
+                logging.getLogger(__name__).exception("Could not create settings directory %s", settings_dir)
         return settings_dir
 
     # Handle source, PyInstaller, and cx_Freeze runtimes.

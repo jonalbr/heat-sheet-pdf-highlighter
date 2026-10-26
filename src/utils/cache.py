@@ -50,15 +50,15 @@ def _write_json_atomic(target: Path, payload: dict, retries: int = 5, delay: flo
         raise last_err
 
 
-def save_update_cache(fetched_at: datetime.datetime, latest_version: Version):
-    """Save update check cache using atomic write."""
-    cache_data = {"fetched_at": fetched_at.isoformat(), "latest_version": str(latest_version)}
+def save_update_cache(fetched_at: datetime.datetime, latest_version: Version, channel: str = "stable"):
+    """Save a channel's update check using atomic write."""
+    cache_data = {"fetched_at": fetched_at.isoformat(), "latest_version": str(latest_version), "channel": channel}
     cache_file = Paths().update_cache_file
     _write_json_atomic(cache_file, cache_data)
 
 
-def load_update_cache():
-    """Load update check cache. Returns (fetched_at, latest_version) or (None, None)."""
+def load_update_cache(channel: str = "stable"):
+    """Return (fetched_at, latest_version), or (None, None) for a channel miss."""
     cache_file = Paths().update_cache_file
     if not cache_file.exists():
         return None, None
@@ -85,6 +85,9 @@ def load_update_cache():
             _write_json_atomic(cache_file, {"fetched_at": "1970-01-01T00:00:00", "latest_version": "0.0.0"})
         except Exception as reset_error:
             logging.getLogger("cache").exception("Failed to reset update cache: %s", reset_error)
+        return None, None
+    # Old caches cannot safely be attributed to either channel.
+    if data.get("channel") != channel:
         return None, None
     return fetched_at, latest_version
 

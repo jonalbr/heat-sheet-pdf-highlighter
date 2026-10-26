@@ -28,6 +28,7 @@ def test_add_watermark_top_position(blank_page, monkeypatch):
 
     def fake_insert_text(point, text, fontsize, color):  # capture args
         calls['args'] = dict(point=point, text=text, fontsize=fontsize, color=color)
+        return 1
 
     monkeypatch.setattr(blank_page, 'insert_text', fake_insert_text)
     wm.add_watermark(blank_page, text="HELLO", font_size=24, color_hex="#112233", position="top")
@@ -44,6 +45,7 @@ def test_add_watermark_bottom_position(blank_page, monkeypatch):
 
     def fake_insert_text(point, text, fontsize, color):
         calls['args'] = dict(point=point, text=text, fontsize=fontsize, color=color)
+        return 1
 
     monkeypatch.setattr(blank_page, 'insert_text', fake_insert_text)
     wm.add_watermark(blank_page, text="BYE", font_size=18, color_hex="#AABBCC", position="bottom")
@@ -57,6 +59,7 @@ def test_add_watermark_invalid_position_defaults_to_top(blank_page, monkeypatch)
 
     def fake_insert_text(point, text, fontsize, color):
         calls['args'] = dict(point=point, text=text, fontsize=fontsize, color=color)
+        return 1
 
     monkeypatch.setattr(blank_page, 'insert_text', fake_insert_text)
     wm.add_watermark(blank_page, text="TEXT", font_size=12, color_hex="#000000", position="weird")
@@ -83,6 +86,7 @@ def test_add_watermark_font_fallback(blank_page, monkeypatch):
 
     def fake_insert_text(point, text, fontsize, color):
         calls['fontsize'] = fontsize
+        return 1
 
     monkeypatch.setattr(blank_page, 'insert_text', fake_insert_text)
     wm.add_watermark(blank_page, text="FALLBACK", font_size=14, color_hex="#010101", position="top")
@@ -106,9 +110,10 @@ def test_watermark_pdf_page_guard_logic(blank_page, monkeypatch, settings, shoul
 
     def fake_add(page, text, font_size, color_hex, position, x_ratio, y_ratio):
         called['v'] = True
+        return True
 
     monkeypatch.setattr(wm, 'add_watermark', fake_add)
-    wm.watermark_pdf_page(blank_page, settings)
+    assert wm.watermark_pdf_page(blank_page, settings) is should_call
     assert called['v'] is should_call
 
 
@@ -164,4 +169,43 @@ def test_overlay_watermark_on_image_uses_default_font_when_truetype_missing(monk
 
     assert calls["default_font"] == 1
     assert calls["font"] is fallback_font
+
+
+@pytest.mark.parametrize("position", ["top", "bottom", "custom"])
+def test_actual_watermark_insertion_reports_success_and_adds_pdf_text(blank_page, position):
+    settings = dict(watermark_enabled="True", watermark_text="Watermark", watermark_size=16,
+                    watermark_color="#abcdef", watermark_position=position,
+                    watermark_x_ratio=0.25, watermark_y_ratio=0.75)
+    assert wm.watermark_pdf_page(blank_page, settings) is True
+    assert "Watermark" in blank_page.get_text()
+
+
+@pytest.mark.parametrize("changes", [
+    {"watermark_text": ""}, {"watermark_text": " \t\n "}, {"watermark_text": 123},
+    {"watermark_enabled": "False"}, {"watermark_size": "bad"}, {"watermark_size": "1.5"},
+    {"watermark_size": 101}, {"watermark_size": -1}, {"watermark_size": True}, {"watermark_size": None},
+    {"watermark_color": "#123"}, {"watermark_color": "#gggggg"}, {"watermark_color": "red"},
+    {"watermark_color": []}, {"watermark_position": "invalid"},
+])
+def test_invalid_watermark_parameters_never_report_or_insert_changes(blank_page, changes):
+    settings = dict(watermark_enabled="True", watermark_text="Watermark", watermark_size=16,
+                    watermark_color="#ABCDEF", watermark_position="top") | changes
+    assert wm.watermark_pdf_page(blank_page, settings) is False
+    assert blank_page.get_text() == ""
+
+
+@pytest.mark.parametrize("insert_result,success", [(0, False), (-1, False), (1, True), (2, True)])
+def test_watermark_success_uses_native_insertion_result(blank_page, monkeypatch, insert_result, success):
+    monkeypatch.setattr(blank_page, "insert_text", lambda *args, **kwargs: insert_result)
+    assert wm.add_watermark(blank_page, "Text", 16, "#ABCDEF", "top") is success
+
+
+def test_insertion_errors_are_not_reported_as_success(blank_page, monkeypatch):
+    def fail(*args, **kwargs):
+        raise RuntimeError("insertion failed")
+
+    monkeypatch.setattr(blank_page, "insert_text", fail)
+    with pytest.raises(RuntimeError, match="insertion failed"):
+        wm.watermark_pdf_page(blank_page, dict(watermark_enabled="True", watermark_text="Text", watermark_size=16,
+                                             watermark_color="#ABCDEF", watermark_position="top"))
 

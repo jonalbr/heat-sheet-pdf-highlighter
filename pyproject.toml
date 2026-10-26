@@ -14,7 +14,7 @@ dependencies = [
     "pillow==13.0.0",
     "pymupdf-lite==2.0",
     "requests==2.34.2",
-    "tkinterweb==4.25.3",
+    "tkinterweb==4.25.5",
 ]
 
 [dependency-groups]

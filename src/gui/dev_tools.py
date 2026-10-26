@@ -1,14 +1,15 @@
-"""
-Developer Tools window
-"""
+"""Dev Tools with window-owned refreshes and a bounded, responsive layout."""
 
+from contextlib import suppress
+from dataclasses import dataclass
 import datetime
+import html
 import logging
 import os
 import queue
 import threading
 import webbrowser
-from tkinter import BooleanVar, StringVar, TclError, Toplevel, ttk
+from tkinter import BooleanVar, Canvas, StringVar, TclError, Toplevel, ttk
 from typing import TYPE_CHECKING
 
 import markdown2
@@ -16,132 +17,168 @@ from tkinterweb import HtmlFrame
 
 from ..utils.cache import load_releases_cache, save_releases_cache
 from ..version import Version
+from .dev_tools_geometry import (
+    Bounds,
+    apply_bounds,
+    beside_parent,
+    clamp_bounds,
+    frame_padding,
+    monitor_work_area,
+    window_bounds,
+)
 from .message_dialog import ask_ok_cancel, show_error
 from .ui_strings import get_ui_string
-from .widgets import Tooltip
+from .widgets import Tooltip, scrollbar_command
 
 if TYPE_CHECKING:
     from src.gui.main_window import PDFHighlighterApp
 
+logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class _RefreshContext:
+    """Identity captured on Tk before fetching one channel's release list."""
+
+    generation: int
+    refresh_id: int
+    channel: str
+
 
 class DevToolsWindow:
-    """Secret Dev Tools panel for debugging and channel selection."""
+    """App-owned developer controls; workers only fetch and enqueue plain results."""
 
     def __init__(self, app: "PDFHighlighterApp"):
+        """Keep request identities and UI state owned by this application instance."""
         self.app = app
-        self.window = None  # type: Toplevel | None
-        self._releases_refresh_id = 0  # incremental id used to ignore stale async refresh results
-        # Simple thread->main thread dispatcher queue; polled via root.after
-        # Use an untyped queue to avoid runtime typing issues (stores callables)
+        self.window = None
+        self._generation = 0
+        self._releases_refresh_id = 0
+        self._context = None
         self._dispatch_queue = queue.Queue()
-        self._dispatcher_started = False
+        self._dispatcher_id = None
+        self._lifetime_cancel = threading.Event()
+        self._busy = False
+        self._shown = False
+        self._user_sized = False
+        self._auto_size = None
+        self._releases_cache = {}
+        self._list_channel = None
+        self._load_state = "empty"
+        self._text_widgets = []
+        self._notes_markdown = ""
+
+    def _text(self, key):
+        """Resolve a label in the currently selected application language."""
+        return get_ui_string(self.app.strings, key)
+
+    @staticmethod
+    def _capture_mode():
+        """Identify screenshot runs that must avoid network activity."""
+        return os.getenv("HSPH_SCREENSHOT_MODE") in ("1", "true", "True")
+
+    def _caption(self, widget, key):
+        """Register widgets that can be translated without rebuilding the window."""
+        widget.configure(text=self._text(key))
+        self._text_widgets.append((widget, key))
+        return widget
 
     def open(self):
-        # Allow opening during screenshot mode only if specifically capturing devtools
-        _ss_mode = os.getenv("HSPH_SCREENSHOT_MODE") in ("1", "true", "True")
-        _ss_target = os.getenv("HSPH_SCREENSHOT_TARGET") or ""
-        _capture_devtools = _ss_mode and _ss_target == "devtools"
-        if _ss_mode and not _capture_devtools:
-            return  # other targets skip opening
-        if self.window and self._is_open():
-            try:
-                self.window.lift()
-                self.window.focus_force()
-            except Exception as e:
-                logging.getLogger("dev_tools").exception("Error focusing dev tools window: %s", e)
+        """Build hidden, finish geometry, then show the final window once."""
+        if getattr(self.app, "_closing", False):
             return
+        capture = self._capture_mode()
+        if capture and os.getenv("HSPH_SCREENSHOT_TARGET") != "devtools":
+            return
+        if self._is_open():
+            self.window.deiconify()
+            self.window.lift()
+            self.window.focus_set()
+            return
+        self._generation += 1
+        self._lifetime_cancel = threading.Event()
+        self._context = None
+        self._text_widgets = []
+        self._releases_cache = {}
+        self._list_channel = self._get_channel()
+        self._load_state = "empty"
+        self._shown = self._user_sized = False
+        self._auto_size = None
+        self._notes_markdown = ""
+        self.window = window = Toplevel(self.app.root)
+        window.withdraw()
+        window.transient(self.app.root)
+        window.resizable(True, True)
+        window.columnconfigure(0, weight=1)
+        window.rowconfigure(0, weight=1)
+        window.protocol("WM_DELETE_WINDOW", self.close)
+        window.bind("<Destroy>", self._on_destroy, add="+")
+        window.bind("<Configure>", self._on_window_configure, add="+")
+        self.app.apply_theme_to_window(window)
 
-        self.window = Toplevel(self.app.root)
-        self.window.title(get_ui_string(self.app.strings, "dev_tools"))
-        self.app.apply_theme_to_window(self.window)
-        self.window.transient(self.app.root)
-        self.window.resizable(False, False)
-        self.window.protocol("WM_DELETE_WINDOW", self.window.destroy)
+        viewport = ttk.Frame(window)
+        viewport.grid(sticky="nsew")
+        viewport.columnconfigure(0, weight=1)
+        viewport.rowconfigure(0, weight=1)
+        self.canvas = Canvas(viewport, width=1, height=1, highlightthickness=0, borderwidth=0)
+        self.canvas.grid(row=0, column=0, sticky="nsew")
+        self.scrollbar = ttk.Scrollbar(viewport, command=scrollbar_command(self.canvas.yview))
+        self.scrollbar.grid(row=0, column=1, sticky="ns")
+        self.canvas.configure(yscrollcommand=self.scrollbar.set)
+        self.content = ttk.Frame(self.canvas, padding=12)
+        self._content_item = self.canvas.create_window(0, 0, window=self.content, anchor="nw")
+        self.content.columnconfigure(0, weight=1)
+        self.content.rowconfigure(2, weight=1)
+        self.canvas.bind("<Configure>", self._resize_viewport)
+        self.content.bind("<Configure>", self._content_changed)
+        window.bind("<MouseWheel>", self._scroll_form, add="+")
+        window.bind("<FocusIn>", self._reveal_control, add="+")
 
-        # --- Update Channel Section ---
-        frame = ttk.LabelFrame(self.window, text=get_ui_string(self.app.strings, "dev_update_channel"))
-        frame.grid(row=0, column=0, padx=12, pady=10, sticky="we")
-
-        self.channel_var = StringVar()
-        self.channel_var.set(self.app.app_settings.settings.get("update_channel", "stable"))
-        options = [
-            ("stable", get_ui_string(self.app.strings, "dev_stable")),
-            ("rc", get_ui_string(self.app.strings, "dev_rc")),
-        ]
-        label_by_key = {k: lbl for k, lbl in options}
-        key_by_label = {lbl: k for k, lbl in options}
-        initial_label = label_by_key.get(self.channel_var.get(), "Stable")
-
-        ttk.Label(frame, text=get_ui_string(self.app.strings, "dev_channel")).grid(row=0, column=0, padx=8, pady=6, sticky="w")
-        combo = ttk.Combobox(frame, state="readonly", values=[lbl for _, lbl in options])
-        combo.set(initial_label)
-        combo.grid(row=0, column=1, padx=8, pady=6, sticky="we")
-
-        # Global SHA verification toggle (applies to all installs)
-        self.sha_required = BooleanVar(value=(self.app.app_settings.settings.get("verify_sha", "True") == "True"))
-        sha_cb = ttk.Checkbutton(
-            frame,
-            text=get_ui_string(self.app.strings, "dev_verify_sha256"),
-            variable=self.sha_required,
-            command=lambda: self.app.app_settings.update_setting("verify_sha", "True" if self.sha_required.get() else "False"),
+        channel_frame = self._caption(ttk.LabelFrame(self.content, padding=8), "dev_update_channel")
+        channel_frame.grid(row=0, column=0, sticky="ew", pady=(0, 10))
+        channel_frame.columnconfigure(1, weight=1)
+        self._caption(ttk.Label(channel_frame), "dev_channel").grid(row=0, column=0, sticky="w", padx=(0, 8))
+        self.channel_var = StringVar(window)
+        self.channel_combo = ttk.Combobox(channel_frame, state="readonly", width=24)
+        self.channel_combo.grid(row=0, column=1, sticky="ew")
+        self.channel_combo.bind("<<ComboboxSelected>>", self._select_channel)
+        self.sha_required = BooleanVar(window)
+        self.sha_checkbox = self._caption(
+            ttk.Checkbutton(channel_frame, variable=self.sha_required, command=self._set_sha_required),
+            "dev_verify_sha256",
         )
-        sha_cb.grid(row=0, column=2, padx=8, pady=6, sticky="w")
-        Tooltip(
-            sha_cb,
-            text=get_ui_string(self.app.strings, "dev_sha256_info"),
+        self.sha_checkbox.grid(row=1, column=0, columnspan=2, sticky="w", pady=(8, 0))
+
+        debug_frame = self._caption(ttk.LabelFrame(self.content, padding=8), "dev_debug")
+        debug_frame.grid(row=1, column=0, sticky="ew", pady=(0, 10))
+        self._caption(ttk.Button(debug_frame, command=self._open_settings_file), "dev_open_settings").grid(sticky="w")
+
+        releases_frame = self._caption(ttk.LabelFrame(self.content, padding=8), "dev_install_specific")
+        releases_frame.grid(row=2, column=0, sticky="nsew", pady=(0, 10))
+        releases_frame.columnconfigure(0, weight=1)
+        releases_frame.rowconfigure(3, weight=1)
+        self.releases_combo = ttk.Combobox(releases_frame, state="readonly", width=30)
+        self.releases_combo.grid(row=0, column=0, sticky="ew")
+        self.releases_combo.bind("<<ComboboxSelected>>", lambda _event: self._selection_changed())
+        self.release_hint = ttk.Label(releases_frame, wraplength=540, justify="left")
+        self.release_hint.grid(row=1, column=0, sticky="ew", pady=(6, 0))
+        actions = ttk.Frame(releases_frame)
+        actions.grid(row=2, column=0, sticky="ew", pady=(8, 0))
+        actions.columnconfigure(0, weight=1)
+        self.retry_button = self._caption(
+            ttk.Button(actions, command=lambda: self._start_refresh_releases_async(force=True)), "btn_retry"
         )
-        frame.grid_columnconfigure(1, weight=1)
-
-        def on_select(_evt=None):
-            label = combo.get()
-            channel = key_by_label.get(label, "stable")
-            if channel != self.app.app_settings.settings.get("update_channel"):
-                self.channel_var.set(channel)
-                self._on_channel_changed()
-
-        combo.bind("<<ComboboxSelected>>", on_select)
-
-        # --- Placeholder for future debug options ---
-        debug_frame = ttk.LabelFrame(self.window, text=get_ui_string(self.app.strings, "dev_debug"))
-        debug_frame.grid(row=1, column=0, padx=12, pady=(0, 10), sticky="we")
-
-        # Open settings file
-        ttk.Button(debug_frame, text=get_ui_string(self.app.strings, "dev_open_settings"), command=self._open_settings_file).grid(
-            row=0, column=0, padx=8, pady=6, sticky="w"
+        self.retry_button.grid(row=0, column=0, sticky="w", padx=(0, 8))
+        self.install_button = self._caption(
+            ttk.Button(actions, command=self._install_selected_release), "dev_btn_install"
         )
-
-        # Releases section
-        releases_frame = ttk.LabelFrame(self.window, text=get_ui_string(self.app.strings, "dev_install_specific"))
-        releases_frame.grid(row=2, column=0, padx=12, pady=(0, 10), sticky="we")
-
-        # Refresh implicitly on open and on channel change
-        self.releases_combo = ttk.Combobox(releases_frame, state="readonly", values=[])
-        self.releases_combo.grid(row=0, column=0, padx=8, pady=6, sticky="we")
-        # Update release notes when selection changes
-        self.releases_combo.bind("<<ComboboxSelected>>", lambda _e: self._update_release_notes())
-        releases_frame.grid_columnconfigure(0, weight=1)
-
-        ttk.Button(releases_frame, text=get_ui_string(self.app.strings, "dev_btn_install"), command=self._install_selected_release).grid(
-            row=0, column=1, padx=8, pady=6, sticky="e"
-        )
-
-        # Collapsible Release Notes area (hidden by default)
-        # Inline toggle: small triangle + label (clickable) to expand/collapse notes
-        self._notes_toggle = ttk.Frame(releases_frame)
-        # triangle label and text label
-        self._notes_triangle_label = ttk.Label(self._notes_toggle, text="\u25b6")
-        self._notes_text_label = ttk.Label(self._notes_toggle, text=get_ui_string(self.app.strings, "dev_release_notes"))
-        self._notes_triangle_label.pack(side="left")
-        self._notes_text_label.pack(side="left", padx=(4, 0))
-        # Make it clickable like a button
-        for widget in (self._notes_triangle_label, self._notes_text_label):
-            widget.bind("<Button-1>", lambda _e: self._toggle_release_notes())
-            widget.configure(cursor="hand2")
-        self._notes_toggle.grid(row=0, column=2, padx=6, pady=6, sticky="e")
-
+        self.install_button.grid(row=0, column=1, sticky="e", padx=(0, 8))
+        self.notes_button = ttk.Button(actions, command=self._toggle_release_notes)
+        self.notes_button.grid(row=0, column=2, sticky="e")
         self.notes_frame = ttk.Frame(releases_frame)
-
-        # HTML/Markdown renderer
+        self.notes_frame.grid(row=3, column=0, sticky="nsew", pady=(8, 0))
+        self.notes_frame.columnconfigure(0, weight=1)
+        self.notes_frame.rowconfigure(0, weight=1)
         self.notes_html = HtmlFrame(
             self.notes_frame,
             horizontal_scrollbar=False,
@@ -149,441 +186,554 @@ class DevToolsWindow:
             messages_enabled=False,
             shrink=False,
             fontscale=1.0,
-            width=600,
+            width=1,
             height=250,
         )
-        self.notes_html.load_html("")
-        self._configure_notes_html()
-        self.notes_html.grid(row=0, column=0, sticky="nsew")
-
-        self.notes_frame.grid_columnconfigure(0, weight=1)
-        self.notes_frame.grid_rowconfigure(0, weight=1)
-        # Hide notes by default
+        self.notes_html.grid(sticky="nsew")
         self.release_notes_shown = False
-        self.notes_frame.grid(row=1, column=0, columnspan=3, padx=8, pady=(4, 8), sticky="nsew")
         self.notes_frame.grid_remove()
 
-        # Reset settings
-        reset_frame = ttk.LabelFrame(self.window, text=get_ui_string(self.app.strings, "dev_reset_settings"))
-        reset_frame.grid(row=3, column=0, padx=12, pady=(0, 10), sticky="we")
-        ttk.Button(reset_frame, text=get_ui_string(self.app.strings, "dev_reset_defaults"), command=self._reset_settings).grid(
-            row=0, column=0, padx=8, pady=6, sticky="w"
-        )
-
-        # Adjust grid without explicit Close button and populate releases initially
-        self.window.grid_rowconfigure(3, weight=0)
-        # Start async refresh unless we're in a devtools screenshot capture (avoid network & threads)
-        if not _capture_devtools:
+        reset_frame = self._caption(ttk.LabelFrame(self.content, padding=8), "dev_reset_settings")
+        reset_frame.grid(row=3, column=0, sticky="ew")
+        self.reset_button = self._caption(ttk.Button(reset_frame, command=self._reset_settings), "dev_reset_defaults")
+        self.reset_button.grid(sticky="w")
+        self._sync_options()
+        self.refresh_ui_strings()
+        self.set_busy(getattr(self.app, "output_options_locked", False))
+        if capture:
+            self._populate_releases_for_screenshot()
+        else:
             self._start_dispatcher()
             self._start_refresh_releases_async()
-        else:
-            # Populate releases combo using cache or stub list for screenshot aesthetics
-            try:
-                self._populate_releases_for_screenshot()
-            except Exception as e:  # pragma: no cover - defensive
-                logging.getLogger("dev_tools").exception("Error populating screenshot releases: %s", e)
-        self.app.apply_theme_to_window(self.window)
+        self.app.apply_theme_to_window(window)
+        self._fit_initial_geometry()
+        self._shown = True
+        window.deiconify()
 
-    def refresh_ui_strings(self):
-        """Refresh UI strings for the dev tools window after language change.
-
-        If the window is open, destroy and re-open it so all labels/strings are
-        created using the new translations. If it's not open, nothing to do.
-        """
-        try:
-            if self._is_open():
-                try:
-                    if self.window is not None:
-                        self.window.destroy()
-                except Exception as e:
-                    logging.getLogger("dev_tools").exception("Error destroying dev tools window: %s", e)
-                # Re-open will recreate the window with updated strings
-                self.open()
-        except Exception as e:
-            logging.getLogger("dev_tools").exception("Error refreshing UI strings: %s", e)
-
-    def _on_channel_changed(self):
-        channel = self.channel_var.get()
-        self.app.app_settings.update_setting("update_channel", channel)
-
-        def _quiet_check():
-            current = self.app_update_current_version()
-            latest = self.app.update_checker.check_for_app_updates(current_version=current, force_check=True, quiet=True)
-            self.app.update_version_labels_text(latest, current)
-            self.app.update_version_labels()
-
-        # Avoid spawning network work in screenshot mode
-        if os.getenv("HSPH_SCREENSHOT_MODE") in ("1", "true", "True"):
-            return
-        threading.Thread(target=_quiet_check, daemon=True).start()
-        self._start_refresh_releases_async()
-
-    def app_update_current_version(self):
-        return Version.from_str(self.app.app_settings.settings["version"])
-
-    def _is_open(self) -> bool:
+    def _is_open(self):
+        """Check whether the current window still has a live Tcl widget."""
         try:
             return bool(self.window and self.window.winfo_exists())
-        except Exception as e:
-            logging.getLogger("dev_tools").exception("Error checking if dev tools window is open: %s", e)
+        except TclError:
             return False
 
-    # --- Extra actions ---
-    def _open_settings_file(self):
-        try:
-            path = str(self.app.paths.settings_file)
-            webbrowser.open(path)
-        except Exception as e:
-            logging.getLogger("dev_tools").exception("Error opening settings file: %s", e)
-            show_error(self.app, get_ui_string(self.app.strings, "error"), str(e))
+    def close(self):
+        """Invalidate workers and remove all callbacks belonging to this window."""
+        window, self.window = self.window, None
+        self._lifetime_cancel.set()
+        self._generation += 1
+        self._releases_refresh_id += 1
+        self._context = None
+        self._shown = False
+        if self._dispatcher_id is not None:
+            with suppress(TclError):
+                self.app.root.after_cancel(self._dispatcher_id)
+        self._dispatcher_id = None
+        self._discard_queue()
+        self._text_widgets = []
+        if window is not None:
+            with suppress(TclError):
+                window.destroy()
 
-    def _apply_releases(self, releases: list[dict]):
-        try:
-            tags = [r["tag"] for r in releases if r.get("exe_url")]
-            self._releases_cache = {r["tag"]: r for r in releases}
-            if tags:
-                self.releases_combo["values"] = tags
-                self.releases_combo.set(tags[0])
-                # Update release notes for initially selected
-                try:
-                    self._update_release_notes()
-                except Exception as e:
-                    logging.getLogger("dev_tools").exception("Error updating release notes: %s", e)
-            else:
-                self.releases_combo["values"] = []
-                self.releases_combo.set("")
-        except Exception as e:
-            logging.getLogger("dev_tools").exception("Error applying releases: %s", e)
+    def _on_destroy(self, event):
+        """Clean up even when a parent or external caller destroys the window."""
+        if event.widget is self.window:
+            self.close()
+
+    def _discard_queue(self):
+        """Drop pending messages without invoking callbacks on destroyed controls."""
+        while True:
+            try:
+                self._dispatch_queue.get_nowait()
+            except queue.Empty:
+                return
+
+    def _layout_width(self, width):
+        """Wrap hints and actions using the allocated form width."""
+        self.canvas.itemconfigure(self._content_item, width=max(1, width))
+        self.release_hint.configure(wraplength=max(80, width - 48))
+        # Keep translated action buttons together, wrapping when the viewport is narrow.
+        total = sum(
+            button.winfo_reqwidth() + 8 for button in (self.retry_button, self.install_button, self.notes_button)
+        )
+        self.notes_button.grid(
+            row=1 if total > width - 48 else 0,
+            column=0 if total > width - 48 else 2,
+            columnspan=3 if total > width - 48 else 1,
+            sticky="e",
+            pady=(4, 0),
+        )
+
+    def _resize_viewport(self, event):
+        """Keep the embedded form aligned with the scrollable viewport."""
+        self._layout_width(event.width)
+        self._content_changed()
+
+    def _content_changed(self, _event=None):
+        """Fill spare height while preserving the full scrollable content extent."""
+        height = max(self.content.winfo_reqheight(), self.canvas.winfo_height())
+        self.canvas.itemconfigure(self._content_item, height=height)
+        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+
+    def _scroll_form(self, event):
+        """Leave wheel events inside the HTML document to its own scrollbar."""
+        if event.widget in (self.scrollbar, self.channel_combo, self.releases_combo):
+            return
+        widget = event.widget
+        while widget is not None and widget is not self.window:
+            if widget.__class__.__module__.startswith("tkinterweb"):
+                return
+            widget = getattr(widget, "master", None)
+        if event.delta:
+            self.canvas.yview_scroll(-1 if event.delta > 0 else 1, "units")
+
+    def _reveal_control(self, event):
+        """Scroll keyboard-focused controls into the visible part of the form."""
+        widget = event.widget
+        if not str(widget).startswith(str(self.content) + "."):
+            return
+        top = widget.winfo_rooty() - self.content.winfo_rooty()
+        bottom = top + widget.winfo_height()
+        visible = self.canvas.canvasy(0)
+        if top < visible or bottom > visible + self.canvas.winfo_height():
+            target = max(0, top - 8) if top < visible else bottom + 8 - self.canvas.winfo_height()
+            self.canvas.yview_moveto(target / max(1, self.content.winfo_height()))
+
+    def _fit_initial_geometry(self):
+        """Measure hidden content and place its complete frame beside the parent."""
+        self._work = monitor_work_area(self.app.root)
+        self.window.update_idletasks()
+        self._padding = frame_padding(self.window)
+        font = getattr(self.app, "ui_font", None)
+        minimum = max(320, font.measure("M" * 18) + 48) if font else 320
+        max_width = max(1, self._work.width - self._padding[0])
+        max_height = max(1, self._work.height - self._padding[1])
+        self.window.minsize(min(minimum, max_width), min(180, max_height))
+        width = min(max_width, max(620, minimum))
+        self._layout_width(max(1, width - self.scrollbar.winfo_reqwidth()))
+        self.window.update_idletasks()
+        height = min(max_height, max(self.window.minsize()[1], self.content.winfo_reqheight()))
+        bounds = beside_parent(
+            window_bounds(self.app.root), (width + self._padding[0], height + self._padding[1]), self._work
+        )
+        self._auto_size = (width, height)
+        apply_bounds(self.window, bounds, self._padding)
+
+    def _on_window_configure(self, event):
+        """Remember manual resizing so later toggles do not replace user geometry."""
+        if event.widget is self.window and self._shown and self._auto_size is not None:
+            if (event.width, event.height) != self._auto_size:
+                self._user_sized = True
 
     def _toggle_release_notes(self):
-        """Show or hide the release notes area."""
+        """Fit automatic heights to notes while retaining manually resized windows."""
+        self.release_notes_shown = not self.release_notes_shown
         if self.release_notes_shown:
-            # hide
-            self.notes_frame.grid_remove()
-            try:
-                self._notes_triangle_label.config(text="\u25b6")
-            except Exception as e:
-                logging.getLogger("dev_tools").exception("Error updating notes triangle label: %s", e)
-            self.release_notes_shown = False
-        else:
-            # show
             self.notes_frame.grid()
-            try:
-                self._notes_triangle_label.config(text="\u25bc")
-            except Exception as e:
-                logging.getLogger("dev_tools").exception("Error updating notes triangle label: %s", e)
-            self.release_notes_shown = True
+        else:
+            self.notes_frame.grid_remove()
+        self._render_notes_button()
+        if not self._user_sized:
+            self._work = monitor_work_area(self.window)
+            self.window.update_idletasks()
+            current = window_bounds(self.window)
+            height = min(
+                self._work.height,
+                max(self.window.minsize()[1] + self._padding[1], self.content.winfo_reqheight() + self._padding[1]),
+            )
+            bounds = clamp_bounds(Bounds(current.left, current.top, current.right, current.top + height), self._work)
+            self._auto_size = (bounds.width - self._padding[0], bounds.height - self._padding[1])
+            apply_bounds(self.window, bounds, self._padding)
+        self._content_changed()
 
-    def _update_release_notes(self):
-        """Populate the notes_text from the selected release, using cache if available."""
-        tag = self.releases_combo.get()
-        if not tag:
-            self._set_notes_text("")
+    def _render_notes_button(self):
+        """Translate the accessible notes toggle and its expanded indicator."""
+        arrow = "\u25bc" if self.release_notes_shown else "\u25b6"
+        self.notes_button.configure(text=f"{arrow} {self._text('dev_release_notes')}")
+
+    def _sync_options(self):
+        """Read committed settings without firing selection or persistence handlers."""
+        settings = self.app.app_settings.snapshot()
+        self.channel_var.set(settings.get("update_channel", "stable"))
+        self.sha_required.set(settings.get("verify_sha", "True") == "True")
+        labels = {key: self._text(label) for key, label in (("stable", "dev_stable"), ("rc", "dev_rc"))}
+        self._key_by_label = {label: key for key, label in labels.items()}
+        self.channel_combo.configure(values=list(labels.values()))
+        self.channel_combo.set(labels[self.channel_var.get()])
+
+    def refresh_ui_strings(self):
+        """Translate existing widgets while keeping geometry, notes and selection."""
+        if not self._is_open():
             return
-        rel = getattr(self, "_releases_cache", {}).get(tag)
-        notes = ""
-        if rel:
-            # The releases dict from GitHub may include a "body" field with release notes
-            notes = rel.get("body") or rel.get("notes") or ""
-        # Fallback: if cache file contains releases, try to load more detailed body
-        self._set_notes_text(notes)
+        self.window.title(self._text("dev_tools"))
+        for widget, key in self._text_widgets:
+            widget.configure(text=self._text(key))
+        self._sync_options()
+        Tooltip(self.sha_checkbox, self._text("dev_sha256_info"))
+        self._render_notes_button()
+        if self._list_channel != self._get_channel():
+            self._clear_releases()
+            self._list_channel = self._get_channel()
+            if self._capture_mode():
+                self._context = None
+                self._populate_releases_for_screenshot()
+            else:
+                self._start_refresh_releases_async()
+        self._render_release_state()
+        self.refresh_theme()
 
-    def _set_notes_text(self, text: str):
-        try:
-            html = self.md_to_html(text)
-        except Exception as e:
-            logging.getLogger("dev_tools").exception("Error converting markdown to HTML: %s", e)
-            html = "<pre>" + (text or "") + "</pre>"
-        try:
-            # Load HTML into the HtmlFrame widget (tkinterweb handles CSS and headings)
-            self.notes_html.load_html(self._themed_html(html or ""))
-        except Exception as e:
-            logging.getLogger("dev_tools").exception("Error setting HTML: %s", e)
-
-    def _configure_notes_html(self) -> None:
+    def refresh_theme(self):
+        """Restyle the live notes document instead of keeping its previous colors."""
+        if not self._is_open():
+            return
+        fraction = self.notes_html.html.yview()[0]
         colors = getattr(self.app, "_current_theme_colors", None)
-        if colors is None:
-            return
-        try:
-            self.notes_html.configure(background=colors.field_background)
-        except TclError:
-            return
-
-    def _themed_html(self, body_html: str) -> str:
-        colors = getattr(self.app, "_current_theme_colors", None)
-        if colors is None:
-            return body_html
-        return f"""
-        <html>
-          <head>
-            <style>
-              body {{
-                background: {colors.field_background};
-                color: {colors.foreground};
-                font-family: "Segoe UI", Arial, sans-serif;
-                font-size: 10pt;
-                margin: 10px;
-              }}
-              a {{ color: {colors.select_background}; }}
-              code, pre {{
-                background: {colors.background};
-                color: {colors.foreground};
-                border: 1px solid {colors.border};
-              }}
-            </style>
-          </head>
-          <body>{body_html}</body>
-        </html>
-        """
+        if colors is not None:
+            ttk.Style(self.window).configure("DevNotes.TFrame", background=colors.field_background)
+            self.notes_html.configure(style="DevNotes.TFrame")
+        self._set_notes_text(self._notes_markdown)
+        self._render_release_state()
+        if self._shown:
+            self.window.update_idletasks()
+            self._layout_width(self.canvas.winfo_width())
+            self.window.update_idletasks()
+        self.notes_html.yview_moveto(fraction)
 
     @staticmethod
     def md_to_html(md_text):
-        # Enable extras that mirror GitHub-flavored Markdown features commonly used
-        extras = [
-            "fenced-code-blocks",
-            "tables",
-            "strike",
-            "task_list",
-            "toc",
-            "header-ids",
-            "break-on-newline",
-            "code-friendly",
-            "smarty-pants",
-        ]
-        return markdown2.markdown(md_text, extras=extras)
+        """Render release markdown using the existing supported formatting features."""
+        return markdown2.markdown(
+            md_text,
+            extras=[
+                "fenced-code-blocks",
+                "tables",
+                "strike",
+                "task_list",
+                "toc",
+                "header-ids",
+                "break-on-newline",
+                "code-friendly",
+                "smarty-pants",
+            ],
+        )
 
-    def _refresh_releases_async(self):
-        def worker():
-            try:
-                channel = self.app.app_settings.settings.get("update_channel", "stable")
-                releases = self.app.update_checker.list_releases(channel=channel)
-                # schedule UI update on main app root; the callback will re-check that
-                # the Dev Tools window still exists before touching its widgets.
-                try:
-                    self._schedule_on_main(lambda r=releases: self._safe_apply_releases(r))
-                except Exception as e:
-                    logging.getLogger("dev_tools").exception("Error scheduling release application: %s", e)
-                    # if scheduling failed for any reason, ignore
-                    return
-            except Exception as _exc:
-                # Use the main app root to show errors to avoid scheduling on a possibly-destroyed Toplevel
-                try:
-                    self._schedule_on_main(lambda e=_exc: show_error(self.app, get_ui_string(self.app.strings, "error"), str(e)))
-                except Exception as e:
-                    logging.getLogger("dev_tools").exception("Error showing error message: %s", e)
+    def _themed_html(self, body_html):
+        """Build the document style from current colors and the named UI font size."""
+        colors = getattr(self.app, "_current_theme_colors", None)
+        if colors is None:
+            return body_html
+        font = getattr(self.app, "ui_font", None)
+        size = abs(int(font.cget("size"))) if font else 10
+        return f"""<html><head><style>
+        body {{background:{colors.field_background};color:{colors.foreground};font-family:Arial,sans-serif;
+               font-size:{max(1, size)}pt;margin:10px;}}
+        a {{color:{colors.select_background};}}
+        code,pre {{background:{colors.background};color:{colors.foreground};border:1px solid {colors.border};}}
+        </style></head><body>{body_html}</body></html>"""
 
-        threading.Thread(target=worker, daemon=True).start()
+    def _set_notes_text(self, text):
+        """Retain source markdown for live restyling and escape any rendering fallback."""
+        self._notes_markdown = text or ""
+        try:
+            body = self.md_to_html(self._notes_markdown)
+        except Exception:
+            logger.exception("Could not render release notes")
+            body = "<pre>" + html.escape(self._notes_markdown) + "</pre>"
+        self.notes_html.load_html(self._themed_html(body))
 
-    def _start_refresh_releases_async(self, force: bool = False):
-        """Increment refresh token and start async refresh worker (ignores stale results).
+    def _update_release_notes(self):
+        """Display the notes belonging to the selected release record."""
+        record = self._releases_cache.get(self.releases_combo.get(), {})
+        self._set_notes_text(record.get("body") or record.get("notes") or "")
 
-        If a cached releases file exists it will be applied immediately to populate the UI.
-        A network fetch only runs if cache is stale (based on settings TTL) or if force=True.
-        """
-        self._releases_refresh_id += 1
-        current_id = self._releases_refresh_id
+    def _selection_changed(self):
+        """Update notes and install eligibility together after browsing releases."""
+        self._update_release_notes()
+        self._render_release_state()
 
-        channel = self._get_channel()
-        fetched_at, cached_channel, cached_releases = load_releases_cache()
-
-        # Apply cached (if matches channel) to populate UI fast
-        self._apply_cached_releases_if_channel_matches(cached_channel, cached_releases, channel)
-
-        ttl_seconds = int(self.app.app_settings.settings.get("releases_cache_ttl_seconds", 600))
-        if not self._should_fetch_releases(force, fetched_at, cached_channel, channel, ttl_seconds):
-            return
-
-        # Fetch and apply asynchronously with stale-guard
-        threading.Thread(target=lambda: self._fetch_and_apply_releases_async(current_id), daemon=True).start()
-
-    # --- Helpers to reduce complexity in _start_refresh_releases_async ---
-    def _get_channel(self) -> str:
+    def _get_channel(self):
+        """Read the committed release channel on the Tk thread."""
         return self.app.app_settings.settings.get("update_channel", "stable")
 
-    def _apply_cached_releases_if_channel_matches(self, cached_channel: str | None, cached_releases: list[dict] | None, current_channel: str) -> None:
-        if not cached_releases or cached_channel != current_channel:
-            return
-        try:
-            self._schedule_on_main(lambda r=cached_releases: self._safe_apply_releases(r))
-        except Exception as e:
-            logging.getLogger("dev_tools").exception("Error applying cached releases: %s", e)
+    def app_update_current_version(self):
+        """Parse the currently configured application version."""
+        return Version.from_str(self.app.app_settings.settings["version"])
 
-    def _should_fetch_releases(
-        self,
-        force: bool,
-        fetched_at: datetime.datetime | None,
-        cached_channel: str | None,
-        current_channel: str,
-        ttl_seconds: int,
-    ) -> bool:
-        if force:
-            return True
-        if not fetched_at or cached_channel != current_channel:
-            return True
-        try:
-            age = (datetime.datetime.now() - fetched_at).total_seconds()
-            return age > ttl_seconds
-        except Exception as e:
-            logging.getLogger("dev_tools").exception("Error computing cache age: %s", e)
-            return True
+    def _controls_locked(self):
+        """Include the downloader reservation before its GUI state is established."""
+        return bool(
+            self._busy
+            or getattr(self.app, "output_options_locked", False)
+            or getattr(self.app.update_checker, "_active_download", False)
+        )
 
-    def _fetch_and_apply_releases_async(self, refresh_id: int) -> None:
-        try:
-            channel = self._get_channel()
-            releases = self.app.update_checker.list_releases(channel=channel)
-            # persist releases to cache
-            try:
-                save_releases_cache(releases=releases, channel=channel, fetched_at=datetime.datetime.now())
-            except Exception as e:
-                logging.getLogger("dev_tools").exception("Error saving releases cache: %s", e)
+    def set_busy(self, busy):
+        """Guard update-affecting actions while leaving browsing available."""
+        self._busy = busy
+        if self._is_open():
+            self._render_release_state()
 
-            def _apply_if_current(r=releases, rid=refresh_id):
-                if rid != self._releases_refresh_id:
-                    return
-                self._safe_apply_releases(r)
-            self._schedule_on_main(_apply_if_current)
-        except Exception as _exc:
-            self._show_error_async(_exc)
+    def _select_channel(self, _event=None):
+        """Map a localized selection back to the persistent channel key."""
+        self.channel_var.set(self._key_by_label.get(self.channel_combo.get(), self._get_channel()))
+        self._on_channel_changed()
 
-    def _show_error_async(self, exc: Exception) -> None:
-        try:
-            self._schedule_on_main(lambda e=exc: show_error(self.app, get_ui_string(self.app.strings, "error"), str(e)))
-        except Exception as e:
-            logging.getLogger("dev_tools").exception("Error showing error message: %s", e)
-
-    def _install_selected_release(self):
-        tag = self.releases_combo.get()
-        if not tag:
+    def _on_channel_changed(self):
+        """Clear old-channel data before starting replacement checks."""
+        if self._controls_locked():
+            self._sync_options()
             return
-        rel = getattr(self, "_releases_cache", {}).get(tag)
-        if not rel or not rel.get("exe_url"):
-            show_error(
-                self.app,
-                get_ui_string(self.app.strings, "error"),
-                get_ui_string(self.app.strings, "upd_download_failed").format("No installer asset"),
-            )
+        channel = self.channel_var.get()
+        if channel == self._get_channel():
             return
-        exe_url = rel["exe_url"]
-        verify_required = self.sha_required.get()
-        sha_url = rel.get("sha_url") if verify_required else None
-        # If verification is required globally but the release has no .sha256, block install to match updater policy
-        if verify_required and not sha_url:
-            show_error(
-                self.app,
-                get_ui_string(self.app.strings, "error"),
-                get_ui_string(self.app.strings, "upd_download_failed").format("Missing checksum (.sha256) for this release"),
-            )
+        self.app.app_settings.update_settings(
+            {"update_channel": channel, "newest_version_available": "0.0.0", "ask_for_update": "True"}
+        )
+        self.app.update_checker.channel_changed()
+        current = self.app_update_current_version()
+        self.app.update_version_labels_text(current, current)
+        self.app.update_version_labels()
+        self._clear_releases()
+        self._list_channel = channel
+        self._sync_options()
+        if self._capture_mode():
+            self._context = None
+            self._render_release_state()
             return
-        # Confirm install with the user
-        if not ask_ok_cancel(
-            self.app,
-            get_ui_string(self.app.strings, "dev_install_specific"),
-            get_ui_string(self.app.strings, "dev_confirm_install").format(tag),
-        ):
-            return
-        # Use existing updater flow to download and run installer
-        threading.Thread(target=lambda: self.app.update_checker.download_and_run_installer(exe_url, sha_url), daemon=True).start()
-
-    def _reset_settings(self):
-        if not ask_ok_cancel(
-            self.app,
-            get_ui_string(self.app.strings, "dev_reset_settings"),
-            get_ui_string(self.app.strings, "dev_confirm_reset"),
-        ):
-            return
-        self.app.app_settings.reset_to_defaults()
-        # Re-apply language and refresh UI
-        self.app.on_language_change(self.app.app_settings.settings["language"])
-        # Update channel control
-        self.channel_var.set(self.app.app_settings.settings.get("update_channel", "stable"))
         self._start_refresh_releases_async()
 
-    # --- Screenshot helper ---
-    def _populate_releases_for_screenshot(self):
-        """Populate releases_combo without network when capturing a devtools screenshot.
+        def check():
+            try:
+                self.app.update_checker.check_for_app_updates(current_version=current, force_check=True, quiet=True)
+            except Exception:
+                logger.exception("Could not check the newly selected update channel")
 
-        Preference order:
-          1. Use cached releases if channel matches.
-          2. Otherwise fabricate a small deterministic list of tags to make the UI illustrative.
-        """
+        threading.Thread(target=check, daemon=True).start()
+
+    def _set_sha_required(self):
+        """Persist checksum policy only when no owned operation has locked it."""
+        if self._controls_locked():
+            self._sync_options()
+            return
+        self.app.app_settings.update_setting("verify_sha", "True" if self.sha_required.get() else "False")
+        self._render_release_state()
+
+    def _clear_releases(self):
+        """Remove stale choices and notes immediately on a channel change."""
+        self._releases_cache = {}
+        self.releases_combo.configure(values=[])
+        self.releases_combo.set("")
+        self._set_notes_text("")
+        self._load_state = "empty"
+
+    def _apply_releases(self, releases):
+        """Keep the selected tag on same-channel refreshes when it still exists."""
+        selected = self.releases_combo.get()
+        self._releases_cache = {
+            r["tag"]: r for r in releases if isinstance(r, dict) and isinstance(r.get("tag"), str) and r.get("exe_url")
+        }
+        tags = list(self._releases_cache)
+        self.releases_combo.configure(values=tags)
+        self.releases_combo.set(selected if selected in tags else tags[0] if tags else "")
+        self._load_state = "ready" if tags else "empty"
+        self._selection_changed()
+
+    def _render_release_state(self):
+        """Derive control states and useful hints from data readiness and ownership."""
+        locked = self._controls_locked()
+        self.channel_combo.configure(state="disabled" if locked else "readonly")
+        self.sha_checkbox.configure(state="disabled" if locked else "normal")
+        self.reset_button.configure(state="disabled" if locked else "normal")
+        self.releases_combo.configure(state="readonly" if self._releases_cache else "disabled")
+        record = self._releases_cache.get(self.releases_combo.get(), {})
+        missing_checksum = bool(record and self.sha_required.get() and not record.get("sha_url"))
+        eligible = bool(record.get("exe_url") and not missing_checksum)
+        self.install_button.configure(state="normal" if eligible and not locked else "disabled")
+        key = {
+            "empty": "dev_versions_empty",
+            "loading": "dev_versions_loading",
+            "failed": "dev_versions_failed",
+            "cached_failed": "dev_versions_cached",
+        }.get(self._load_state)
+        hints = [self._text(key)] if key else []
+        if missing_checksum:
+            hints.append(self._text("dev_checksum_missing"))
+        self.release_hint.configure(text="\n".join(hints))
+        self.retry_button.configure(state="disabled" if self._load_state == "loading" else "normal")
+
+    def _valid_context(self, context):
+        """Accept only the current window, request and committed channel."""
+        return bool(
+            self._is_open()
+            and not getattr(self.app, "_closing", False)
+            and self._context == context
+            and context.channel == self._get_channel()
+        )
+
+    def _start_refresh_releases_async(self, force=False):
+        """Capture context on Tk and apply cached/network results through one gate."""
+        if not self._is_open() or getattr(self.app, "_closing", False):
+            return
+        self._releases_refresh_id += 1
         channel = self._get_channel()
-        fetched_at, cached_channel, cached = load_releases_cache()
-        releases: list[dict]
-        if cached and cached_channel == channel:
-            releases = cached
-        else:
-            # Fabricate simple stub releases (ensure exe_url present so they appear selectable/valid)
-            base = self.app.app_settings.settings.get("version", "1.0.0")
-            try:
-                parsed = Version.from_str(base)
-                major, minor, patch = parsed.major, parsed.minor, parsed.patch
-            except ValueError:
-                major = minor = patch = 0
-            # Create a couple of forward tags for realism
-            stub_versions = [f"{major}.{minor}.{patch}"]
-            releases = [
-                {
-                    "tag": v,
-                    "prerelease": Version.from_str(v).rc is not None,
-                    "exe_url": f"https://example.invalid/download/{v}/installer.exe",
-                    "sha_url": f"https://example.invalid/download/{v}/installer.exe.sha256",
-                    "body": f"_Placeholder release notes for {v} (screenshot mode)._",
-                }
-                for v in stub_versions
-            ]
-        # Apply releases directly
-        self._apply_releases(releases)
-
-    # --- New helpers for safer cross-thread scheduling ---
-    def _start_dispatcher(self):
-        if self._dispatcher_started:
-            return
-        self._dispatcher_started = True
-
-        def _drain_queue():
-            try:
-                while True:
-                    cb = self._dispatch_queue.get_nowait()
-                    try:
-                        cb()
-                    except Exception as e:  # pragma: no cover - defensive
-                        logging.getLogger("dev_tools").exception("Error running dispatched callback: %s", e)
-            except queue.Empty:
-                pass
-            # Reschedule if root still alive
-            try:
-                if self.app.root and getattr(self.app.root, 'tk', None):
-                    self.app.root.after(50, _drain_queue)
-            except TclError:
-                return
-
+        if self._list_channel != channel:
+            self._clear_releases()
+        self._list_channel = channel
+        context = _RefreshContext(self._generation, self._releases_refresh_id, channel)
+        self._context = context
         try:
-            self.app.root.after(50, _drain_queue)
-        except TclError:
+            fetched_at, cached_channel, cached = load_releases_cache()
+        except Exception:
+            logger.exception("Could not read the releases cache")
+            fetched_at, cached_channel, cached = None, None, None
+        valid_cache = cached_channel == channel and isinstance(cached, list)
+        if valid_cache:
+            self._complete_refresh(context, cached, failed=False, fetched_at=None)
+        ttl = int(self.app.app_settings.settings.get("releases_cache_ttl_seconds", 600))
+        if not self._should_fetch_releases(force, fetched_at if valid_cache else None, cached_channel, channel, ttl):
             return
+        self._load_state = "ready" if self._releases_cache else "loading"
+        self._render_release_state()
+        self._start_dispatcher()
+        checker, outbox, cancelled = self.app.update_checker, self._dispatch_queue, self._lifetime_cancel
 
-    def _schedule_on_main(self, cb):
-        """Enqueue a callback to run soon on the Tk main thread, ignoring if root destroyed.
+        def fetch():
+            try:
+                releases = checker.list_releases(channel=context.channel)
+                result = (context, releases, False, datetime.datetime.now())
+            except Exception:
+                logger.exception("Could not load release versions")
+                result = (context, None, True, None)
+            if not cancelled.is_set():
+                outbox.put(result)
 
-        Safe to call from any thread. If dispatcher not started (e.g., dev tools never opened),
-        fall back to a direct after call guarded by try/except.
-        """
-        if os.getenv("HSPH_SCREENSHOT_MODE") in ("1", "true", "True"):
-            return  # Skip all scheduling during automated screenshots
-        if self._dispatcher_started:
-            self._dispatch_queue.put(cb)
-            return
+        threading.Thread(target=fetch, daemon=True).start()
 
+    @staticmethod
+    def _should_fetch_releases(force, fetched_at, cached_channel, current_channel, ttl_seconds):
+        """Retain the existing cache channel and expiry rules."""
+        if force or not fetched_at or cached_channel != current_channel:
+            return True
         try:
-            self.app.root.after(0, cb)
-        except TclError:
-            return
+            return (datetime.datetime.now() - fetched_at).total_seconds() > ttl_seconds
+        except TypeError, ValueError:
+            return True
 
-    def _safe_apply_releases(self, releases: list[dict]):
-        if not self._is_open():
+    def _complete_refresh(self, context, releases, failed, fetched_at):
+        """Reject stale completions before they can publish errors, UI or cache data."""
+        if not self._valid_context(context):
+            return
+        if failed:
+            self._load_state = "cached_failed" if self._releases_cache else "failed"
+            self._render_release_state()
             return
         try:
             self._apply_releases(releases)
-        except RuntimeError:
-            # Root likely destroyed
-            pass
+        except Exception:
+            logger.exception("Invalid releases response")
+            self._load_state = "failed"
+            self._render_release_state()
+            return
+        if fetched_at is not None:
+            try:
+                save_releases_cache(releases=releases, channel=context.channel, fetched_at=fetched_at)
+            except Exception:
+                logger.exception("Could not save the releases cache")
+
+    def _start_dispatcher(self):
+        """Keep a single main-thread queue poll active for the open window."""
+        if self._dispatcher_id is None and self._is_open():
+            self._dispatcher_id = self.app.root.after(50, self._poll_dispatcher)
+
+    def _poll_dispatcher(self):
+        """Deliver queued messages and stop polling once the window closes."""
+        self._dispatcher_id = None
+        self._drain_queue()
+        if self._is_open() and not getattr(self.app, "_closing", False):
+            self._start_dispatcher()
+
+    def _drain_queue(self):
+        """Apply worker messages only through the shared context validation gate."""
+        while True:
+            try:
+                result = self._dispatch_queue.get_nowait()
+            except queue.Empty:
+                return
+            self._complete_refresh(*result)
+
+    def _install_candidate(self):
+        """Capture the selected tag, asset URLs and checksum requirement."""
+        tag = self.releases_combo.get()
+        record = self._releases_cache.get(tag, {})
+        verify = self.sha_required.get()
+        if not record.get("exe_url") or (verify and not record.get("sha_url")):
+            return None
+        return tag, record["exe_url"], record.get("sha_url") if verify else None, verify
+
+    def _install_selected_release(self):
+        """Revalidate a confirmed installation before delegating to the updater."""
+        if self._controls_locked() or not self._is_open():
+            return
+        candidate = self._install_candidate()
+        if candidate is None:
+            self._render_release_state()
+            return
+        context, generation, channel = self._context, self._generation, self._get_channel()
+        if not ask_ok_cancel(
+            self.app, self._text("dev_install_specific"), self._text("dev_confirm_install").format(candidate[0])
+        ):
+            return
+        if (
+            self._controls_locked()
+            or not self._is_open()
+            or generation != self._generation
+            or context != self._context
+            or channel != self._get_channel()
+            or candidate != self._install_candidate()
+        ):
+            return
+        checker, exe_url, sha_url = self.app.update_checker, candidate[1], candidate[2]
+        threading.Thread(target=lambda: checker.download_and_run_installer(exe_url, sha_url), daemon=True).start()
+
+    def _reset_settings(self):
+        """Recheck ownership and window lifetime after the modal confirmation."""
+        if self._controls_locked():
+            return
+        generation = self._generation
+        if not ask_ok_cancel(self.app, self._text("dev_reset_settings"), self._text("dev_confirm_reset")):
+            return
+        if self._controls_locked() or generation != self._generation:
+            return
+        self.app.reset_settings()
+
+    def _open_settings_file(self):
+        """Offer a useful file path on failure while keeping diagnostics in logs."""
+        try:
+            path = str(self.app.paths.settings_file)
+            if not webbrowser.open(path):
+                raise OSError("No application accepted the settings file")
+        except Exception:
+            logger.exception("Could not open the settings file")
+            show_error(
+                self.app,
+                self._text("error"),
+                self._text("dev_settings_open_failed").format(self.app.paths.settings_file),
+            )
+
+    def _populate_releases_for_screenshot(self):
+        """Provide deterministic release data without fetching or installing anything."""
+        _, channel, cached = load_releases_cache()
+        if cached and channel == self._get_channel():
+            self._apply_releases(cached)
+        else:
+            tag = str(self.app.app_settings.settings.get("version", "1.0.0"))
+            self._apply_releases(
+                [
+                    {
+                        "tag": tag,
+                        "exe_url": "https://example.invalid/installer.exe",
+                        "sha_url": "https://example.invalid/installer.exe.sha256",
+                        "body": f"Release notes for {tag}.",
+                    }
+                ]
+            )

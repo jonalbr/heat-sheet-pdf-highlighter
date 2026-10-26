@@ -13,11 +13,12 @@ The helper scripts expect GNU gettext tools from MSYS2.
 3. Update packages with `pacman -Syu` and reopen the terminal if MSYS2 asks you to.
 4. Install gettext with `pacman -S gettext`.
 
-By default, the helper looks for `xgettext`, `msgmerge`, `msginit`, and `msgfmt` on `PATH`, then under `C:\msys64\usr\bin\`. If MSYS2 lives elsewhere, set any of these environment variables to the executable path:
+By default, the helper looks for `xgettext`, `msgmerge`, `msginit`, `msgattrib`, and `msgfmt` on `PATH`, then under `C:\msys64\usr\bin\`. If MSYS2 lives elsewhere, set any of these environment variables to the executable path:
 
 - `XGETTEXT_PATH`
 - `MSGMERGE_PATH`
 - `MSGINIT_PATH`
+- `MSGATTRIB_PATH`
 - `MSGFMT_PATH`
 
 ## Translation workflow
@@ -45,12 +46,14 @@ This workflow will:
 
 - run `xgettext` to extract strings from `src/gui/ui_strings.py` into `base.pot`
 - create/update `base.po` in each locale subfolder
+- remove obsolete (`#~`) messages with `msgattrib --no-obsolete` before review
 - run `po_update_and_review.py`
 - compile `.po` files to `.mo`
 
 Notes:
 
 - The extraction currently scans only `src/gui/ui_strings.py` (this is intentional).
+- Obsolete messages are old source text retained by `msgmerge`, not active translations. The normal update removes them; compile-only mode leaves the PO sources unchanged.
 - You can pass an explicit PO filename with `--po-file` if you use a different name than `base.po`:
 
 ```powershell

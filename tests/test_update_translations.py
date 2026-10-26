@@ -2,6 +2,7 @@ from pathlib import Path
 import subprocess
 
 import pytest
+import polib
 
 from locales import update_translations as translations
 
@@ -98,6 +99,7 @@ def test_extract_strings_builds_expected_command(tmp_path, monkeypatch):
                 "--keyword=ngettext:1,2",
                 "--keyword=n_:1,2",
                 "--keyword=_:1",
+                "--keyword=_p:1c,2",
                 "--keyword=gettext:1",
                 "--keyword=self._:1",
                 "--keyword=self.n_:1,2",
@@ -170,6 +172,41 @@ def test_review_translations_uses_current_python_and_optional_batch_flag(monkeyp
     ]
 
 
+def test_remove_obsolete_entries_preserves_active_ocr_and_fuzzy_messages(tmp_path):
+    try:
+        msgattrib = translations.find_gettext_tool("msgattrib", env_var="MSGATTRIB_PATH")
+    except translations.TranslationToolError:
+        pytest.skip("GNU gettext msgattrib is unavailable")
+    messages = _make_locale(tmp_path, "de", with_po=True)
+    _make_locale(tmp_path, "en", with_po=False)
+    po = polib.POFile()
+    po.metadata = {"Content-Type": "text/plain; charset=UTF-8"}
+    po.append(polib.POEntry(msgid="OCR Required", msgstr="OCR erforderlich"))
+    po.append(polib.POEntry(msgid="Current OCR prompt", msgstr="Aktueller OCR-Hinweis", flags=["fuzzy"]))
+    po.append(polib.POEntry(msgid="Retired OCR prompt", msgstr="Alter OCR-Hinweis", obsolete=True))
+    po.save(str(messages / "custom.po"))
+
+    translations.remove_obsolete_entries(msgattrib=msgattrib, locales_dir=tmp_path, po_file="custom.po")
+
+    cleaned = polib.pofile(str(messages / "custom.po"))
+    assert not cleaned.obsolete_entries()
+    assert cleaned.find("OCR Required").msgstr == "OCR erforderlich"
+    assert "fuzzy" in cleaned.find("Current OCR prompt").flags
+    assert (messages / "base.po").read_text() == 'msgid ""\nmsgstr ""\n'
+
+
+def test_checked_in_catalogs_contain_current_messages_and_no_obsolete_entries():
+    from src.gui.ui_strings import build_strings, plural_strings
+
+    expected = set(build_strings(lambda text: text).values())
+    expected.update(strings["singular"] for strings in plural_strings.values())
+    for language in ("de", "en"):
+        po = polib.pofile(str(translations.SCRIPT_DIR / language / "LC_MESSAGES" / "base.po"))
+        assert not po.obsolete_entries()
+        assert {entry.msgid for entry in po} == expected
+        assert po.find("OCR Required").translated()
+
+
 def test_compile_mo_files_skips_locales_without_requested_po(tmp_path, monkeypatch):
     _make_locale(tmp_path, "de", with_po=True)
     _make_locale(tmp_path, "en", with_po=False)
@@ -209,6 +246,11 @@ def test_update_translations_runs_full_workflow(monkeypatch):
     )
     monkeypatch.setattr(
         translations,
+        "remove_obsolete_entries",
+        lambda **kwargs: calls.append(("obsolete", kwargs["msgattrib"], kwargs["po_file"])),
+    )
+    monkeypatch.setattr(
+        translations,
         "review_translations",
         lambda **kwargs: calls.append(("review", kwargs["non_interactive"], kwargs["po_file"])),
     )
@@ -224,6 +266,7 @@ def test_update_translations_runs_full_workflow(monkeypatch):
     assert calls == [
         ("extract", Path("xgettext")),
         ("merge", Path("msginit"), Path("msgmerge"), "custom.po"),
+        ("obsolete", Path("msgattrib"), "custom.po"),
         ("review", True, "custom.po"),
         ("compile", Path("msgfmt"), "custom.po"),
         ("cleanup",),
@@ -274,3 +317,49 @@ def test_main_reports_command_error(monkeypatch, capsys):
 
     assert translations.main([]) == 7
     assert "msgfmt" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("plural", [False, True])
+def test_new_translation_entry_keeps_its_context(plural):
+    from locales import po_update_and_review as review
+
+    entry = polib.POEntry(msgctxt="watermark_position", msgid="Custom",
+                         msgid_plural="Custom positions" if plural else "")
+    added = review.handle_new_entry(entry, interactive=False)
+    assert added.msgctxt == entry.msgctxt
+    assert added.msgid_plural == entry.msgid_plural
+
+
+def test_translation_review_distinguishes_identical_words_in_different_contexts(tmp_path, monkeypatch):
+    from locales import po_update_and_review as review
+
+    english, german = polib.POFile(), polib.POFile()
+    for context in (None, "watermark_position"):
+        english.append(polib.POEntry(msgid="Custom", msgctxt=context, msgstr="Custom"))
+        german.append(polib.POEntry(msgid="Custom", msgctxt=context, msgstr="Frei alt" if context else "Weitere alt",
+                                    flags=["fuzzy"]))
+    en_path, de_path = tmp_path / "en.po", tmp_path / "de.po"
+    english.save(en_path)
+    german.save(de_path)
+    monkeypatch.setattr(review, "prompt_for_translation", lambda current, interactive: current.removesuffix(" alt"))
+    review.review_and_update_de(en_path, de_path, interactive=True)
+    result = polib.pofile(de_path)
+    assert result.find("Custom", msgctxt="watermark_position").msgstr == "Frei"
+    assert next(entry for entry in result if entry.msgctxt is None).msgstr == "Weitere"
+    assert all(not entry.flags for entry in result)
+
+
+def test_translation_review_adds_missing_context_without_reusing_color_translation(tmp_path):
+    from locales import po_update_and_review as review
+
+    english, german = polib.POFile(), polib.POFile()
+    english.append(polib.POEntry(msgid="Custom", msgctxt="watermark_position", msgstr="Custom"))
+    german.append(polib.POEntry(msgid="Custom", msgstr="Weitere"))
+    en_path, de_path = tmp_path / "en.po", tmp_path / "de.po"
+    english.save(en_path)
+    german.save(de_path)
+    review.review_and_update_de(en_path, de_path, interactive=False)
+    result = polib.pofile(de_path)
+    assert len(result) == 2
+    assert result.find("Custom", msgctxt="watermark_position").msgstr == ""
+    assert next(entry for entry in result if entry.msgctxt is None).msgstr == "Weitere"

@@ -12,7 +12,8 @@ except ImportError:  # pragma: no cover
 
 from src.core import ocr
 from src.config.paths import Paths
-from src.models import HighlightMode
+from src.core.pdf_processor import highlight_matching_data
+from src.models import MarkingMode
 
 pytestmark = pytest.mark.skipif(pymupdf is None, reason="pymupdf not installed")
 
@@ -435,6 +436,7 @@ def test_create_searchable_ocr_pdf_in_process_surfaces_worker_errors(monkeypatch
 
 def test_create_searchable_ocr_pdf_in_process_cancels_worker(monkeypatch, tmp_path):
     fake_process = None
+    fake_event = None
 
     class FakeQueue:
         def get_nowait(self):
@@ -452,12 +454,16 @@ def test_create_searchable_ocr_pdf_in_process_cancels_worker(monkeypatch, tmp_pa
 
         def __init__(self):
             self.terminated = False
+            self.cleanup_polls = 0
 
         def start(self):
             pass
 
         def is_alive(self):
-            return not self.terminated
+            if fake_event.cancelled:
+                self.cleanup_polls += 1
+                return self.cleanup_polls < 4
+            return True
 
         def join(self, timeout=None):
             pass
@@ -480,7 +486,9 @@ def test_create_searchable_ocr_pdf_in_process_cancels_worker(monkeypatch, tmp_pa
             return FakeQueue()
 
         def Event(self):
-            return FakeEvent()
+            nonlocal fake_event
+            fake_event = FakeEvent()
+            return fake_event
 
         def Process(self, *args, **kwargs):
             nonlocal fake_process
@@ -501,7 +509,8 @@ def test_create_searchable_ocr_pdf_in_process_cancels_worker(monkeypatch, tmp_pa
         )
 
     assert fake_process is not None
-    assert fake_process.terminated
+    assert not fake_process.terminated
+    assert fake_process.cleanup_polls >= 4
 
 
 def test_save_pdf_path_in_process_returns_worker_result(monkeypatch, tmp_path):
@@ -581,6 +590,7 @@ def test_save_pdf_path_in_process_cancels_worker(monkeypatch, tmp_path):
     output_pdf = tmp_path / "output.pdf"
     write_valid_pdf(input_pdf)
     fake_process = None
+    fake_event = None
 
     class FakeQueue:
         def get_nowait(self):
@@ -597,12 +607,16 @@ def test_save_pdf_path_in_process_cancels_worker(monkeypatch, tmp_path):
 
         def __init__(self):
             self.terminated = False
+            self.cleanup_polls = 0
 
         def start(self):
             pass
 
         def is_alive(self):
-            return not self.terminated
+            if fake_event.cancelled:
+                self.cleanup_polls += 1
+                return self.cleanup_polls < 4
+            return True
 
         def join(self, timeout=None):
             pass
@@ -625,7 +639,9 @@ def test_save_pdf_path_in_process_cancels_worker(monkeypatch, tmp_path):
             return FakeQueue()
 
         def Event(self):
-            return FakeEvent()
+            nonlocal fake_event
+            fake_event = FakeEvent()
+            return fake_event
 
         def Process(self, *args, **kwargs):
             nonlocal fake_process
@@ -645,7 +661,8 @@ def test_save_pdf_path_in_process_cancels_worker(monkeypatch, tmp_path):
         )
 
     assert fake_process is not None
-    assert fake_process.terminated
+    assert not fake_process.terminated
+    assert fake_process.cleanup_polls >= 4
 
 
 def test_build_reduced_searchable_pdf_keeps_hidden_text_and_highlights(tmp_path):
@@ -658,9 +675,9 @@ def test_build_reduced_searchable_pdf_keeps_hidden_text_and_highlights(tmp_path)
     context = ocr.HighlightContext(
         search_str="CLUB",
         only_relevant=True,
-        filter_enabled=False,
-        names=[],
-        highlight_mode=HighlightMode.NAMES_DIFF_COLOR,
+        names=(),
+        marking_mode=MarkingMode.ALL_MATCHES,
+        highlight_color_default="#AABBCC",
     )
 
     try:
@@ -672,7 +689,9 @@ def test_build_reduced_searchable_pdf_keeps_hidden_text_and_highlights(tmp_path)
         )
         try:
             assert reduced[0].search_for("CLUB")
-            assert collect_highlights(reduced[0])
+            page = reduced[0]
+            assert collect_highlights(page)
+            assert page.first_annot.colors["stroke"] == pytest.approx([170 / 255, 187 / 255, 204 / 255])
         finally:
             reduced.close()
     finally:
@@ -694,7 +713,7 @@ def test_reduce_pdf_image_streams_preserves_text_and_highlights():
     image.save(buffer, format="PNG")
     page.insert_image(pymupdf.Rect(0, 0, 200, 200), stream=buffer.getvalue())
     page.insert_text((30, 50), "Bahn 1 Alice CLUB 00:59.99")
-    page.add_highlight_annot(page.search_for("CLUB"))
+    highlight_matching_data(page, "CLUB", highlight_color_default="#ABCDEF")
     before = page.get_images(full=True)[0][2:4]
 
     try:
@@ -706,6 +725,8 @@ def test_reduce_pdf_image_streams_preserves_text_and_highlights():
         assert after[1] < before[1]
         assert doc[0].search_for("CLUB")
         assert collect_highlights(doc[0])
+        result_page = doc[0]
+        assert result_page.first_annot.colors["stroke"] == pytest.approx([171 / 255, 205 / 255, 239 / 255])
     finally:
         doc.close()
 
@@ -848,7 +869,78 @@ def _context():
     return ocr.HighlightContext(
         search_str="CLUB",
         only_relevant=True,
-        filter_enabled=False,
         names=[],
-        highlight_mode=HighlightMode.NAMES_DIFF_COLOR,
+        marking_mode=MarkingMode.ALL_MATCHES,
     )
+
+
+
+@pytest.mark.parametrize("startup_failure", [False, True])
+def test_parallel_cancel_reaps_started_children_and_abandons_task_feeder(monkeypatch, tmp_path, startup_failure):
+    import threading
+
+    processes, queues = [], []
+
+    class WorkerQueue:
+        abandoned = False
+        closed = False
+        joined = False
+
+        def put(self, value):
+            pass
+
+        def cancel_join_thread(self):
+            self.abandoned = True
+
+        def close(self):
+            self.closed = True
+
+        def join_thread(self):
+            if self is queues[0]:
+                assert self.abandoned, "Undrained task feeder could block supervisor cleanup"
+            self.joined = True
+
+    class Process:
+        started = False
+        terminated = False
+        joined = False
+
+        def start(self):
+            if startup_failure and self is processes[1]:
+                raise RuntimeError("start failed")
+            self.started = True
+
+        def is_alive(self):
+            return self.started and not self.terminated
+
+        def terminate(self):
+            self.terminated = True
+
+        def join(self, timeout=None):
+            assert self.started
+            assert not self.is_alive()
+            assert timeout is None, "A timeout does not prove process termination"
+            self.joined = True
+
+    class Context:
+        def Queue(self):
+            result = WorkerQueue()
+            queues.append(result)
+            return result
+
+        def Event(self):
+            return threading.Event()
+
+        def Process(self, **kwargs):
+            result = Process()
+            processes.append(result)
+            return result
+
+    monkeypatch.setattr(ocr.multiprocessing, "get_context", lambda method: Context())
+    with pytest.raises(RuntimeError if startup_failure else ocr.OcrCancelled):
+        ocr._create_searchable_ocr_pdf_parallel(
+            tmp_path / "source.pdf", total_pages=2, tessdata_dir=tmp_path, language="deu", dpi=300,
+            worker_count=2, progress_callback=None, is_cancelled=lambda: True,
+        )
+    assert all(process.terminated and process.joined for process in processes if process.started)
+    assert all(worker_queue.closed and worker_queue.joined for worker_queue in queues)

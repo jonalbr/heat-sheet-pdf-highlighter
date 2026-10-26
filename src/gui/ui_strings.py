@@ -22,10 +22,59 @@ def get_ui_string(strings: Dict[str, str], key: str, default: str | None = None)
 
 def build_strings(_: Callable[[str], str]) -> Dict[str, str]:
     """Return a dict of translated UI strings using the provided `_`."""
+    # A position's "Custom" has a different German label from the color picker.
+    _p = getattr(getattr(_, "__self__", None), "pgettext", lambda context, text: text)
 
     # ---- General app text / statuses shown broadly ----
     general_strings = {
-        "configure_filter": _("Configure highlighting lines with specific names."),
+        "opt_active": _("Active options:"),
+        "opt_job": _("Job options:"),
+        "opt_all": _("All matches"),
+        "opt_distinguish": _("Distinguish names"),
+        "opt_named": _("Only listed names"),
+        "opt_relevant": _("Relevant lines only"),
+        "opt_any_line": _("All lines"),
+        "opt_watermark_on": _("Watermark on"),
+        "opt_watermark_off": _("Watermark off"),
+        "opt_watermark_empty": _("Watermark has no text"),
+        "opt_ocr_auto": _("OCR on demand"),
+        "opt_ocr_off": _("OCR off"),
+        "result_title": _("Result"),
+        "result_empty": _("No completed processing yet."),
+        "result_location": _("Saved to: {0}"),
+        "result_open_pdf": _("Open PDF"),
+        "result_open_folder": _("Open folder"),
+        "result_retry": _("Retry saving"),
+        "result_choose": _("Choose another location"),
+        "result_discard": _("Discard result"),
+        "result_failed": _("Processing failed."),
+        "result_processing_failed": _("The PDF could not be processed. Try again or select another PDF."),
+        "result_save_failed": _("The PDF could not be saved. Your result is retained. Retry saving, choose another location or discard it."),
+        "result_source_target": _("Choose a destination different from the source PDF."),
+        "result_target_changed": _("The destination has changed since selection. Choose the location again to confirm overwriting."),
+        "result_overwrite_title": _("Replace PDF?"),
+        "result_overwrite": _("Replace the existing file after successful saving?\n{0}"),
+        "result_open_failed": _("Could not open the saved result. You can find it at the location shown above."),
+        "result_open_missing": _("The saved PDF is no longer at this location. Check whether it was moved or deleted."),
+        "preview_failed": _("The PDF preview could not be displayed. Try again or select another PDF."),
+        "settings_notice": _("Settings"),
+        "settings_recovered": _(
+            "The settings file could not be read as valid settings. Defaults are being used. "
+            "An unchanged backup was saved to:\n{backup}"
+        ),
+        "settings_backup_failed": _(
+            "The settings file contains damaged data, but a backup could not be saved. "
+            "The original file will not be overwritten. Changes apply only to this session.\nFile: {path}"
+        ),
+        "settings_read_failed": _(
+            "The settings file could not be accessed. Defaults are being used. "
+            "The file will not be overwritten; changes apply only to this session.\nFile: {path}"
+        ),
+        "settings_write_failed": _(
+            "Settings could not be saved. Your changes apply to this session. "
+            "Saving will be retried when you change another setting.\nFile: {path}"
+        ),
+        "configure_filter": _("Configure name filtering and highlight colors."),
         "configure_watermark": _("Configure the watermark options."),
         "enter_club": _("Enter the name of the club to highlight the results."),
         "error": _("Error"),
@@ -71,7 +120,7 @@ def build_strings(_: Callable[[str], str]) -> Dict[str, str]:
         "ocr_language_deu": _("German (recommended)"),
         "ocr_language_eng": _("English"),
         "ocr_language_deu_eng": _("German + English"),
-        "ocr_reduction_failed": _("OCR output was large and reduction failed. Saved the normal OCR output ({0:.1f} MB)."),
+        "ocr_reduction_failed": _("The PDF was saved, but its file size could not be reduced ({0:.1f} MB)."),
         "status_ocr_checking": _("Status: Checking PDF text..."),
         "status_ocr_needed": _("Status: PDF imported. OCR will be used when processing."),
         "status_ocr_processing": _("Status: Running OCR... {0}/{1} pages processed."),
@@ -85,7 +134,7 @@ def build_strings(_: Callable[[str], str]) -> Dict[str, str]:
         "btn_browse": _("Browse"),
         "btn_cancel": _("Cancel"),
         "btn_clear": _("Clear"),
-        "btn_filter": _("Filter"),
+        "btn_filter": _("Filter and Colors"),
         "btn_import": _("Import"),
         "btn_no": _("No"),
         "btn_ok": _("OK"),
@@ -106,6 +155,11 @@ def build_strings(_: Callable[[str], str]) -> Dict[str, str]:
 
     # ---- Pagination / navigation bits ----
     nav_strings = {
+        "nav_page_count": _("Page {0} of {1}"),
+        "nav_go": _("Go to page"),
+        "nav_fit": _("Fit to window"),
+        "nav_invalid_page": _("Enter a page number from 1 to {0}."),
+        "nav_no_pages": _("This PDF has no pages."),
         "nav_next": _("Next Page"),
         "nav_prev": _("Previous Page"),
     }
@@ -118,6 +172,11 @@ def build_strings(_: Callable[[str], str]) -> Dict[str, str]:
         "wm_custom_color": _("Custom"),
         "wm_enable": _("Enable Watermark"),
         "wm_pos": _("Position"),
+        "wm_pos_top": _("Top"),
+        "wm_pos_bottom": _("Bottom"),
+        "wm_pos_custom": _p("watermark_position", "Custom"),
+        "wm_invalid_color": _("Please choose a color in #RRGGBB format."),
+        "wm_invalid_size": _("Please enter a whole number from 1 to 100 for the watermark size."),
         "wm_preview_window": _("Watermark Preview"),
         "wm_settings": _("Watermark Settings"),
         "wm_size": _("Size"),
@@ -126,20 +185,55 @@ def build_strings(_: Callable[[str], str]) -> Dict[str, str]:
 
     # ---- Name filter dialog ----
     filter_strings = {
-        "flt_enable": _("Enable Filter"),
-        "flt_info": _("Enable highlighting lines with specific names."),
-        "flt_mode": _("Highlight Mode"),
-        "flt_mode_blue": _("Highlight lines with matched names in yellow, others are not highlighted"),
-        "flt_mode_blue_yellow": _("Highlight lines with matched names in blue, others in yellow"),
+        "flt_all": _("Without name filter - highlight all matches"),
+        "flt_distinguish": _("Highlight all matches, distinguish names"),
+        "flt_named": _("Only names from the list"),
         "flt_names": _("Names"),
+        "flt_names_required": _("Please enter at least one name for this mode."),
+        "flt_preview_unavailable": _("Preview unavailable. Close and reopen this dialog to try again."),
+        "flt_preview_single": _("Only one match category was found. Showing the available example."),
+        "flt_preview_no_text": _("No searchable text is available. Showing a colour example."),
+        "flt_preview_no_matches": _("No eligible search matches were found. Showing a colour example."),
+        "flt_preview_named_page": _("Listed name — page {0}"),
+        "flt_preview_other_page": _("Other search hit — page {0}"),
+        "flt_preview_excerpts": _("PDF excerpts"),
+        "flt_no_names_found": _(
+            "No names from the list found for this search. Check the names or choose another marking mode."
+        ),
+        "flt_color_default": _("Default color"),
+        "flt_color_names": _("Name color"),
+        "flt_custom": _("Custom color..."),
+        "flt_unused": _("Currently not used"),
+        "flt_preview": _("Preview"),
+        "flt_example": _("Example"),
+        "flt_example_select_pdf": _("Example: Select a PDF to see a live preview"),
+        "flt_example_heat": _("Heat {0}/{1} - approx. {2}"),
+        "flt_example_lane": _("Lane"),
+        "flt_example_swimmer": _("Swimmer"),
+        "flt_example_year": _("YOB"),
+        "flt_example_club": _("Club"),
+        "flt_example_entry_time": _("Entry time"),
+        "flt_example_lane_format": _("Lane {0}"),
+        "flt_example_time_format": _("{minutes}:{seconds}.{hundredths}"),
+        "flt_pdf_excerpt": _("PDF excerpt - page {0}"),
+        "flt_yellow": _("Yellow"),
+        "flt_turquoise": _("Turquoise"),
+        "flt_green": _("Green"),
+        "flt_orange": _("Orange"),
+        "flt_pink": _("Pink"),
+        "flt_violet": _("Violet"),
     }
 
     # ---- Process/status lines outside of the general pool ----
     status_strings = {
+        "status_processing": _("Status: Processing PDF…"),
+        "btn_cancelling": _("Cancelling …"),
+        "status_cancelling": _("Status: Cancelling …"),
+        "status_preparing": _("Status: Preparing PDF processing…"),
         "status_aborted": _("Status: Aborted by user."),
         "status_aborted_processing": _("Status: Processing aborted."),
         "status_done": _("Finished"),
-        "status_saving": _("Status: Saving and compacting PDF... Please wait..."),
+        "status_saving": _("Status: Saving PDF... Please wait..."),
     }
 
     # ---- Validation and user-facing errors ----
@@ -168,23 +262,27 @@ def build_strings(_: Callable[[str], str]) -> Dict[str, str]:
     update_ui_strings = {
         "upd_avail": _("Update Available"),
         "upd_cancelled": _("Download cancelled."),
-        "upd_check_failed": _("Failed to check for updates: {0}"),
-        "upd_download_failed": _("Failed to download the installer: {0}"),
+        "upd_check_failed": _("Could not check for updates. Please try again."),
+        "upd_download_failed": _("The update could not be completed. Please try again later."),
         "upd_error": _("Update Error"),
-        "upd_info": _("Update Information"),
         "upd_latest": _("You are already using the latest version."),
-        "upd_note": _(
-            "Click 'yes' to not be asked again for this update. You can still check manually for updates. "
-            "If there is a newer version available, you will be asked again."
-        ),
+        "upd_now": _("Update now"),
+        "upd_later": _("Later"),
+        "upd_skip_version": _("Do not ask again for this version"),
         "upd_ok": _("Up to Date"),
         "upd_progress": _("Downloading... {0:.1f} MB of {1:.1f} MB, {2:.0f} seconds remaining"),
         "upd_starting": _("Starting download..."),
-        "upd_prompt": _("A new version ({0}) is available. Do you want to update?"),
+        "upd_prompt": _("A new version ({0}) is available."),
     }
 
     # ---- Developer tools ----
     dev_strings = {
+        "dev_versions_empty": _("No versions are available for this channel."),
+        "dev_versions_loading": _("Loading versions..."),
+        "dev_versions_failed": _("Could not load versions. Please try again."),
+        "dev_versions_cached": _("Could not refresh versions. Previously loaded versions are still available."),
+        "dev_checksum_missing": _("This version has no checksum file. Choose another version to keep verification enabled."),
+        "dev_settings_open_failed": _("Could not open the settings file. You can find it here: {0}"),
         "dev_btn_install": _("Install"),
         "dev_channel": _("Channel"),
         "dev_confirm_install": _("Are you sure you want to install version {0}?"),
@@ -225,6 +323,18 @@ def build_strings(_: Callable[[str], str]) -> Dict[str, str]:
 
 # Plural strings - keep as raw strings for proper ngettext handling
 plural_strings = {
+    "option_names": {
+        "singular": "{0} name",
+        "plural": "{0} names",
+    },
+    "marked_lines": {
+        "singular": "{0} line newly highlighted.",
+        "plural": "{0} lines newly highlighted.",
+    },
+    "watermarked_pages": {
+        "singular": "Watermark applied to {0} page.",
+        "plural": "Watermark applied to {0} pages.",
+    },
     "processing_complete": {
         "singular": "Processing complete: {0} match found. {1} skipped.",
         "plural": "Processing complete: {0} matches found. {1} skipped.",
@@ -239,5 +349,8 @@ plural_strings = {
 # xgettext hint - never executed, only for extraction
 def _xgettext_dummy(n_):
     # Keep the ngettext patterns in source for translation extraction tools
+    n_("{0} name", "{0} names", 1)
+    n_("{0} line newly highlighted.", "{0} lines newly highlighted.", 1)
+    n_("Watermark applied to {0} page.", "Watermark applied to {0} pages.", 1)
     n_("Processing complete: {0} match found. {1} skipped.", "Processing complete: {0} matches found. {1} skipped.", 1)
     n_("Processed: {0}/{1} pages. {2} match found. {3} skipped.", "Processed: {0}/{1} pages. {2} matches found. {3} skipped.", 1)

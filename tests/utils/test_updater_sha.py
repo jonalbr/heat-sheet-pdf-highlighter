@@ -9,6 +9,7 @@ import threading
 import pytest
 
 from src.utils.updater import UpdateChecker
+from src.models import UpdateDecision
 from src.version import Version
 
 
@@ -22,11 +23,8 @@ class DummyGUI:
     def show_up_to_date(self):
         self.up_to_date_shown += 1
 
-    def show_update_available(self, latest_version):
-        return None
-
-    def show_update_reminder_choice(self):
-        return False
+    def show_update_available(self, latest_version, is_current=lambda: True):
+        return UpdateDecision("cancel")
 
     def show_update_error_retry(self, msg: str):
         self.errors.append(("retry", msg))
@@ -65,6 +63,7 @@ class DummySettings:
         self.settings = {
             "newest_version_available": "0.0.0",
             "ask_for_update": "True",
+            "skipped_update_versions": {},
             "version": "0.0.0",
             "update_channel": "stable",
             "verify_sha": "True",
@@ -73,12 +72,15 @@ class DummySettings:
     def update_setting(self, key, value):
         self.settings[key] = value
 
+    def update_settings(self, changes):
+        self.settings.update(changes)
+
 
 class DummyApp:
     def __init__(self):
         self.update_dialogs = DummyGUI()
         self.app_settings = DummySettings()
-        self.on_version_update = lambda latest, current: None
+        self.on_version_update = lambda latest, current, context=None: None
 
 
 @pytest.fixture
