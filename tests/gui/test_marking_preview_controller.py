@@ -367,3 +367,41 @@ def test_worker_pause_defers_native_work_until_resume(monkeypatch):
     monkeypatch.setattr(marking_preview, "MarkingPreviewRenderer", Renderer)
     marking_preview.marking_preview_worker(Pipe())
     assert events == ["prepare", "pause", "start", "step", "close"]
+
+
+def test_worker_coalesces_control_snapshots_and_reports_error_with_latest_ids(monkeypatch):
+    from src.core import marking_preview
+
+    events, sent = [], []
+    incoming = deque([
+        ("sync", 1, "old.pdf", False, 1, request()),
+        ("sync", 2, "current.pdf", False, 7, request()),
+    ])
+
+    class Pipe:
+        def poll(self):
+            return bool(incoming)
+
+        def recv(self):
+            return incoming.popleft()
+
+        def send(self, message):
+            sent.append(message)
+
+        def close(self):
+            events.append("pipe closed")
+
+    class Renderer:
+        def prepare(self, path):
+            events.append(path)
+
+        def start(self, req):
+            raise RuntimeError("render failed")
+
+        def close(self):
+            events.append("renderer closed")
+
+    monkeypatch.setattr(marking_preview, "MarkingPreviewRenderer", Renderer)
+    marking_preview.marking_preview_worker(Pipe())
+    assert sent == [("ready",), ("error", 2, 7)]
+    assert events == ["current.pdf", "renderer closed", "pipe closed"]

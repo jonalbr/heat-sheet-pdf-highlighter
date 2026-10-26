@@ -356,6 +356,36 @@ def test_old_callbacks_and_dialog_requests_cannot_affect_new_job(app):
     assert app.status_var.get() == app.strings["status_preparing"]
 
 
+@pytest.mark.parametrize("kind", ["request", "download_request"])
+def test_gui_request_failure_releases_waiter_and_dialog_guard(app, kind):
+    job = app._job = ProcessingJob(1, "input.pdf", app._collect_processing_options())
+    failure = RuntimeError("dialog failed")
+
+    def callback():
+        assert threading.current_thread() is threading.main_thread()
+        assert job.dialog_open is (kind == "request")
+        raise failure
+
+    request = GuiRequest(callback)
+    app._post_job(job, kind, request)
+    app._poll_work()
+    assert request.ready.is_set()
+    assert request.error is failure
+    assert not job.dialog_open
+
+
+@pytest.mark.parametrize("kind", ["request", "download_request"])
+def test_closing_releases_gui_request_without_invoking_callback(app, kind):
+    job = app._job = ProcessingJob(1, "input.pdf", app._collect_processing_options())
+    request = GuiRequest(lambda: pytest.fail("Opened dialog while closing"))
+    app._post_job(job, kind, request)
+    app._closing = True
+    app._poll_work()
+    assert request.ready.is_set()
+    assert request.value is request.error is None
+    assert not job.dialog_open
+
+
 def test_cancel_during_pages_skips_remaining_pages_and_save(app, monkeypatch):
     entered, release = threading.Event(), threading.Event()
     calls = []

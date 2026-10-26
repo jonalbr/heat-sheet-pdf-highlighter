@@ -170,23 +170,7 @@ class MarkingPreview:
             for _ in range(100):
                 if not self._connection.poll():
                     break
-                message = self._connection.recv()
-                kind = message[0]
-                if kind == "ready":
-                    self._ready_worker = True
-                    self._flush()
-                elif kind == "result":
-                    _, doc_id, request_id, result = message
-                    if doc_id == self.document_generation and request_id == self.generation and self._query is not None:
-                        self.last_request, self.last_result = self._query, result
-                        if self.on_result:
-                            self.on_result(result)
-                elif kind == "progress" and message[1] == self.document_generation:
-                    self.prepared_pages, self.total_pages = message[2:]
-                    if self.on_progress:
-                        self.on_progress(self.prepared_pages, self.total_pages)
-                elif kind == "error" and message[1:3] == (self.document_generation, self.generation):
-                    self._failed()
+                if not self._handle_message(self._connection.recv()):
                     return
             if self._closed:
                 return
@@ -197,6 +181,27 @@ class MarkingPreview:
         except EOFError, OSError:
             logging.getLogger(__name__).debug("Preview worker disconnected", exc_info=True)
             self._failed()
+
+    def _handle_message(self, message):
+        """Deliver current worker messages; return false after a worker error."""
+        kind = message[0]
+        if kind == "ready":
+            self._ready_worker = True
+            self._flush()
+        elif kind == "result":
+            _, doc_id, request_id, result = message
+            if doc_id == self.document_generation and request_id == self.generation and self._query is not None:
+                self.last_request, self.last_result = self._query, result
+                if self.on_result:
+                    self.on_result(result)
+        elif kind == "progress" and message[1] == self.document_generation:
+            self.prepared_pages, self.total_pages = message[2:]
+            if self.on_progress:
+                self.on_progress(self.prepared_pages, self.total_pages)
+        elif kind == "error" and message[1:3] == (self.document_generation, self.generation):
+            self._failed()
+            return False
+        return True
 
     def _failed(self):
         on_error = self.on_error

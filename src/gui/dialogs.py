@@ -343,6 +343,116 @@ class WatermarkDialog:
         color_choice_frame = ttk.Frame(dialog_window)
         color_choice_frame.grid(row=3, column=1, padx=10, pady=5, sticky="W")
 
+        current_color_swatch, preselect_buttons, btn_custom_color = self._create_color_controls(
+            dialog_window, current_color_frame, color_choice_frame
+        )
+
+        ttk.Label(dialog_window, text=get_ui_string(self.app.strings, "wm_size")).grid(
+            row=4, column=0, sticky="W", padx=10, pady=5
+        )
+        entry_size = ttk.Spinbox(dialog_window, from_=1, to=100, textvariable=temp_size, width=5)
+        entry_size.grid(row=4, column=1, padx=10, pady=5, sticky="W")
+        self.size_entry = entry_size
+
+        ttk.Label(dialog_window, text=get_ui_string(self.app.strings, "wm_pos")).grid(
+            row=5, column=0, sticky="W", padx=10, pady=5
+        )
+        position_labels = {key: get_ui_string(self.app.strings, "wm_pos_" + key) for key in ("top", "bottom", "custom")}
+        self.position_label = StringVar(dialog_window, value=position_labels[temp_position.get()])
+        option_position = ttk.Menubutton(dialog_window, textvariable=self.position_label)
+        position_menu = Menu(option_position, tearoff=False)
+        option_position.configure(menu=position_menu)
+
+        def select_position(position):
+            if self.window is dialog_window and self._editable():
+                temp_position.set(position)
+
+        for position, label in position_labels.items():
+            position_menu.add_command(label=label, command=partial(select_position, position))
+        self.position_menu = position_menu
+        option_position.grid(row=5, column=1, padx=10, pady=5, sticky="W")
+
+        ttk.Label(dialog_window, text=get_ui_string(self.app.strings, "wm_adjust")).grid(
+            row=6, column=0, sticky="W", padx=10, pady=5
+        )
+        adjust_frame = ttk.Frame(dialog_window)
+        adjust_frame.grid(row=6, column=1, padx=10, pady=5, sticky="W")
+
+        def set_preset_position():
+            if temp_position.get() in {"top", "bottom"}:
+                x_ratio, y_ratio = get_position_ratios(temp_position.get())
+                temp_x_ratio.set(x_ratio)
+                temp_y_ratio.set(y_ratio)
+
+        stop_repeating_nudge = self._create_nudge_controls(dialog_window, adjust_frame, entry_text, entry_size)
+
+        def update_preview(*args):
+            self._preview_draft(dialog_window, force_open=False)
+
+        def on_enabled_change(*args):
+            self._update_controls()
+            update_preview()
+
+        self._trace(temp_enabled, on_enabled_change)
+        self._trace(temp_text, update_preview)
+        self._trace(temp_color, update_preview)
+        self._trace(temp_size, update_preview)
+
+        def on_position_change(*args):
+            self.position_label.set(position_labels[temp_position.get()])
+            set_preset_position()
+            update_preview()
+
+        self._trace(temp_position, on_position_change)
+        self._trace(temp_x_ratio, update_preview)
+        self._trace(temp_y_ratio, update_preview)
+
+        btn_preview = ttk.Button(
+            dialog_window,
+            text=get_ui_string(self.app.strings, "btn_preview"),
+            command=partial(self._preview_draft, dialog_window),
+        )
+        btn_preview.grid(row=7, column=0, columnspan=2, pady=10)
+
+        footer = ttk.Frame(dialog_window)
+        footer.grid(row=8, column=0, columnspan=2, sticky="ew", padx=10, pady=10)
+        footer.columnconfigure(0, weight=1)
+        btn_apply = ttk.Button(footer, text=get_ui_string(self.app.strings, "btn_apply"), command=self.apply_changes)
+        btn_apply.grid(row=0, column=1, sticky="e", padx=(0, 8))
+
+        def cancel_changes():
+            stop_repeating_nudge()
+            self.close(close_preview=True)
+
+        dialog_window.protocol("WM_DELETE_WINDOW", cancel_changes)
+
+        btn_cancel = ttk.Button(
+            footer,
+            text=get_ui_string(self.app.strings, "btn_cancel"),
+            command=cancel_changes,
+        )
+        btn_cancel.grid(row=0, column=2, sticky="e")
+        self._cancel_button = btn_cancel
+        self._stop_nudge = stop_repeating_nudge
+        self._dependent_controls = [
+            entry_text,
+            current_color_swatch,
+            *preselect_buttons.values(),
+            btn_custom_color,
+            entry_size,
+            option_position,
+            *self.nudge_buttons,
+            btn_preview,
+        ]
+        self.preview_button = btn_preview
+        self.apply_button = btn_apply
+        self.set_busy(getattr(self.app, "output_options_locked", False))
+        self.app.apply_theme_to_window(dialog_window)
+        self._update_controls()
+
+    def _create_color_controls(self, dialog_window, current_color_frame, color_choice_frame):
+        """Build the existing palette and picker with window-local callbacks."""
+        temp_color = self._draft_vars["color"]
         # Fixed palette, starting with the preferred blue.
         preset_colors = ["#416CBE", "#D4776A", "#7C9A86", "#6C8EAD", "#9A87AD", "#6B7280"]
         preselect_buttons: Dict[str, tkButton] = {}
@@ -400,43 +510,13 @@ class WatermarkDialog:
 
         self._trace(temp_color, on_color_change)
         update_color_swatches()
+        return current_color_swatch, preselect_buttons, btn_custom_color
 
-        ttk.Label(dialog_window, text=get_ui_string(self.app.strings, "wm_size")).grid(
-            row=4, column=0, sticky="W", padx=10, pady=5
-        )
-        entry_size = ttk.Spinbox(dialog_window, from_=1, to=100, textvariable=temp_size, width=5)
-        entry_size.grid(row=4, column=1, padx=10, pady=5, sticky="W")
-        self.size_entry = entry_size
-
-        ttk.Label(dialog_window, text=get_ui_string(self.app.strings, "wm_pos")).grid(
-            row=5, column=0, sticky="W", padx=10, pady=5
-        )
-        position_labels = {key: get_ui_string(self.app.strings, "wm_pos_" + key) for key in ("top", "bottom", "custom")}
-        self.position_label = StringVar(dialog_window, value=position_labels[temp_position.get()])
-        option_position = ttk.Menubutton(dialog_window, textvariable=self.position_label)
-        position_menu = Menu(option_position, tearoff=False)
-        option_position.configure(menu=position_menu)
-
-        def select_position(position):
-            if self.window is dialog_window and self._editable():
-                temp_position.set(position)
-
-        for position, label in position_labels.items():
-            position_menu.add_command(label=label, command=partial(select_position, position))
-        self.position_menu = position_menu
-        option_position.grid(row=5, column=1, padx=10, pady=5, sticky="W")
-
-        ttk.Label(dialog_window, text=get_ui_string(self.app.strings, "wm_adjust")).grid(
-            row=6, column=0, sticky="W", padx=10, pady=5
-        )
-        adjust_frame = ttk.Frame(dialog_window)
-        adjust_frame.grid(row=6, column=1, padx=10, pady=5, sticky="W")
-
-        def set_preset_position():
-            if temp_position.get() in {"top", "bottom"}:
-                x_ratio, y_ratio = get_position_ratios(temp_position.get())
-                temp_x_ratio.set(x_ratio)
-                temp_y_ratio.set(y_ratio)
+    def _create_nudge_controls(self, dialog_window, adjust_frame, entry_text, entry_size):
+        """Bind position nudges and return their window-local timer cleanup."""
+        temp_position = self._draft_vars["position"]
+        temp_x_ratio = self._draft_vars["x_ratio"]
+        temp_y_ratio = self._draft_vars["y_ratio"]
 
         def nudge_position(dx: float, dy: float):
             if self.window is not dialog_window or not self._editable():
@@ -526,101 +606,41 @@ class WatermarkDialog:
             dialog_window.bind(sequence, partial(start_keyboard_nudge, direction_x, direction_y, coarse))
             dialog_window.bind(release_sequence, stop_repeating_nudge)
         dialog_window.bind("<FocusOut>", stop_repeating_nudge, add="+")
+        return stop_repeating_nudge
 
-        def preview(force_open=True):
-            if (
-                self.window is not dialog_window
-                or not self._draft_active
-                or self._busy
-                or getattr(self.app, "output_options_locked", False)
-            ):
-                return
-            if force_open and not self._editable():
-                return
-            values = (
-                self._validated_draft(report_error=force_open)
-                if temp_enabled.get()
-                else {
-                    "watermark_color": "#FFA500",
-                    "watermark_size": 16,
-                }
-            )
-            if values is None:
-                return
-            self.app.preview_watermark(
-                temp_enabled.get(),
-                temp_text.get(),
-                values["watermark_color"],
-                values["watermark_size"],
-                temp_position.get(),
-                temp_x_ratio.get(),
-                temp_y_ratio.get(),
-                self.app.current_preview_page,
-                origin=dialog_window,
-                force_open=force_open,
-            )
-
-        def update_preview(*args):
-            preview(force_open=False)
-
-        def on_enabled_change(*args):
-            self._update_controls()
-            update_preview()
-
-        self._trace(temp_enabled, on_enabled_change)
-        self._trace(temp_text, update_preview)
-        self._trace(temp_color, update_preview)
-        self._trace(temp_size, update_preview)
-
-        def on_position_change(*args):
-            self.position_label.set(position_labels[temp_position.get()])
-            set_preset_position()
-            update_preview()
-
-        self._trace(temp_position, on_position_change)
-        self._trace(temp_x_ratio, update_preview)
-        self._trace(temp_y_ratio, update_preview)
-
-        btn_preview = ttk.Button(
-            dialog_window, text=get_ui_string(self.app.strings, "btn_preview"), command=lambda: preview(force_open=True)
+    def _preview_draft(self, dialog_window, force_open=True):
+        """Preview the current draft only while its dialog can accept updates."""
+        if (
+            self.window is not dialog_window
+            or not self._draft_active
+            or self._busy
+            or getattr(self.app, "output_options_locked", False)
+        ):
+            return
+        if force_open and not self._editable():
+            return
+        values = (
+            self._validated_draft(report_error=force_open)
+            if self._draft_vars["enabled"].get()
+            else {
+                "watermark_color": "#FFA500",
+                "watermark_size": 16,
+            }
         )
-        btn_preview.grid(row=7, column=0, columnspan=2, pady=10)
-
-        footer = ttk.Frame(dialog_window)
-        footer.grid(row=8, column=0, columnspan=2, sticky="ew", padx=10, pady=10)
-        footer.columnconfigure(0, weight=1)
-        btn_apply = ttk.Button(footer, text=get_ui_string(self.app.strings, "btn_apply"), command=self.apply_changes)
-        btn_apply.grid(row=0, column=1, sticky="e", padx=(0, 8))
-
-        def cancel_changes():
-            stop_repeating_nudge()
-            self.close(close_preview=True)
-
-        dialog_window.protocol("WM_DELETE_WINDOW", cancel_changes)
-
-        btn_cancel = ttk.Button(
-            footer,
-            text=get_ui_string(self.app.strings, "btn_cancel"),
-            command=cancel_changes,
+        if values is None:
+            return
+        self.app.preview_watermark(
+            self._draft_vars["enabled"].get(),
+            self._draft_vars["text"].get(),
+            values["watermark_color"],
+            values["watermark_size"],
+            self._draft_vars["position"].get(),
+            self._draft_vars["x_ratio"].get(),
+            self._draft_vars["y_ratio"].get(),
+            self.app.current_preview_page,
+            origin=dialog_window,
+            force_open=force_open,
         )
-        btn_cancel.grid(row=0, column=2, sticky="e")
-        self._cancel_button = btn_cancel
-        self._stop_nudge = stop_repeating_nudge
-        self._dependent_controls = [
-            entry_text,
-            current_color_swatch,
-            *preselect_buttons.values(),
-            btn_custom_color,
-            entry_size,
-            option_position,
-            *self.nudge_buttons,
-            btn_preview,
-        ]
-        self.preview_button = btn_preview
-        self.apply_button = btn_apply
-        self.set_busy(getattr(self.app, "output_options_locked", False))
-        self.app.apply_theme_to_window(dialog_window)
-        self._update_controls()
 
     def apply_changes(self):
         """Publish the local draft only when no operation owns the output options."""

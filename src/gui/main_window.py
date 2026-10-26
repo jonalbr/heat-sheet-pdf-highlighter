@@ -1345,55 +1345,7 @@ class PDFHighlighterApp:
                 identifier, kind, args = self._ui_messages.get_nowait()
             except queue.Empty:
                 break
-            if kind == "download_request":
-                request = args[0]
-                try:
-                    if not self._closing:
-                        request.value = request.callback()
-                except Exception as exc:
-                    request.error = exc
-                finally:
-                    request.ready.set()
-                continue
-            if kind == "download":
-                if identifier == self._download_id and self.download_active and not self._closing:
-                    args[0]()
-                continue
-            job = self._job
-            if job is None or identifier != job.identifier:
-                if kind == "request":
-                    args[0].ready.set()
-                continue
-            if kind == "started":
-                self._result_job = None
-                self._render_result()
-            elif kind == "result":
-                job.result = args
-            elif kind == "request":
-                request = args[0]
-                try:
-                    if not job.cancel.is_set() and not self._closing:
-                        job.dialog_open = True
-                        request.value = request.callback()
-                except Exception as exc:
-                    request.error = exc
-                finally:
-                    job.dialog_open = False
-                    request.ready.set()
-            elif not job.cancel.is_set() and not self._closing:
-                if kind == "phase":
-                    job.state = args[0]
-                    self._set_status(args[1])
-                    if job.state == "saving":
-                        self._start_indeterminate_progress_gui()
-                elif kind == "pages":
-                    self._set_determinate_progress()
-                    self.progress_bar["value"] = args[0] / args[1] * 100
-                    self._set_status("processed_pages", *args)
-                elif kind == "ocr":
-                    self._set_determinate_progress()
-                    self.progress_bar["value"] = args[0] / max(1, args[1]) * 100
-                    self._set_status("status_ocr_processing", *args)
+            self._handle_work_message(identifier, kind, args)
         job = self._job
         if job and job.result is not None and not job.dialog_open and (job.worker is None or not job.worker.is_alive()):
             self.finalize_processing(job)
@@ -1403,6 +1355,60 @@ class PDFHighlighterApp:
                 return
         self.root.after(30, self._poll_work)
         self._show_settings_notices()
+
+    def _handle_work_message(self, identifier, kind, args):
+        """Dispatch a queued message on the Tk thread, ignoring obsolete jobs."""
+        if kind == "download_request":
+            self._complete_gui_request(args[0])
+            return
+        if kind == "download":
+            if identifier == self._download_id and self.download_active and not self._closing:
+                args[0]()
+            return
+        job = self._job
+        if job is None or identifier != job.identifier:
+            if kind == "request":
+                args[0].ready.set()
+            return
+        if kind == "started":
+            self._result_job = None
+            self._render_result()
+        elif kind == "result":
+            job.result = args
+        elif kind == "request":
+            self._complete_gui_request(args[0], job)
+        elif not job.cancel.is_set() and not self._closing:
+            self._handle_job_progress(job, kind, args)
+
+    def _complete_gui_request(self, request, job=None):
+        """Always release the waiting worker, including skipped or failed dialogs."""
+        try:
+            if not self._closing and (job is None or not job.cancel.is_set()):
+                if job is not None:
+                    job.dialog_open = True
+                request.value = request.callback()
+        except Exception as exc:
+            request.error = exc
+        finally:
+            if job is not None:
+                job.dialog_open = False
+            request.ready.set()
+
+    def _handle_job_progress(self, job, kind, args):
+        """Apply phase and progress messages for an active, uncancelled job."""
+        if kind == "phase":
+            job.state = args[0]
+            self._set_status(args[1])
+            if job.state == "saving":
+                self._start_indeterminate_progress_gui()
+        elif kind == "pages":
+            self._set_determinate_progress()
+            self.progress_bar["value"] = args[0] / args[1] * 100
+            self._set_status("processed_pages", *args)
+        elif kind == "ocr":
+            self._set_determinate_progress()
+            self.progress_bar["value"] = args[0] / max(1, args[1]) * 100
+            self._set_status("status_ocr_processing", *args)
 
     def process_pdf(self, job):
         """Run PDF work using only job-owned input and cancellation."""
@@ -1792,7 +1798,8 @@ class PDFHighlighterApp:
                 return
             path = str(target.parent if folder else target)
             if os.name == "nt":
-                os.startfile(path)
+                # Open the user-selected saved result with its Windows file association.
+                os.startfile(path)  # nosec B606
             else:
                 subprocess.Popen(["open" if sys.platform == "darwin" else "xdg-open", path])
         except Exception:

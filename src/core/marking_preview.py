@@ -215,23 +215,10 @@ class MarkingPreviewRenderer:
         q = self.query
         if q is None or q.done:
             return None
-        q.hint_next(self.index)
-        if (q.first_sent and len(q.queued) < len(self.index.pages)
-                and not (q.current is not None and q.priority(q.current) == 0)
-                and not any(q.priority(number) == 0 for number in q.pending_pages)):
+        if not self._select_query_page(q):
+            if q.done:
+                return self._result(q, "single_category" if q.mixed else "ready") if q.first_sent else self._fallback(q)
             return None
-        if (q.current is not None and q.priority(q.current) > 0
-                and any(q.priority(number) == 0 for number in q.pending_pages)):
-            q.pending_pages.appendleft(q.current)
-            q.current = None
-        if q.current is None:
-            if not q.pending_pages:
-                if self.index.complete:
-                    q.done = True
-                    return self._result(q, "single_category" if q.mixed else "ready") if q.first_sent else self._fallback(q)
-                return None
-            q.current = next((number for number in q.pending_pages if q.priority(number) == 0), q.pending_pages[0])
-            q.pending_pages.remove(q.current)
         number = q.current
         native = self.index.native(number)
         if number not in q.cursors:
@@ -248,6 +235,30 @@ class MarkingPreviewRenderer:
             return None
         q.seen.add(key)
         self._remember(q, number, record)
+        return self._publish_query_match(q, number, record)
+
+    def _select_query_page(self, q):
+        """Select a pending page or yield while hints and preparation catch up."""
+        q.hint_next(self.index)
+        if (q.first_sent and len(q.queued) < len(self.index.pages)
+                and not (q.current is not None and q.priority(q.current) == 0)
+                and not any(q.priority(number) == 0 for number in q.pending_pages)):
+            return False
+        if (q.current is not None and q.priority(q.current) > 0
+                and any(q.priority(number) == 0 for number in q.pending_pages)):
+            q.pending_pages.appendleft(q.current)
+            q.current = None
+        if q.current is None:
+            if not q.pending_pages:
+                if self.index.complete:
+                    q.done = True
+                return False
+            q.current = next((number for number in q.pending_pages if q.priority(number) == 0), q.pending_pages[0])
+            q.pending_pages.remove(q.current)
+        return True
+
+    def _publish_query_match(self, q, number, record):
+        """Publish the first usable excerpt or a completed pair of categories."""
         if q.mixed and q.named and q.general:
             self._prefer_neighbour(q, number, record)
             self.selection = self._areas(q.named, q.general)
@@ -416,75 +427,93 @@ class MarkingPreviewRenderer:
             return PreviewResult(self._render_page(page, page.rect), None, no_named_matches)
 
 
+class _MarkingPreviewWorker:
+    """Keep control, rendering and progress state local to the preview process."""
+
+    def __init__(self, connection):
+        self.connection = connection
+        self.engine = MarkingPreviewRenderer()
+        self.document_generation = self.generation = 0
+        self.paused = False
+        self.request = None
+        self.reported = -1
+        self.progress_at = 0.0
+
+    def receive_latest(self):
+        """Apply only the newest snapshot, stopping immediately on shutdown."""
+        latest = None
+        while self.connection.poll():
+            message = self.connection.recv()
+            if message is None:
+                return False
+            latest = message
+        if latest is not None:
+            self.sync(latest)
+        return True
+
+    def sync(self, message):
+        """Update document and request generations before any further PDF work."""
+        _, doc_id, path, new_paused, request_id, new_request = message
+        changed_doc = doc_id != self.document_generation
+        if changed_doc:
+            self.engine.prepare(path)
+            self.document_generation = doc_id
+            self.reported = -1
+        if new_paused:
+            self.engine.index.pause()
+        self.paused = new_paused
+        if request_id != self.generation or changed_doc or (self.request is None and new_request is not None):
+            self.generation = request_id
+            self.request = new_request
+            self.engine.query = None
+            if self.request is not None and not self.paused:
+                self.send_result(self.engine.start(self.request))
+
+    def send_result(self, result):
+        """Tag a rendered result with the active document and request."""
+        if result is not None:
+            self.connection.send(("result", self.document_generation, self.generation, result))
+
+    def step(self):
+        """Perform one occurrence or page step, or briefly wait when idle."""
+        if self.request is not None and self.engine.query is None:
+            self.send_result(self.engine.start(self.request))
+        query = self.engine.query
+        if query is not None and query.can_step(self.engine.index):
+            self.send_result(self.engine.step_query())
+        elif not self.engine.index.complete:
+            self.engine.prepare_next()
+        else:
+            self.connection.poll(0.02)
+
+    def report_progress(self):
+        """Throttle preparation updates while always reporting completion."""
+        now = time.monotonic()
+        prepared = len(self.engine.index.pages)
+        if prepared != self.reported and (self.engine.index.complete or now - self.progress_at >= 0.05):
+            self.connection.send(("progress", self.document_generation, prepared, self.engine.index.total))
+            self.reported, self.progress_at = prepared, now
+
+
 def marking_preview_worker(connection):
     """Serve latest-only control messages between page/occurrence-sized work steps."""
-    engine = MarkingPreviewRenderer()
-    document_generation = generation = 0
-    paused = False
-    request = None
-    reported = -1
-    progress_at = 0.0
+    worker = _MarkingPreviewWorker(connection)
     try:
         connection.send(("ready",))
-        running = True
-        while running:
-            # Drain to the newest snapshot before doing any more speculative work.
-            latest = None
-            while connection.poll():
-                message = connection.recv()
-                if message is None:
-                    running = False
-                    break
-                latest = message
-            if not running:
-                break
-            if latest is not None:
-                _, doc_id, path, new_paused, request_id, new_request = latest
-                changed_doc = doc_id != document_generation
-                if changed_doc:
-                    engine.prepare(path)
-                    document_generation = doc_id
-                    reported = -1
-                if new_paused:
-                    engine.index.pause()
-                paused = new_paused
-                if request_id != generation or changed_doc or (request is None and new_request is not None):
-                    generation = request_id
-                    request = new_request
-                    engine.query = None
-                    if request is not None and not paused:
-                        result = engine.start(request)
-                        if result is not None:
-                            connection.send(("result", document_generation, generation, result))
-            if paused:
+        while worker.receive_latest():
+            if worker.paused:
                 connection.poll(0.02)
                 continue
-            if request is not None and engine.query is None:
-                result = engine.start(request)
-                if result is not None:
-                    connection.send(("result", document_generation, generation, result))
-            query = engine.query
-            if query is not None and query.can_step(engine.index):
-                result = engine.step_query()
-                if result is not None:
-                    connection.send(("result", document_generation, generation, result))
-            elif not engine.index.complete:
-                engine.prepare_next()
-            else:
-                connection.poll(0.02)
-            now = time.monotonic()
-            prepared = len(engine.index.pages)
-            if prepared != reported and (engine.index.complete or now - progress_at >= 0.05):
-                connection.send(("progress", document_generation, prepared, engine.index.total))
-                reported, progress_at = prepared, now
+            worker.step()
+            worker.report_progress()
     except EOFError, BrokenPipeError, OSError:
         pass
     except Exception:
         logging.getLogger(__name__).exception("Preview worker failed")
         try:
-            connection.send(("error", document_generation, generation))
+            connection.send(("error", worker.document_generation, worker.generation))
         except OSError:
             pass
     finally:
-        engine.close()
+        worker.engine.close()
         connection.close()
