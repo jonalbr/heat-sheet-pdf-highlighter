@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+from functools import cache
 import hashlib
 import json
 import os
@@ -220,30 +221,54 @@ def inno_setup_version(workflow: str) -> str | None:
     return value.removesuffix(".0") if value.count(".") == 3 else value
 
 
+def read_dependency_requirements(sha: str | None, cwd: Path = ROOT) -> dict[str, list[str]]:
+    """Read package and build-tool requirements from one committed snapshot."""
+    files = (
+        set(git("ls-tree", "--name-only", "-r", sha, "--", *DEPENDENCY_FILES, cwd=cwd).splitlines()) if sha else set()
+    )
+    values = dependency_declarations(
+        tomllib.loads(git("show", f"{sha}:pyproject.toml", cwd=cwd)) if "pyproject.toml" in files else {}
+    )
+    if ".python-version" in files:
+        version = git("show", f"{sha}:.python-version", cwd=cwd).strip()
+        if re.fullmatch(r"\d+\.\d+(?:\.\d+)?", version):
+            values["Python"] = [f"=={version}"]
+    if ".github/workflows/ci.yml" in files:
+        version = inno_setup_version(git("show", f"{sha}:.github/workflows/ci.yml", cwd=cwd))
+        if version:
+            values["Inno Setup"] = [f"=={version}"]
+    return values
+
+
+def pinned_dependency_version(values: list[str]) -> str | None:
+    """Extract an exact version when one requirement pins the package."""
+    match = re.fullmatch(r"==\s*([^\s;*]+)\s*(?:;.*)?", values[0]) if len(values) == 1 else None
+    return match[1] if match else None
+
+
+def format_dependency_note(name: str, old: list[str], new: list[str], sha: str) -> dict:
+    """Describe one requirement change and retain its exact Git source."""
+    version = pinned_dependency_version(new)
+    if name == "Inno Setup":
+        text = f"Set Inno Setup minimum to {version}." if new else "Remove the Inno Setup version requirement."
+    elif not old:
+        text = f"Add {name}{' ' + version if version else ''}."
+    elif not new:
+        text = f"Remove {name}."
+    elif version and version != pinned_dependency_version(old):
+        text = f"Bump {name} to {version}."
+    else:
+        text = f"Update {name} requirement."
+    path = {"Inno Setup": ".github/workflows/ci.yml", "Python": ".python-version"}.get(name, "pyproject.toml")
+    return {"text": text, "evidence": [path], "commits": [sha]}
+
+
 def collect_dependency_notes(base_sha: str, target_sha: str, cwd: Path = ROOT) -> list[dict]:
     """Attribute final requirement changes to their integration on the target's first-parent history."""
-    snapshots = {}
 
+    @cache
     def requirements(sha):
-        if sha not in snapshots:
-            files = (
-                set(git("ls-tree", "--name-only", "-r", sha, "--", *DEPENDENCY_FILES, cwd=cwd).splitlines())
-                if sha
-                else set()
-            )
-            values = dependency_declarations(
-                tomllib.loads(git("show", f"{sha}:pyproject.toml", cwd=cwd)) if "pyproject.toml" in files else {}
-            )
-            if ".python-version" in files:
-                version = git("show", f"{sha}:.python-version", cwd=cwd).strip()
-                if re.fullmatch(r"\d+\.\d+(?:\.\d+)?", version):
-                    values["Python"] = [f"=={version}"]
-            if ".github/workflows/ci.yml" in files:
-                version = inno_setup_version(git("show", f"{sha}:.github/workflows/ci.yml", cwd=cwd))
-                if version:
-                    values["Inno Setup"] = [f"=={version}"]
-            snapshots[sha] = values
-        return snapshots[sha]
+        return read_dependency_requirements(sha, cwd)
 
     before, after = requirements(base_sha), requirements(target_sha)
     pending = {name for name in before.keys() | after.keys() if before.get(name) != after.get(name)}
@@ -261,27 +286,10 @@ def collect_dependency_notes(base_sha: str, target_sha: str, cwd: Path = ROOT) -
     if pending:
         raise NotesError(f"Cannot locate dependency changes in the release history: {', '.join(sorted(pending))}.")
 
-    def pinned_version(values):
-        match = re.fullmatch(r"==\s*([^\s;*]+)\s*(?:;.*)?", values[0]) if len(values) == 1 else None
-        return match[1] if match else None
-
-    result = []
-    for name in sorted(sources):
-        old, new = before.get(name, []), after.get(name, [])
-        version = pinned_version(new)
-        if name == "Inno Setup":
-            text = f"Set Inno Setup minimum to {version}." if new else "Remove the Inno Setup version requirement."
-        elif not old:
-            text = f"Add {name}{' ' + version if version else ''}."
-        elif not new:
-            text = f"Remove {name}."
-        elif version and version != pinned_version(old):
-            text = f"Bump {name} to {version}."
-        else:
-            text = f"Update {name} requirement."
-        path = {"Inno Setup": ".github/workflows/ci.yml", "Python": ".python-version"}.get(name, "pyproject.toml")
-        result.append({"text": text, "evidence": [path], "commits": [sources[name]]})
-    return result
+    return [
+        format_dependency_note(name, before.get(name, []), after.get(name, []), sources[name])
+        for name in sorted(sources)
+    ]
 
 
 def add_dependency_notes(notes: dict, context: dict) -> dict:
@@ -459,6 +467,41 @@ def output_schema(context: dict | None = None) -> dict:
     }
 
 
+def validate_bullet_text(text: str) -> None:
+    """Require plain-text output without injected formatting or links."""
+    if (
+        not isinstance(text, str)
+        or not text.strip()
+        or text != text.strip()
+        or re.search(r"[\x00-\x1f\x7f<>#`\[\]*_]|https?://|@", text)
+    ):
+        raise NotesError("Bullets must be non-empty plain-text sentences without links or attribution.")
+
+
+def validate_bullet_evidence(evidence: list[str], section: str, changed_files: list[str]) -> None:
+    """Require changed-file evidence and application evidence for user-facing claims."""
+    if (
+        not isinstance(evidence, list)
+        or not 1 <= len(evidence) <= 5
+        or any(not isinstance(p, str) or p not in changed_files for p in evidence)
+    ):
+        raise NotesError("A bullet cites a file outside the release diff.")
+    if section == "highlights" and not any(is_app_source(p) for p in evidence):
+        raise NotesError("A highlight needs evidence from application changes.")
+
+
+def validate_bullet_commits(cited: list[str], commits: dict[str, set[str]], evidence: list[str]) -> None:
+    """Require distinct release commits that touch the bullet's evidence files."""
+    if (
+        not isinstance(cited, list)
+        or not 1 <= len(cited) <= 2
+        or any(not isinstance(sha, str) or sha not in commits for sha in cited)
+    ):
+        raise NotesError("A bullet must cite one or two commits from the release range.")
+    if len(set(cited)) != len(cited) or any(not commits[sha].intersection(evidence) for sha in cited):
+        raise NotesError("Cited commits must be distinct and touch a bullet's evidence files.")
+
+
 def validate_notes(notes: dict, context: dict) -> dict:
     """Reject malformed or unsupported output before replacing a notes file."""
     if not isinstance(notes, dict) or set(notes) != {"highlights", "dependencies"}:
@@ -473,30 +516,9 @@ def validate_notes(notes: dict, context: dict) -> dict:
             if not isinstance(item, dict) or set(item) != {"text", "evidence", "commits"}:
                 raise NotesError("Each bullet must contain text, evidence, and commits.")
             text, evidence = item["text"], item["evidence"]
-            if (
-                not isinstance(text, str)
-                or not text.strip()
-                or text != text.strip()
-                or re.search(r"[\x00-\x1f\x7f<>#`\[\]*_]|https?://|@", text)
-            ):
-                raise NotesError("Bullets must be non-empty plain-text sentences without links or attribution.")
-            if (
-                not isinstance(evidence, list)
-                or not 1 <= len(evidence) <= 5
-                or any(not isinstance(p, str) or p not in context["changed_files"] for p in evidence)
-            ):
-                raise NotesError("A bullet cites a file outside the release diff.")
-            if section == "highlights" and not any(is_app_source(p) for p in evidence):
-                raise NotesError("A highlight needs evidence from application changes.")
-            cited = item["commits"]
-            if (
-                not isinstance(cited, list)
-                or not 1 <= len(cited) <= 2
-                or any(not isinstance(sha, str) or sha not in commits for sha in cited)
-            ):
-                raise NotesError("A bullet must cite one or two commits from the release range.")
-            if len(set(cited)) != len(cited) or any(not commits[sha].intersection(evidence) for sha in cited):
-                raise NotesError("Cited commits must be distinct and touch a bullet's evidence files.")
+            validate_bullet_text(text)
+            validate_bullet_evidence(evidence, section, context["changed_files"])
+            validate_bullet_commits(item["commits"], commits, evidence)
             if text.casefold() in seen:
                 raise NotesError("Model output contains duplicate bullets.")
             seen.add(text.casefold())
