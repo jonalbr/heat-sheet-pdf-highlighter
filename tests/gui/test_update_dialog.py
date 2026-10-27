@@ -1,5 +1,6 @@
 """Drive the real themed modal dialog, including its worker-thread entry."""
 
+from contextlib import contextmanager
 import threading
 from types import SimpleNamespace
 import tkinter as tk
@@ -43,21 +44,61 @@ def descendants(widget):
         yield from descendants(child)
 
 
-def drive(app, callback):
+@contextmanager
+def dialog_guard(app, timeout_ms=5000):
+    """Fail and unwind nested Tk waits on timeout or callback exceptions."""
     errors = []
+    root = app.root
+    original_report = root.report_callback_exception
+    original_closing = app._closing
+    original_timers = set(root.tk.call("after", "info"))
+
+    def abort(error):
+        errors.append(error)
+        app._closing = True
+        for child in root.winfo_children():
+            if isinstance(child, tk.Toplevel):
+                child.destroy()
+        # quit alone does not release wait_window's nested event loop.
+        root.quit()
+
+    root.report_callback_exception = lambda _kind, error, traceback: abort(error.with_traceback(traceback))
+    root.after(timeout_ms, lambda: abort(AssertionError(f"Update dialog timed out after {timeout_ms} ms")))
+    try:
+        yield
+    finally:
+        for timer in set(root.tk.call("after", "info")) - original_timers:
+            root.after_cancel(timer)
+        root.report_callback_exception = original_report
+        if errors:
+            app._closing = original_closing
+            raise errors[0]
+
+
+def send_key_when_focused(widget, key):
+    """Allow mapping and native focus events to finish before sending a key."""
+    def send():
+        if not widget.winfo_viewable():
+            widget.after(10, send)
+        elif widget.focus_get() != widget:
+            widget.focus_force()
+            widget.after(10, send)
+        else:
+            widget.event_generate(key, when="tail")
+
+    widget.after_idle(send)
+
+
+def drive(app, callback, *, timeout_ms=5000):
+    """Drive a modal dialog with bounded interaction and reliable cleanup."""
 
     def interact():
         window = next(child for child in app.root.winfo_children() if isinstance(child, tk.Toplevel))
-        try:
-            callback(window)
-        except BaseException as error:
-            errors.append(error)
-            window.destroy()
+        callback(window)
 
-    app.root.after(30, interact)
-    result = UpdateDialogs(app).show_update_available(Version.from_str("99.0.0"))
-    if errors:
-        raise errors[0]
+    with dialog_guard(app, timeout_ms):
+        app.root.after(30, interact)
+        result = UpdateDialogs(app).show_update_available(Version.from_str("99.0.0"))
     return result
 
 
@@ -89,8 +130,7 @@ def test_dismissal_discards_checked_draft(app, close_way):
         if close_way == "window":
             window.tk.call(window.protocol("WM_DELETE_WINDOW"))
         elif close_way == "escape":
-            window.focus_force()
-            window.event_generate("<Escape>")
+            send_key_when_focused(window, "<Escape>")
         else:
             app._closing = True
             window.destroy()  # Main app close destroys outstanding Toplevels.
@@ -113,14 +153,13 @@ def test_reopening_starts_with_unchecked_checkbox(app):
 def test_return_activates_focused_action(app, key, action):
     def interact(window):
         button = next(widget for widget in descendants(window) if isinstance(widget, ttk.Button) and widget["text"] == app.strings[key])
-        button.focus_force()
-        button.event_generate("<Return>")
+        send_key_when_focused(button, "<Return>")
 
     assert drive(app, interact) == UpdateDecision(action)
 
 
 def test_worker_entry_executes_dialog_on_main_thread(app, monkeypatch):
-    result, calls, workers = [], [], []
+    result, calls, workers, errors = [], [], [], []
     original = message_dialog._show_update_dialog
 
     def show(*args):
@@ -134,26 +173,88 @@ def test_worker_entry_executes_dialog_on_main_thread(app, monkeypatch):
 
     def start():
         def work():
-            result.append(UpdateDialogs(app).show_update_available(Version.from_str("99.0.0")))
+            try:
+                result.append(UpdateDialogs(app).show_update_available(Version.from_str("99.0.0")))
+            except BaseException as error:
+                errors.append(error)
 
         worker = threading.Thread(target=work)
         workers.append(worker)
         worker.start()
 
     def poll():
-        if result:
+        if result or errors:
             app.root.quit()
         else:
             app.root.after(10, poll)
 
-    app.root.after(0, start)
-    app.root.after(10, poll)
-    app.root.after(3000, app.root.quit)
-    app.root.mainloop()
-    workers[0].join(2)
+    try:
+        with dialog_guard(app):
+            app.root.after(0, start)
+            app.root.after(10, poll)
+            app.root.mainloop()
+    finally:
+        app._closing = True
+        for worker in workers:
+            worker.join(2)
+    if errors:
+        raise errors[0]
     assert not workers[0].is_alive()
     assert result == [UpdateDecision("cancel")]
     assert calls == [threading.main_thread()]
+
+
+def test_unanswered_dialog_times_out_and_releases_modal_grab(app):
+    original_report = app.root.report_callback_exception
+    with pytest.raises(AssertionError, match="Update dialog timed out"):
+        drive(app, lambda window: None, timeout_ms=100)
+    assert app.root.grab_current() is None
+    assert not app.root.winfo_children()
+    assert app.root.report_callback_exception == original_report
+    assert not app._closing
+    assert not app.root.tk.call("after", "info")
+
+
+def test_unanswered_worker_dialog_times_out_and_releases_thread(app):
+    result, workers = [], []
+
+    def start():
+        worker = threading.Thread(target=lambda: result.append(
+            UpdateDialogs(app).show_update_available(Version.from_str("99.0.0")),
+        ))
+        workers.append(worker)
+        worker.start()
+
+    try:
+        with pytest.raises(AssertionError, match="Update dialog timed out"):
+            with dialog_guard(app, timeout_ms=1000):
+                app.root.after(0, start)
+                app.root.mainloop()
+    finally:
+        app._closing = True
+        for worker in workers:
+            worker.join(2)
+    assert workers and not workers[0].is_alive()
+    assert result == [UpdateDecision("cancel")]
+    assert app.root.grab_current() is None
+    assert not app.root.winfo_children()
+
+
+@pytest.mark.parametrize("deferred", [False, True])
+def test_interaction_errors_unwind_modal_wait(app, deferred):
+    def fail():
+        raise RuntimeError("Dialog interaction failed")
+
+    def interact(window):
+        if deferred:
+            window.after_idle(fail)
+        else:
+            fail()
+
+    with pytest.raises(RuntimeError, match="Dialog interaction failed"):
+        drive(app, interact)
+    assert app.root.grab_current() is None
+    assert not app.root.winfo_children()
 
 
 def test_closing_or_obsolete_request_never_opens_dialog(app):
