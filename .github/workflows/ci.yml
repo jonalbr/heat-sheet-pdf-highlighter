@@ -5,18 +5,24 @@ on:
     tags:
       - "v*"
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 env:
   UV_MANAGED_PYTHON: "true"
 
 jobs:
   test:
+    if: github.repository == 'jonalbr/heat-sheet-pdf-highlighter' && github.actor == 'jonalbr' && github.triggering_actor == 'jonalbr'
+    timeout-minutes: 20
     permissions:
       contents: read
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - name: Set up uv
-        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        uses: astral-sh/setup-uv@v10.3.2
       - name: Set up Python
         shell: pwsh
         run: uv python install
@@ -42,7 +48,7 @@ jobs:
         run: uv sync --locked --all-groups
       - name: Run tests
         shell: pwsh
-        run: uv run pytest
+        run: uv run --locked pytest -vv -o faulthandler_timeout=60
 
   build_installer:
     needs: test
@@ -50,9 +56,9 @@ jobs:
       contents: read
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - name: Set up uv
-        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        uses: astral-sh/setup-uv@v10.3.2
       - name: Set up Python
         shell: pwsh
         run: uv python install
@@ -140,7 +146,7 @@ jobs:
             }
           }
       - name: Upload installer artifacts
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: installer
           if-no-files-found: error
@@ -149,353 +155,38 @@ jobs:
             heat_sheet_pdf_highlighter_installer.exe.sha256
 
   generate_notes:
-    runs-on: ubuntu-latest
+    needs: test
+    if: github.repository == 'jonalbr/heat-sheet-pdf-highlighter' && github.actor == 'jonalbr' && github.triggering_actor == 'jonalbr'
+    timeout-minutes: 5
     permissions:
       contents: read
-      models: read
+      pull-requests: read
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
-      - name: Determine previous tag
-        shell: pwsh
-        run: |
-          git fetch --tags --force
-          $current = "${{ github.ref_name }}"
-
-          # Determine previous FINAL tag (vX.Y.Z) below current version, even if current is prerelease
-          $base = if ($current -match '^v?(\d+\.\d+\.\d+)') { $Matches[1] } else { $current -replace '^v','' }
-          try { $currentVersion = [Version]$base } catch { $currentVersion = $null }
-
-          $all = git tag -l 'v*' --sort=-v:refname
-          $final = @()
-          foreach ($t in $all) {
-            if ($t -match '^v\d+\.\d+\.\d+$') {
-              $ver = $t.Substring(1)
-              try { $final += [PSCustomObject]@{ Tag=$t; Version=[Version]$ver } } catch {}
-            }
-          }
-
-          $prev = ""
-          if ($currentVersion -ne $null) {
-            $prevObj = $final | Where-Object { $_.Version -lt $currentVersion } | Select-Object -First 1
-            if ($prevObj) { $prev = $prevObj.Tag }
-          }
-
-          # Fallback to previous tag by history if none found
-          if (-not $prev) {
-            $prev = (git describe --tags --abbrev=0 "$current^") 2>$null
-            if (-not $prev) { $prev = "" }
-          }
-
-          "CURRENT_TAG=$current" | Out-File -FilePath $env:GITHUB_ENV -Append
-          "PREV_TAG=$prev"       | Out-File -FilePath $env:GITHUB_ENV -Append
-          Write-Output "Current tag: $current"
-          Write-Output "Previous tag: $prev"
-      - name: Collect commit messages
-        shell: pwsh
-        run: |
-          if ($env:PREV_TAG) {
-            git log --pretty=format:"%s%n%n%b" "$env:PREV_TAG..$env:CURRENT_TAG" > commits_raw.txt
-          } else {
-            git log -1 --pretty=format:"%s%n%n%b" "$env:CURRENT_TAG" > commits_raw.txt
-          }
-          if (-not (Get-Content commits_raw.txt | Where-Object {$_})) {
-            'No commits found between tags.' | Out-File commits_raw.txt
-          }
-          (Get-Content commits_raw.txt) | ForEach-Object { '- ' + $_ } | Out-File commits.txt -Encoding utf8
-          Get-Content commits.txt | Select-Object -First 50
-      - name: Generate deterministic release notes
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          git fetch --tags --force | Out-Null
-
-          $current = $env:CURRENT_TAG
-          $prev = $env:PREV_TAG
-          if ([string]::IsNullOrWhiteSpace($prev)) {
-            $prev = (git rev-list --max-parents=0 HEAD).Trim()
-          }
-
-          $range = "$prev..$current"
-          $rawCommits = git log --no-merges --pretty=format:"%s" $range
-
-          $repo = "${{ github.repository }}"
-          $fullChangelog = "https://github.com/$repo/compare/$prev...$current"
-
-          $categories = [ordered]@{
-            'Features'      = @()
-            'Fixes'         = @()
-            'Performance'   = @()
-            'Docs'          = @()
-            'Refactor'      = @()
-            'Tests'         = @()
-            'Build'         = @()
-            'CI'            = @()
-            'Style'         = @()
-            'Dependencies'  = @()
-            'Reverts'       = @()
-            'Other'         = @()
-          }
-
-          function Convert-ToHighlight {
-            param([string]$Text)
-
-            $clean = $Text.Trim().TrimEnd('.')
-            if ([string]::IsNullOrWhiteSpace($clean)) { return $null }
-
-            $lower = $clean.ToLowerInvariant()
-            if ($lower -match '\bdark\b' -and $lower -match '\blight\b' -and $lower -match '\bmode\b') {
-              return 'Dark and light mode are now supported.'
-            }
-            if ($lower -match '\btitle bar\b' -and $lower -match '\btheme\b') {
-              return 'Windows title bars now follow the selected app theme.'
-            }
-            if ($lower -match '\bwatermark' -and $lower -match '(custom|position|placement|color)') {
-              return 'Watermarks now support custom colors and flexible placement.'
-            }
-
-            $clean = $clean -replace '^(add|adds|added|enhance|enhances|enhanced|implement|implements|implemented|refine|refines|refined|update|updates|updated)\s+', ''
-            $clean = $clean.Trim()
-            if ([string]::IsNullOrWhiteSpace($clean)) { return $null }
-
-            if ($clean.Length -eq 1) {
-              return $clean.ToUpperInvariant() + '.'
-            }
-            return $clean.Substring(0, 1).ToUpperInvariant() + $clean.Substring(1) + '.'
-          }
-
-          function Test-InternalReleaseNote {
-            param(
-              [string]$Category,
-              [string]$LowerText
-            )
-
-            if (@('Features', 'Fixes', 'Performance') -notcontains $Category) { return $true }
-
-            $internalPatterns = @(
-              '\bci\b',
-              '\bworkflow\b',
-              '\brelease process\b',
-              '\bversion\b',
-              '\breadme\b',
-              '\bfunding\b',
-              '\bscreenshot\b',
-              '\bbundle directory\b',
-              '\btests?\b',
-              '\bbuild\b',
-              '\blocalization scripts?\b',
-              '\bdevtools?\b',
-              '\bdependency\b',
-              '\bdependencies\b',
-              '\bbump\b',
-              '\buv\b',
-              '\bpython 3\.14\b',
-              '\bcache modules?\b',
-              '\bupdater\.py\b',
-              '\bstatus string\b'
-            )
-            foreach ($pattern in $internalPatterns) {
-              if ($LowerText -match $pattern) { return $true }
-            }
-
-            return $false
-          }
-
-          $highlights = @()
-          $highlightSeen = @{}
-          $detailSeen = @{}
-
-          foreach ($c in $rawCommits) {
-            $c = $c.Trim()
-            if (-not $c) { continue }
-            if ($c -eq $current) { continue }
-          # Skip pure tag/version messages like "v1.3.3rc1"
-          if ($c -match '^(?i)v?\d+\.\d+\.\d+(?:(?:a|b|rc)\d+|[-+\.][0-9A-Za-z.-]+)?$') { continue }
-          # Skip messages that are just a list of versions like
-          # "v1.3.4rc2, v1.3.4rc1, v1.3.3rc3" (optional trailing period)
-          if ($c -match '^(?i)\s*(?:v?\d+\.\d+\.\d+(?:(?:a|b|rc)\d+|[-+\.][0-9A-Za-z.-]+)?)(?:\s*,\s*v?\d+\.\d+\.\d+(?:(?:a|b|rc)\d+|[-+\.][0-9A-Za-z.-]+)?)*(?:\s*(?:and|&)\s*v?\d+\.\d+\.\d+(?:(?:a|b|rc)\d+|[-+\.][0-9A-Za-z.-]+)?)?\s*\.?\s*$') { continue }
-
-            $lower = $c.ToLowerInvariant()
-            # Skip release/tag housekeeping commits that include a version
-            if ($lower -match '\b(tag|release|prepare|prep|bump|version|cut|publish|changelog)\b' -and $lower -match '\bv?\d+\.\d+\.\d+') { continue }
-            $target = 'Other'
-            if     ($lower -match '^(feat)(\(.+\))?!?:\s') { $target = 'Features' }
-            elseif ($lower -match '^(fix|hotfix|bugfix)(\(.+\))?!?:\s') { $target = 'Fixes' }
-            elseif ($lower -match '^(perf)(\(.+\))?!?:\s') { $target = 'Performance' }
-            elseif ($lower -match '^(docs?)(\(.+\))?!?:\s') { $target = 'Docs' }
-            elseif ($lower -match '^(refactor)(\(.+\))?!?:\s') { $target = 'Refactor' }
-            elseif ($lower -match '^(test)(\(.+\))?!?:\s') { $target = 'Tests' }
-            elseif ($lower -match '^(build)(\(.+\))?!?:\s') { $target = 'Build' }
-            elseif ($lower -match '^(ci)(\(.+\))?!?:\s') { $target = 'CI' }
-            elseif ($lower -match '^(style)(\(.+\))?!?:\s') { $target = 'Style' }
-            elseif ($lower -match '^(revert)') { $target = 'Reverts' }
-            elseif ($lower -match '(dependabot|^deps?:|\bbump\b)') { $target = 'Dependencies' }
-
-            if ($target -in @('Features', 'Fixes')) {
-              if ($lower -match '\bci\b|\bworkflow\b') { $target = 'CI' }
-              elseif ($lower -match '\breadme\b|\bcontributing\b|\bscreenshot\b') { $target = 'Docs' }
-              elseif ($lower -match '\btests?\b') { $target = 'Tests' }
-              elseif ($lower -match '\brelease process\b|\bversion\b|\bbuild\b|\bbundle directory\b|\buv\b|\bpython 3\.14\b') { $target = 'Build' }
-            }
-
-            $pretty = $c -replace '^[a-zA-Z]+(\(.+?\))?!?:\s*',''
-            $pretty = $pretty.TrimEnd('.')
-
-            $detailKey = "$target|$pretty".ToLowerInvariant()
-            if (-not $detailSeen.ContainsKey($detailKey)) {
-              $categories[$target] += "- $pretty"
-              $detailSeen[$detailKey] = $true
-            }
-
-            if (-not (Test-InternalReleaseNote -Category $target -LowerText $lower)) {
-              $highlight = Convert-ToHighlight -Text $pretty
-              if (-not [string]::IsNullOrWhiteSpace($highlight)) {
-                $highlightKey = $highlight.ToLowerInvariant()
-                if (-not $highlightSeen.ContainsKey($highlightKey)) {
-                  $highlights += "- $highlight"
-                  $highlightSeen[$highlightKey] = $true
-                }
-              }
-            }
-          }
-
-          $lines = @()
-          $lines += "# What's New"
-          $lines += ""
-          $lines += "## Highlights"
-          $lines += ""
-
-          if ($highlights.Count -gt 0) {
-            $lines += @($highlights | Select-Object -First 5)
-          } else {
-            $lines += "- This release focuses on maintenance and reliability improvements."
-          }
-
-          $lines += ""
-          $lines += "## Detailed Changes"
-          $lines += ""
-
-          $addedAny = $false
-          foreach ($k in $categories.Keys) {
-            $items = $categories[$k]
-            if ($items.Count -gt 0) {
-              $addedAny = $true
-              $lines += "### $k"
-              $lines += $items
-              $lines += ""
-            }
-          }
-
-          if (-not $addedAny) {
-            $lines += "- Internal updates"
-            $lines += ""
-          }
-
-          $lines += "**Full Changelog**: $fullChangelog"
-
-          $outPath = "release_notes.md"
-          $lines -join "`r`n" | Out-File -FilePath $outPath -Encoding utf8 -NoNewline
-      - name: Polish release notes with GitHub Models
-        shell: pwsh
+          persist-credentials: false
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v10.3.2
+      - name: Set up Python
+        run: uv python install
+      - name: Install release-note dependencies
+        run: uv sync --locked --group dev
+      - name: Generate release notes with OpenAI
         env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $outPath = "release_notes.md"
-          if (-not (Test-Path $outPath)) { exit 0 }
-
-          $original = Get-Content $outPath -Raw
-          if ([string]::IsNullOrWhiteSpace($original)) { exit 0 }
-
-          $lines = $original -split "\r?\n"
-          $footer = $lines[-1]
-
-          $system = @(
-            'You are a precise release-notes editor for a desktop app used by non-developers. Improve clarity and flow without inventing changes.',
-            '- Preserve this Markdown structure: # What''s New, ## Highlights, ## Detailed Changes, and the existing category headings.',
-            '- Distill Highlights from the full notes, not only from the existing Highlights bullets.',
-            '- Keep Highlights short, plain-language, and user-facing: include changes a normal app user would notice or benefit from.',
-            '- Good Highlight examples: OCR for scanned/image-only PDFs, dark mode, faster PDF preview, better watermark placement, safer update downloads, clearer error messages.',
-            '- Bad Highlight examples: added tests, changed CI, improved release flow, bumped dependencies, refactored modules, updated README, changed build tooling.',
-            '- You may promote user-facing items from Detailed Changes into Highlights and merge obviously redundant bullets.',
-            '- Keep developer/process details under Detailed Changes.',
-            '- Do NOT include the final line (Full Changelog) in your output.',
-            '- Do NOT wrap the output in code fences or blocks.',
-            '- Use short, parallel, present-tense bullet points.',
-            '- Preserve technical accuracy; no speculation.'
-          ) -join "`n"
-
-          $user = @(
-            "Rewrite the following release notes for clarity and concision. Make Highlights a short user-oriented summary of what actually changed for app users, and keep technical/internal items in Detailed Changes. Output only Markdown for the release notes without a trailing Full Changelog line.",
-            '',
-            $original
-          ) -join "`n"
-
-          $payload = @{
-            model = 'openai/gpt-4.1'
-            messages = @(
-              @{ role = 'system'; content = $system },
-              @{ role = 'user'; content = $user }
-            )
-            temperature = 0.2
-          } | ConvertTo-Json -Depth 6
-
-          try {
-            $resp = Invoke-RestMethod `
-              -Method Post `
-              -Uri 'https://models.github.ai/inference/chat/completions' `
-              -ContentType 'application/json' `
-              -Headers @{
-                Authorization = "Bearer $env:GITHUB_TOKEN"
-                Accept = "application/vnd.github+json"
-                "X-GitHub-Api-Version" = "2022-11-28"
-              } `
-              -Body $payload
-
-            $content = $resp.choices[0].message.content
-            if (-not $content) { throw 'Empty model response' }
-
-            $clean = [regex]::Replace($content, '(?im)^\s*Full Changelog:.*$', '')
-            $clean = [regex]::Replace($clean, '(?im)^\s*```[a-zA-Z0-9_-]*\s*$', '')
-            if ($clean -notmatch '(?m)^# What''s New\s*$' -or $clean -notmatch '(?m)^## Highlights\s*$' -or $clean -notmatch '(?m)^## Detailed Changes\s*$') {
-              throw 'Model response did not preserve the required release-note headings'
-            }
-
-            $highlightMatch = [regex]::Match($clean, '(?ms)^## Highlights\s*(.*?)^## Detailed Changes\s*')
-            if (-not $highlightMatch.Success) {
-              throw 'Model response did not preserve the highlight section'
-            }
-            $highlightText = $highlightMatch.Groups[1].Value
-            $internalHighlightPatterns = @(
-              '\bci\b',
-              '\bworkflow\b',
-              '\brelease process\b',
-              '\btests?\b',
-              '\bbuild tooling\b',
-              '\bdependencies\b',
-              '\bbumped?\b',
-              '\brefactor(?:ed|ing)?\b',
-              '\breadme\b'
-            )
-            foreach ($pattern in $internalHighlightPatterns) {
-              if ($highlightText -match $pattern) {
-                throw "Model response included an internal-only highlight matching '$pattern'"
-              }
-            }
-
-            $final = $clean.TrimEnd() + "`r`n`r`n" + $footer
-            $final | Out-File -FilePath $outPath -Encoding utf8 -NoNewline
-          }
-          catch {
-            Write-Host "AI polish failed: $($_.Exception.Message). Using original notes."
-          }
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: uv run --locked python generate_release_notes.py --to "$RELEASE_TAG" --output release_notes.md
       - name: Upload release notes artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: release_notes
           if-no-files-found: error
-          path: release_notes.md
+          path: |
+            release_notes.md
+            release_notes.evidence.json
 
   release:
     runs-on: ubuntu-latest
@@ -504,17 +195,17 @@ jobs:
       contents: write
     steps:
       - name: Download installer artifacts
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@v8.0.2
         with:
           name: installer
           path: .
       - name: Download release notes artifact
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@v8.0.2
         with:
           name: release_notes
           path: .
       - name: Create GitHub Release from tag
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@v3.0.3
         with:
           token: ${{ github.token }}
           tag_name: ${{ github.ref_name }}

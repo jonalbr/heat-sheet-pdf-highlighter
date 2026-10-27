@@ -187,6 +187,23 @@ Notes:
 - The GitHub Actions workflow validates release metadata, runs tests, builds the installer with the private `INNO_APP_ID` secret, uploads the installer and checksum, and publishes the GitHub Release.
 - Tags containing an `rcN` suffix are published as prereleases.
 
+### Release notes
+
+Locally, use `--from <last-release-tag>`; `--to` defaults to committed `HEAD`, so no
+new version or tag is needed. Set both flags to compare existing refs. CI uses the
+pushed tag and the previous published stable release, then creates the new release.
+
+```powershell
+# Inspect the input without an OpenAI request
+uv run --locked python generate_release_notes.py --from v2.1.0 --to v2.2.0 --dry-run
+
+# Generate notes
+uv run --locked --env-file .env python generate_release_notes.py --from v2.1.0
+
+# e.g. compare Luna
+uv run --locked --env-file .env python generate_release_notes.py --from v2.1.0 --model gpt-6-luna --output local_dev/release_notes.luna.md
+```
+
 ## Verifying installer checksums
 
 Each release includes `heat_sheet_pdf_highlighter_installer.exe.sha256`.
