@@ -22,7 +22,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
       - name: Set up uv
-        uses: astral-sh/setup-uv@v10.3.2
+        uses: astral-sh/setup-uv@v10.3.3
       - name: Set up Python
         shell: pwsh
         run: uv python install
@@ -58,7 +58,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
       - name: Set up uv
-        uses: astral-sh/setup-uv@v10.3.2
+        uses: astral-sh/setup-uv@v10.3.3
       - name: Set up Python
         shell: pwsh
         run: uv python install
@@ -168,7 +168,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - name: Set up uv
-        uses: astral-sh/setup-uv@v10.3.2
+        uses: astral-sh/setup-uv@v10.3.3
       - name: Set up Python
         run: uv python install
       - name: Install release-note dependencies
