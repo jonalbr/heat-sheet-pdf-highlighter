@@ -205,7 +205,7 @@ jobs:
           name: release_notes
           path: .
       - name: Create GitHub Release from tag
-        uses: softprops/action-gh-release@v3.0.3
+        uses: softprops/action-gh-release@v3.0.4
         with:
           token: ${{ github.token }}
           tag_name: ${{ github.ref_name }}
